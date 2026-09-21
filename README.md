@@ -80,6 +80,15 @@ is OpenRouter's standard-route $/M (3:1 input:output blend), inverted so
 cheaper is better. Every role weights price AND throughput. A model is
 eligible for a role only when all `required` metrics are non-null (all roles
 require throughput and price, so OpenRouter coverage bounds eligibility).
+Two cost lenses accompany the score in the report, both built on the
+**price-free score** — the weighted score with the price metric stripped and
+the remaining weights renormalized (derived exactly as
+`(score − w_price·price_percentile) / (1 − w_price)`, no second ranking pass):
+**★** marks the Pareto frontier (no eligible model is both cheaper and
+better), and **$/score** is blended $/M ÷ (price-free score − 0.5) — cost per
+quality point above the median; models at or below the median get no value
+entry. This kills the cheap-and-bad artifact of a raw price/score ratio: a
+near-free weak model is either dominated (no ★) or below the bar (no $/score).
 
 Roles and weights (see `ROLES` in the script): `default` (quality-heavy
 workhorse), `smol` (cheap+fast), `slow` (capability-heavy), `vision`,
@@ -96,8 +105,8 @@ node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]
   weighted-contribution columns + suggested `settings.modelRoles` YAML).
 - `--top N`: rows per role (default 10).
 - `--json`: machine payload (`fetchedAt, source, modelCount, roles{role:[{rank,
-  modelId, name, organization, score, priceBlendedUsdPerM, throughputTokS,
-  contextTokens}]}`).
+  modelId, name, organization, score, priceFreeScore, valueUsdPerScore,
+  paretoFrontier, priceBlendedUsdPerM, throughputTokS, contextTokens}]}`).
 - `--out FILE`: write report to file instead of stdout.
 - `--refresh`: bypass both caches and refetch.
 - `--url`: override the llm-stats page URL.
@@ -124,6 +133,9 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 - Eligible per role: 136 (vision 70, multimodal filter).
 - `default` #1: DeepSeek-V4.1-Flash; `slow` #1: GLM-5.3; `tiny` #1:
   Ling 3.0 Flash Fin (see `llm-role-rankings.md` for the full report).
+- Value lens: `default` has 8/136 models on the Pareto frontier; best $/score
+  Ling 3.0 Flash ($0.13 per point above median), then DeepSeek-V4-Flash-0731
+  ($0.19). Frontier sizes: vision 11/70, advisor 5/136, plan 6/136.
 - Verified: cache create/hit/refresh cycles, `--json` validity, report output
   (contribution columns sum to scores across all 906 report rows).
 

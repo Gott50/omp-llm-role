@@ -395,7 +395,7 @@ function buildModels(rows: LlmStatsRow[]): Model[] {
   }));
 }
 
-type Ranked = { model: Model; score: number; parts: Record<string, number> };
+type Ranked = { model: Model; score: number; qScore: number; parts: Record<string, number> };
 
 function rankRole(role: string, def: RoleDef, models: Model[], norms: Record<string, Map<string, number>>): Ranked[] {
   const totalW = Object.values(def.weights).reduce((a, b) => a + b, 0);
@@ -413,10 +413,32 @@ function rankRole(role: string, def: RoleDef, models: Model[], norms: Record<str
       parts[metric] = v;
       score += w * v;
     }
-    ranked.push({ model: m, score: score / totalW, parts });
+    const wPrice = def.weights.price ?? 0;
+    const qScore =
+      wPrice > 0 ? (score - wPrice * parts.price) / (totalW - wPrice) : score / totalW;
+    ranked.push({ model: m, score: score / totalW, qScore, parts });
   }
   ranked.sort((a, b) => b.score - a.score);
   return ranked;
+}
+
+/** Ids of undominated models: no other ranked model is both cheaper and at least as good
+ * (price-free score). Equal price+score ties leave both on the frontier. */
+function paretoFrontier(ranked: Ranked[]): Set<string> {
+  const frontier = new Set<string>();
+  for (const a of ranked) {
+    const dominated = ranked.some(
+      (b) =>
+        b.model.id !== a.model.id &&
+        b.model.price != null &&
+        a.model.price != null &&
+        b.model.price <= a.model.price &&
+        b.qScore >= a.qScore &&
+        (b.model.price < a.model.price || b.qScore > a.qScore),
+    );
+    if (!dominated) frontier.add(a.model.id);
+  }
+  return frontier;
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +479,9 @@ function formatRankings(
     "(contributes 0). Metric column headers show the weight.",
     "Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context",
     "sea=search vis=vision tput=throughput (code, price, mrcr as-is).",
+    "★ = Pareto-frontier: no eligible model is both cheaper and better (price-free score).",
+    "$/score = $/M ÷ (score without price − 0.5), cost per quality point above the median;",
+    "— when the price-free score is ≤ 0.5 (price not double-counted: it is excluded there).",
   ];
   lines.push(
     `Throughput + price: OpenRouter (p50 tok/s, last 30m routed traffic; standard-route` +
@@ -473,6 +498,7 @@ function formatRankings(
       continue;
     }
     lines.push(`eligible: ${ranked.length}`, "");
+    const frontier = paretoFrontier(ranked);
     const metricKeys = Object.keys(def.weights);
     const rows: string[][] = [
       [
@@ -482,6 +508,7 @@ function formatRankings(
         "org",
         "$/M",
         "tok/s",
+        "$/score",
         "ctx",
         ...metricKeys.map((k) => `${METRIC_ABBR[k]} ${Number((def.weights[k] * 100).toFixed(1))}%`),
       ],
@@ -498,13 +525,19 @@ function formatRankings(
           : m.context >= 1e6
             ? `${(m.context / 1e6).toFixed(1)}M`
             : `${Math.round(m.context / 1e3)}k`;
+      let value = "—";
+      if (m.price != null && r.qScore > 0.5) {
+        const pps = m.price / (r.qScore - 0.5);
+        value = `$${pps < 10 ? pps.toFixed(2) : Number(pps.toFixed(1))}`;
+      }
       rows.push([
         String(i + 1),
         r.score.toFixed(3),
-        m.name,
+        frontier.has(m.id) ? `★ ${m.name}` : m.name,
         m.org,
         price,
         tokS,
+        value,
         ctx,
         ...metricKeys.map((k) => {
           const p: number | undefined = r.parts[k];
@@ -745,19 +778,28 @@ async function main(): Promise<void> {
       source,
       modelCount: models.length,
       roles: Object.fromEntries(
-        Object.entries(rankings).map(([role, ranked]) => [
-          role,
-          ranked.slice(0, top).map((r, i) => ({
-            rank: i + 1,
-            modelId: r.model.id,
-            name: r.model.name,
-            organization: r.model.org,
-            score: Number(r.score.toFixed(4)),
-            priceBlendedUsdPerM: r.model.price,
-            throughputTokS: r.model.throughput,
-            contextTokens: r.model.context,
-          })),
-        ]),
+        Object.entries(rankings).map(([role, ranked]) => {
+          const frontier = paretoFrontier(ranked);
+          return [
+            role,
+            ranked.slice(0, top).map((r, i) => ({
+              rank: i + 1,
+              modelId: r.model.id,
+              name: r.model.name,
+              organization: r.model.org,
+              score: Number(r.score.toFixed(4)),
+              priceFreeScore: Number(r.qScore.toFixed(4)),
+              valueUsdPerScore:
+                r.model.price != null && r.qScore > 0.5
+                  ? Number((r.model.price / (r.qScore - 0.5)).toFixed(4))
+                  : null,
+              paretoFrontier: frontier.has(r.model.id),
+              priceBlendedUsdPerM: r.model.price,
+              throughputTokS: r.model.throughput,
+              contextTokens: r.model.context,
+            })),
+          ];
+        }),
       ),
     };
     report = JSON.stringify(payload, null, 2);
