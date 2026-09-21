@@ -3,3 +3,4 @@ llm-stats-fetched-rankings.json
 openrouter-fetched-data.json
 
 node_modules/
+.DS_Store
