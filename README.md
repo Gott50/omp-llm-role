@@ -2,6 +2,8 @@
 
 Ranks today's LLM leaderboard into best-fit picks for each omp model role
 (`default, smol, slow, vision, plan, commit, tiny, task, advisor`).
+`SPEC.md` specifies the follow-up omp plugin that applies these picks to
+`~/.omp/agent/config.yml` automatically.
 
 ## Files
 
@@ -11,6 +13,33 @@ Ranks today's LLM leaderboard into best-fit picks for each omp model role
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (392 rows, script-owned) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response, pretty-printed with sorted keys (~8MB) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
+| `SPEC.md` | Spec for the omp plugin that applies rankings to `config.yml` (implementation pending) |
+
+## Next: model-role updater plugin (spec'd, not implemented)
+
+`SPEC.md` specifies an omp plugin living in this repo (`omp plugin link`) that
+turns today's rankings into live config:
+
+- **Availability**: keeps only models the OpenRouter key can run — tier/budget
+  gate (`is_free_tier`, `limit_remaining`, credits); the key API has no model
+  allowlist. Paid keys get billed variants, free/exhausted keys get `:free`
+  variants, `:batch` never. Every candidate must resolve in omp's authenticated
+  catalog (`omp models ls --json`).
+- **Selectors**: `openrouter/*` only, exact dated slug (exact id → newest dated
+  → bare → `-latest` alias), thinking suffixes from a canonical per-role table.
+- **Switch policy**: hysteresis — a role switches only when its current model
+  became ineligible or the new best beats it by `switchMargin` (default 0.02).
+- **Writes**: surgical in-place edit of `modelRoles` + `retry.fallbackChains`
+  (#2/#3 per managed role) in `~/.omp/agent/config.yml`; atomic, comments and
+  unknown keys untouched, previous mapping snapshotted.
+- **Trigger**: day-gated on `session_start` (first omp session of the UTC day)
+  plus `/refresh-roles`; headless `node update-roles.ts --dry-run`.
+- **Config**: role weights move into plugin settings (`omp plugin config
+  omp-llm-role --set=…`); defaults ship for the 9 official roles, custom agent
+  roles add their own weight sets.
+
+`llm-role-rank.ts` remains the scoring engine — the plugin refactors it into a
+shared `engine.ts` (see SPEC.md §4.1) without changing its CLI or report format.
 
 ## Data sources
 
