@@ -31,13 +31,15 @@ discounts already applied). llm-stats throughput and prices are **not used**:
 OpenRouter reflects real routed traffic across providers (llm-stats measures
 a single provider; the two disagree wildly, e.g. Claude Opus 5: 4.6 vs ~76
 tok/s), and its per-endpoint pricing is what a caller actually pays on the
-router. Models without OpenRouter data are not ranked — every role requires
-throughput and price.
+router. Models without OpenRouter throughput or a billed route are not
+ranked — every role requires both.
 
 The join is by slug suffix: llm-stats `model_id` (bare) == OpenRouter slug
-suffix (`slug.split("/")[1]`). `:batch` and `:free` variants are skipped (not
-commercial routes); throughput takes the highest-throughput variant's p50,
-price the cheapest commercial route blended to $/M at 3:1 input:output.
+suffix (`slug.split("/")[1]`). `:batch` variants are skipped (no perf data,
+half-price async tier). Throughput takes the highest-p50 variant, `:free`
+tiers included (they carry real routed traffic). Price is the standard
+(non-`:free`) route's blended $/M at 3:1 input:output, cheapest billed route
+as fallback — a $0 free tier never sets the price.
 
 ## Scoring
 
@@ -45,11 +47,10 @@ Per role, each metric is percentile-normalized across all models (midrank
 `(i+j)/(2*(n-1))`, null-safe), then a weighted score is computed. Report
 tables show each metric's contribution (`weight × percentile`) after a `|`;
 they sum to the score (`—` = missing optional metric, contributes 0). Price
-is OpenRouter's cheapest commercial route, blended $/M (3:1 input:output),
-inverted so cheaper is better. Every role
-weights price AND throughput. A model is eligible for a role only when all
-`required` metrics are non-null (all roles require throughput, so OR coverage
-bounds eligibility).
+is OpenRouter's standard-route $/M (3:1 input:output blend), inverted so
+cheaper is better. Every role weights price AND throughput. A model is
+eligible for a role only when all `required` metrics are non-null (all roles
+require throughput and price, so OpenRouter coverage bounds eligibility).
 
 Roles and weights (see `ROLES` in the script): `default` (quality-heavy
 workhorse), `smol` (cheap+fast), `slow` (capability-heavy), `vision`,
@@ -88,11 +89,11 @@ no enrichment (affected models unranked). An empty/unusable OpenRouter payload
 is never cached, so the next run retries. llm-stats fetch failure is fatal
 (no data at all); OpenRouter failure is non-fatal.
 
-## Current state (2026-09-20)
+## Current state (2026-09-21)
 
-- 392 llm-stats models; OpenRouter matched 144/392 (throughput + price).
+- 392 llm-stats models; OpenRouter matched 145/392 (throughput), 144 priced.
 - Eligible per role: 136 (vision 70, multimodal filter).
-- `default` #1: DeepSeek-V4.1-Flash; `slow` #1: Claude Opus 5; `tiny` #1:
+- `default` #1: DeepSeek-V4.1-Flash; `slow` #1: GLM-5.3; `tiny` #1:
   Ling 3.0 Flash Fin (see `llm-role-rankings.md` for the full report).
 - Verified: cache create/hit/refresh cycles, `--json` validity, report output
   (contribution columns sum to scores across all 906 report rows).

@@ -74,7 +74,7 @@ type Model = {
   orgId: string;
   context: number | null;
   multimodal: boolean;
-  /** OpenRouter blended $/M (3:1 in:out, cheapest commercial route); null until enrichment */
+  /** OpenRouter blended $/M (3:1 in:out, standard route); null until enrichment */
   price: number | null;
   /** output tok/s — OpenRouter p50 only; null when OpenRouter has no data */
   throughput: number | null;
@@ -162,9 +162,11 @@ const PROVIDER_BY_ORG: Record<string, string> = {
 //
 // Throughput: the OpenRouter models table (https://openrouter.ai/models?order=top-weekly)
 // renders a Throughput column from `endpoint_perf` in this public endpoint's payload:
-// per-endpoint p50 output tok/s and p50 latency over the last 30 minutes of routed traffic.
+// per-endpoint p50 output tok/s and p50 latency over the last 30 minutes of routed traffic;
+// the highest-p50 non-:batch variant wins (:free tiers included — they carry real traffic).
 // Price: per-endpoint `pricing.prompt`/`pricing.completion` (USD/token strings, discounts
-// already applied), blended to $/M at 3:1 input:output; the cheapest commercial route wins.
+// already applied), blended to $/M at 3:1 input:output; the model's standard route wins,
+// cheapest billed route as fallback — a $0 :free tier never sets the price.
 // We join both by slug suffix (llm-stats ids are bare, OpenRouter slugs are provider-prefixed).
 // They are the only sources used: throughput reflects real routed traffic across providers,
 // where llm-stats measures a single provider (the two disagree wildly on some models), and
@@ -184,18 +186,20 @@ type OrEnrichment = { tput: number; latency: number | null; price: number | null
 
 /**
  * Build llm-stats model_id -> OpenRouter enrichment (p50 throughput, latency, blended price).
- * Commercial endpoints only: :batch and :free variants are skipped. Throughput is the
- * highest-throughput variant's p50; price is the cheapest commercial route in $/M.
+ * :batch variants are skipped (no perf data, half-price async tier). Throughput is the
+ * highest-p50 variant, :free tiers included. Price is the standard route's blended $/M,
+ * cheapest billed route as fallback — a $0 :free tier never sets the price.
  */
 function buildOpenRouterEnrichment(data: OpenRouterFindData): Record<string, OrEnrichment> {
-  const bySuffix: Record<string, Array<{ perf: OpenRouterPerf | null; price: number | null }>> = {};
+  const bySuffix: Record<string, Array<{ free: boolean; perf: OpenRouterPerf | null; price: number | null }>> = {};
   for (const m of data.models) {
     const ep = m.endpoint;
     if (!ep) continue;
     const variant = ep.model_variant_permaslug ?? "";
-    if (variant.endsWith(":batch") || variant.endsWith(":free") || ep.is_free === true) continue;
+    if (variant.endsWith(":batch")) continue;
     const key = m.slug.split("/")[1] ?? m.slug;
     (bySuffix[key] ??= []).push({
+      free: variant.endsWith(":free") || ep.is_free === true,
       perf: data.endpoint_perf[ep.id] ?? null,
       price: data.endpoint_price[ep.id] ?? null,
     });
@@ -204,23 +208,28 @@ function buildOpenRouterEnrichment(data: OpenRouterFindData): Record<string, OrE
   for (const [suffix, cands] of Object.entries(bySuffix)) {
     let tput: number | null = null;
     let latency: number | null = null;
-    let minPrice: number | null = null;
     for (const c of cands) {
       const t = c.perf?.p50_throughput;
       if (t != null && (tput == null || t > tput)) {
         tput = t;
         latency = c.perf?.p50_latency ?? null;
       }
-      if (c.price != null && (minPrice == null || c.price < minPrice)) minPrice = c.price;
     }
-    if (tput != null) out[suffix] = { tput, latency, price: minPrice };
+    if (tput == null) continue;
+    // Price: the standard (non-:free) route; cheapest billed route as fallback. A $0 free
+    // tier must never set the price — it would dominate the cost percentiles.
+    const billed: number[] = [];
+    for (const c of cands) if (!c.free && c.price != null && c.price > 0) billed.push(c.price);
+    const price = billed.length === 0 ? null : Math.min(...billed);
+    out[suffix] = { tput, latency, price };
   }
   return out;
 }
 
-/** Set model throughput and price from OpenRouter where matched. Returns matched count. */
-function applyOpenRouterData(models: Model[], orData: Record<string, OrEnrichment>): number {
+/** Set model throughput and price from OpenRouter where matched. Returns match counts. */
+function applyOpenRouterData(models: Model[], orData: Record<string, OrEnrichment>): { matched: number; priced: number } {
   let matched = 0;
+  let priced = 0;
   for (const m of models) {
     const or = orData[m.id];
     if (!or) continue;
@@ -228,11 +237,12 @@ function applyOpenRouterData(models: Model[], orData: Record<string, OrEnrichmen
     m.throughput = or.tput;
     m.metrics.throughput = or.tput;
     if (or.price != null) {
+      priced++;
       m.price = or.price;
       m.metrics.price = or.price;
     }
   }
-  return matched;
+  return { matched, priced };
 }
 
 /** Validated find payload: `find` is narrowed for throughput/price derivation; `data` is the
@@ -436,6 +446,7 @@ function formatRankings(
   top: number,
   fetchedAt: string,
   orMatched: number,
+  orPriced: number,
 ): string {
   const lines: string[] = [
     `llm-stats.com best-fit ranking per omp model role — ${models.length} models, ` +
@@ -447,9 +458,9 @@ function formatRankings(
     "sea=search vis=vision tput=throughput (code, price, mrcr as-is).",
   ];
   lines.push(
-    `Throughput + price: OpenRouter (p50 tok/s, last 30m routed traffic; cheapest commercial` +
-      ` route, $/M 3:1 in:out), matched ${orMatched}/${models.length}; models without` +
-      " OpenRouter data are not ranked.",
+    `Throughput + price: OpenRouter (p50 tok/s, last 30m routed traffic; standard-route` +
+      ` $/M 3:1 in:out), throughput ${orMatched}/${models.length}, priced ${orPriced}; models` +
+      " without OpenRouter throughput or a billed route are not ranked.",
   );
   lines.push("");
 
@@ -641,6 +652,7 @@ async function main(): Promise<void> {
   // on failure (affected models simply lack throughput/price and are not ranked; stale
   // cache as last resort).
   let orMatched = 0;
+  let orPriced = 0;
   let orData: Record<string, OrEnrichment> | null = null;
   const cachedOr = refresh ? null : readOrCache(OPENROUTER_CACHE_PATH, true);
   if (cachedOr) {
@@ -692,8 +704,8 @@ async function main(): Promise<void> {
     }
   }
   if (orData) {
-    orMatched = applyOpenRouterData(models, orData);
-    console.error(`openrouter: matched ${orMatched}/${models.length} models (throughput + price)`);
+    ({ matched: orMatched, priced: orPriced } = applyOpenRouterData(models, orData));
+    console.error(`openrouter: matched ${orMatched}/${models.length} models (throughput), ${orPriced} priced`);
   }
 
   // Percentile-normalize every metric once; reused across roles.
@@ -730,7 +742,7 @@ async function main(): Promise<void> {
     report = JSON.stringify(payload, null, 2);
   } else {
     report =
-      formatRankings(rankings, models, top, fetchedAt, orMatched) + "\n" + formatModelRolesYaml(rankings) + "\n";
+      formatRankings(rankings, models, top, fetchedAt, orMatched, orPriced) + "\n" + formatModelRolesYaml(rankings) + "\n";
   }
 
   if (outPath) {
