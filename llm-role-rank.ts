@@ -451,10 +451,11 @@ function formatRankings(
   const lines: string[] = [
     `llm-stats.com best-fit ranking per omp model role — ${models.length} models, ` +
       `${fetchedAt.slice(0, 10)}`,
-    "Score = Σ weight × percentile per metric (1.0 = best). The columns after | show each",
-    "metric's weighted contribution (weight × percentile); they sum to the score. price is",
-    "the inverted (cheaper = better) percentile; — = metric missing (contributes 0).",
-    "Abbr: gen=general rea=reasoning mat=math ag=agents tool=tool_calling lc=long_context",
+    "Score = Σ weight × percentile per metric (1.0 = best). Each metric column shows that",
+    "metric's weighted contribution (weight × percentile); the metric columns of a row sum",
+    "to the score. price is the inverted (cheaper = better) percentile; — = metric missing",
+    "(contributes 0). Metric column headers show the weight.",
+    "Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context",
     "sea=search vis=vision tput=throughput (code, price, mrcr as-is).",
   ];
   lines.push(
@@ -467,40 +468,60 @@ function formatRankings(
   for (const [role, def] of Object.entries(ROLES)) {
     const ranked = rankings[role] ?? [];
     lines.push(`## @${role} — ${def.description}`);
-    lines.push(
-      `   weights: ${Object.entries(def.weights).map(([k, w]) => `${k}:${w}`).join(", ")}` +
-        ` | eligible: ${ranked.length}`,
-    );
     if (ranked.length === 0) {
-      lines.push("   (no eligible models)", "");
+      lines.push("eligible: 0 — no eligible models", "");
       continue;
     }
-    let header = "   #   score  model                          org            $/M    tok/s   ctx |";
-    for (const k of Object.keys(def.weights)) header += ` ${METRIC_ABBR[k].padEnd(5)}`;
-    lines.push(header);
+    lines.push(`eligible: ${ranked.length}`, "");
+    const metricKeys = Object.keys(def.weights);
+    const rows: string[][] = [
+      [
+        "#",
+        "score",
+        "model",
+        "org",
+        "$/M",
+        "tok/s",
+        "ctx",
+        ...metricKeys.map((k) => `${METRIC_ABBR[k]} ${Number((def.weights[k] * 100).toFixed(1))}%`),
+      ],
+    ];
     for (let i = 0; i < Math.min(top, ranked.length); i++) {
       const r = ranked[i];
       const m = r.model;
       const price =
-        m.price == null ? "  —  " : `$${m.price < 10 ? m.price.toFixed(2) : m.price.toFixed(1)}`;
-      const tokS = (m.throughput?.toFixed(0) ?? "—").padStart(5);
+        m.price == null ? "—" : `$${m.price < 10 ? m.price.toFixed(2) : Number(m.price.toFixed(1))}`;
+      const tokS = m.throughput?.toFixed(0) ?? "—";
       const ctx =
         m.context == null
           ? "—"
           : m.context >= 1e6
             ? `${(m.context / 1e6).toFixed(1)}M`
             : `${Math.round(m.context / 1e3)}k`;
-      let contribs = "";
-      for (const [k, w] of Object.entries(def.weights)) {
-        const p: number | undefined = r.parts[k];
-        contribs += p == null ? "    —" : ` ${(w * p).toFixed(3)}`;
-      }
-      lines.push(
-        `   ${String(i + 1).padStart(2)}  ${r.score.toFixed(3)}  ${m.name.padEnd(30).slice(0, 30)}  ` +
-          `${m.org.padEnd(14).slice(0, 14)}  ${price}  ${tokS}   ${ctx}` +
-          ` |${contribs}`,
-      );
+      rows.push([
+        String(i + 1),
+        r.score.toFixed(3),
+        m.name,
+        m.org,
+        price,
+        tokS,
+        ctx,
+        ...metricKeys.map((k) => {
+          const p: number | undefined = r.parts[k];
+          return p == null ? "—" : (def.weights[k] * p).toFixed(3);
+        }),
+      ]);
     }
+    // Columns 2 (model) and 3 (org) hold text: left-align. All others: right-align.
+    const widths = rows[0].map((_, c) => Math.max(...rows.map((row) => row[c].length)));
+    const padded = rows.map((row) =>
+      row.map((v, c) => (c === 2 || c === 3 ? v.padEnd(widths[c]) : v.padStart(widths[c]))),
+    );
+    lines.push(`| ${padded[0].join(" | ")} |`);
+    lines.push(
+      `| ${widths.map((w, c) => (c === 2 || c === 3 ? "-".repeat(w) : `${"-".repeat(w - 1)}:`)).join(" | ")} |`,
+    );
+    for (let ri = 1; ri < padded.length; ri++) lines.push(`| ${padded[ri].join(" | ")} |`);
     lines.push("");
   }
   return lines.join("\n");
