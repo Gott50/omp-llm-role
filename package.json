@@ -1,0 +1,12 @@
+{
+  "name": "omp-llm-role",
+  "private": true,
+  "type": "module",
+  "description": "omp plugin: daily model-role updater driven by llm-stats/OpenRouter rankings",
+  "omp": {
+    "extensions": ["./src/extension.ts"]
+  },
+  "dependencies": {
+    "yaml": "^2"
+  }
+}

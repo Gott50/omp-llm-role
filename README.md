@@ -1,45 +1,78 @@
 # omp-llm-role
 
 Ranks today's LLM leaderboard into best-fit picks for each omp model role
-(`default, smol, slow, vision, plan, commit, tiny, task, advisor`).
-`SPEC.md` specifies the follow-up omp plugin that applies these picks to
-`~/.omp/agent/config.yml` automatically.
+(`default, smol, slow, vision, plan, commit, tiny, task, advisor`), and ships
+an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
+`SPEC.md` is the normative spec for the plugin.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `llm-role-rank.ts` | The script (Node 26, type-stripping — no bun/deno/tsx, no build step) |
-| `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (392 rows, script-owned) |
-| `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response, pretty-printed with sorted keys (~8MB) |
+| `llm-role-rank.ts` | CLI report (Node 26, type-stripping — no bun/deno/tsx, no build step) |
+| `src/engine.ts` | Ranking engine shared by CLI and plugin: fetch/caches, percentile norms, `loadRankData`, `computeRankings` |
+| `src/settings.ts` | Shipped role defaults (`DEFAULT_ROLES`), plugin-settings deep-merge + validation |
+| `src/availability.ts` | OpenRouter key tier gate, catalog filter, variant resolution (`resolveVariant`) |
+| `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains`, atomic write |
+| `src/state.ts` | State/history/lock files under the agent dir; agent-dir resolution |
+| `src/updater.ts` | Orchestration: rank → tier gate → hysteresis → chains → config write |
+| `src/extension.ts` | omp extension entry: day-gated `session_start` run + `/refresh-roles` |
+| `update-roles.ts` | Headless shim: `node update-roles.ts [--dry-run] [--json]` (always forces) |
+| `package.json` | Plugin manifest (`omp.extensions`) + the single dependency (`yaml`) |
+| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning |
+| `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
+| `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
-| `SPEC.md` | Spec for the omp plugin that applies rankings to `config.yml` (implementation pending) |
+| `SPEC.md` | Normative spec for the plugin |
 
-## Next: model-role updater plugin (spec'd, not implemented)
+## Plugin: daily model-role updater
 
-`SPEC.md` specifies an omp plugin living in this repo (`omp plugin link`) that
-turns today's rankings into live config:
+Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
 
+- **Trigger**: the first omp session of each UTC day rewrites `modelRoles`
+  (and `retry.fallbackChains`) to that day's best key-eligible models;
+  later same-day sessions no-op. `/refresh-roles` forces a run anytime.
+  Headless: `node update-roles.ts` (forces), `--dry-run` computes without
+  writing, `--json` emits the decisions payload.
 - **Availability**: keeps only models the OpenRouter key can run — tier/budget
-  gate (`is_free_tier`, `limit_remaining`, credits); the key API has no model
-  allowlist. Paid keys get billed variants, free/exhausted keys get `:free`
-  variants, `:batch` never. Every candidate must resolve in omp's authenticated
-  catalog (`omp models ls --json`).
-- **Selectors**: `openrouter/*` only, exact dated slug (exact id → newest dated
-  → bare → `-latest` alias), thinking suffixes from a canonical per-role table.
+  gate (`is_free_tier`, `limit_remaining`, `/api/v1/credits`). Paid keys with
+  budget get billed variants, free/exhausted keys get `:free` variants,
+  `:batch` never. Every candidate must resolve in omp's catalog; ranking rows
+  map to selectors exact id → newest dated (`-MMDD`/`-YYYYMMDD`) → bare →
+  `~org/…-latest` alias, ties lexicographic.
 - **Switch policy**: hysteresis — a role switches only when its current model
-  became ineligible or the new best beats it by `switchMargin` (default 0.02).
-- **Writes**: surgical in-place edit of `modelRoles` + `retry.fallbackChains`
-  (#2/#3 per managed role) in `~/.omp/agent/config.yml`; atomic, comments and
-  unknown keys untouched, previous mapping snapshotted.
-- **Trigger**: day-gated on `session_start` (first omp session of the UTC day)
-  plus `/refresh-roles`; headless `node update-roles.ts --dry-run`.
-- **Config**: role weights move into plugin settings (`omp plugin config
-  omp-llm-role --set=…`); defaults ship for the 9 official roles, custom agent
-  roles add their own weight sets.
+  became ineligible (or left today's ranked pool) or the new best beats it by
+  `switchMargin` (default 0.02; 0 = always take the best). Kept roles still
+  get their fallback chain refreshed and their selector canonicalized.
+- **Writes**: surgical in-place edit — only managed role lines and managed
+  chain keys change; comments, blank lines and unknown keys stay
+  byte-identical; values are emitted double-quoted; a line whose value already
+  equals the new selector (any quoting) is left untouched, so a no-change run
+  writes nothing and never touches the config mtime. Atomic tmp+rename with a
+  3-attempt mtime-conflict retry; the patched text must re-parse as YAML or
+  nothing is written. Thinking suffixes come from a canonical per-role table
+  (`smol: off, slow: max, vision: auto, plan: high, commit: off`; others bare)
+  and are only appended when the chosen catalog entry supports thinking.
+- **Rollback aid**: `~/.omp/agent/llm-role-state.json` snapshots the previous
+  `modelRoles` block on every write (`previousModelRoles`).
+- **Settings**: `omp plugin config omp-llm-role --set=<dotted.key>=<value>`
+  (flat dotted keys are deep-merged by the plugin; `config=<json>` is a
+  whole-object escape hatch). Knobs: `switchMargin`, `writeFallbackChains`,
+  `fallbackChainDepth`, `suffixes.<role>`, `roles.<name>.{description,weights,
+  required,filters}`. `weights: null` opts a role out; a new role with a full
+  weight set gets managed too. Invalid settings abort the run with the
+  offending role/key and no write.
+- **State files** (next to the config): `llm-role-state.json` (day gate,
+  managed roles, last selectors, plugin-owned chain keys, previous
+  `modelRoles` snapshot), `llm-role-history.jsonl` (one row per completed
+  run: trigger, key tier, decisions), `.llm-role-refresh.lock` (serializes
+  concurrent session starts; stale after 60 s).
+- **Agent dir resolution**: `OMP_LLM_ROLE_AGENT_DIR` (test hook) →
+  `PI_CODING_AGENT_DIR` → non-default `OMP_PROFILE` → `~/.omp/agent`.
 
-`llm-role-rank.ts` remains the scoring engine — the plugin refactors it into a
-shared `engine.ts` (see SPEC.md §4.1) without changing its CLI or report format.
+`llm-role-rank.ts` remains the report surface; its suggested `modelRoles`
+block resolves through the same catalog/variant logic the plugin uses
+(`openrouter/<id>` selectors).
 
 ## Data sources
 
@@ -58,10 +91,9 @@ traffic, plus `data.models[]` rows linking slugs to endpoint ids — each
 endpoint carrying `pricing.prompt`/`pricing.completion` (USD/token strings,
 discounts already applied). llm-stats throughput and prices are **not used**:
 OpenRouter reflects real routed traffic across providers (llm-stats measures
-a single provider; the two disagree wildly, e.g. Claude Opus 5: 4.6 vs ~76
-tok/s), and its per-endpoint pricing is what a caller actually pays on the
-router. Models without OpenRouter throughput or a billed route are not
-ranked — every role requires both.
+a single provider; the two disagree wildly), and its per-endpoint pricing is
+what a caller actually pays on the router. Models without OpenRouter
+throughput or a billed route are not ranked — every role requires both.
 
 The join is by slug suffix: llm-stats `model_id` (bare) == OpenRouter slug
 suffix (`slug.split("/")[1]`). `:batch` variants are skipped (no perf data,
@@ -78,42 +110,48 @@ tables show each metric's contribution (`weight × percentile`) after a `|`;
 they sum to the score (`—` = missing optional metric, contributes 0). Price
 is OpenRouter's standard-route $/M (3:1 input:output blend), inverted so
 cheaper is better. Every role weights price AND throughput. A model is
-eligible for a role only when all `required` metrics are non-null (all roles
-require throughput and price, so OpenRouter coverage bounds eligibility).
-Two cost lenses accompany the score in the report, both built on the
-**price-free score** — the weighted score with the price metric stripped and
-the remaining weights renormalized (derived exactly as
-`(score − w_price·price_percentile) / (1 − w_price)`, no second ranking pass):
-**★** marks the Pareto frontier (no eligible model is both cheaper and
+eligible for a role only when all `required` metrics are non-null (`required`
+is the eligibility gate, independent of weights — e.g. every role requires
+throughput without weighting it). Two cost lenses accompany the score in the
+report, both built on the **price-free score** — the weighted score with the
+price metric stripped and the remaining weights renormalized (derived exactly
+as `(score − w_price·price_percentile) / (1 − w_price)`, no second ranking
+pass): **★** marks the Pareto frontier (no eligible model is both cheaper and
 better), and **$/score** is blended $/M ÷ (price-free score − 0.5) — cost per
 quality point above the median; models at or below the median get no value
-entry. This kills the cheap-and-bad artifact of a raw price/score ratio: a
-near-free weak model is either dominated (no ★) or below the bar (no $/score).
+entry. This kills the cheap-and-bad artifact of a raw price/score ratio.
 
-Roles and weights (see `ROLES` in the script): `default` (quality-heavy
-workhorse), `smol` (cheap+fast), `slow` (capability-heavy), `vision`,
-`plan` (reasoning/long-context), `commit`, `tiny` (price+throughput dominated),
+Roles and weights (see `DEFAULT_ROLES` in `src/settings.ts`, overridable via
+plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
+`slow` (capability-heavy), `vision` (requires image input), `plan`
+(reasoning/long-context), `commit`, `tiny` (price+throughput dominated),
 `task` (agentic), `advisor` (deep reasoning).
 
 ## Usage
 
 ```
 node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]
+node update-roles.ts [--dry-run] [--json]
+node --test tests/
 ```
 
-- Default: markdown report to stdout (per-role tables with per-metric
-  weighted-contribution columns + suggested `settings.modelRoles` YAML).
-- `--top N`: rows per role (default 10).
-- `--json`: machine payload (`fetchedAt, source, modelCount, roles{role:[{rank,
-  modelId, name, organization, score, priceFreeScore, valueUsdPerScore,
-  paretoFrontier, priceBlendedUsdPerM, throughputTokS, contextTokens}]}`).
-- `--out FILE`: write report to file instead of stdout.
-- `--refresh`: bypass both caches and refetch.
-- `--url`: override the llm-stats page URL.
+- `llm-role-rank.ts` default: markdown report to stdout (per-role tables with
+  per-metric weighted-contribution columns + suggested `settings.modelRoles`).
+- `--top N`: rows per role (default 10). `--json`: machine payload
+  (`fetchedAt, source, modelCount, roles{role:[{rank, modelId, name,
+  organization, score, priceFreeScore, valueUsdPerScore, paretoFrontier,
+  priceBlendedUsdPerM, throughputTokS, contextTokens}]}`). `--out FILE`:
+  write instead of stdout. `--refresh`: bypass both caches. `--url`: override
+  the llm-stats page URL.
+- `update-roles.ts` runs the plugin pipeline headlessly (key + catalog via the
+  `omp` CLI); `--dry-run` prints decisions without writing, `--json` emits
+  `{wrote, aborted, decisions[]}` only.
 
 ## Caching
 
-Both caches are fresh while their `fetchedAt` is the current UTC day.
+Both caches are fresh while their `fetchedAt` is the current UTC day, and
+resolve against the repo root (never the process cwd — the plugin runs with
+arbitrary cwd inside omp).
 
 - llm-stats cache: `{fetchedAt, source, modelCount, rankings[]}` (pretty-printed).
 - OpenRouter cache: `{fetchedAt, source, modelCount, data}` where `data` is the
@@ -127,17 +165,22 @@ no enrichment (affected models unranked). An empty/unusable OpenRouter payload
 is never cached, so the next run retries. llm-stats fetch failure is fatal
 (no data at all); OpenRouter failure is non-fatal.
 
-## Current state (2026-09-21)
+## Current state (2026-09-22)
 
-- 392 llm-stats models; OpenRouter matched 145/392 (throughput), 144 priced.
-- Eligible per role: 136 (vision 70, multimodal filter).
-- `default` #1: DeepSeek-V4.1-Flash; `slow` #1: GLM-5.3; `tiny` #1:
-  Ling 3.0 Flash Fin (see `llm-role-rankings.md` for the full report).
-- Value lens: `default` has 8/136 models on the Pareto frontier; best $/score
-  Ling 3.0 Flash ($0.13 per point above median), then DeepSeek-V4-Flash-0731
-  ($0.19). Frontier sizes: vision 11/70, advisor 5/136, plan 6/136.
-- Verified: cache create/hit/refresh cycles, `--json` validity, report output
-  (contribution columns sum to scores across all 906 report rows).
+- 395 llm-stats models; OpenRouter matched 149/395 (throughput), 148 priced.
+- Eligible per role: 140 (vision 72, image-input filter).
+- Role leaders: `default` DeepSeek-V4.1-Flash (0.966), `smol`/`commit`
+  Ling 3.0 Flash, `slow` Claude Fable 5, `vision` GPT-6 Astra, `plan`/`advisor`
+  GPT-5.6 Sol, `tiny` Ling 3.0 Flash Fin, `task` DeepSeek-V4.1-Flash.
+- Value lens frontier sizes: default 8/140, smol 8, slow 9, vision 11/72,
+  plan 8, commit 6, tiny 5, task 8, advisor 6; best `default` $/score
+  GLM-5.3-Flash ($0.28 per point above median), then DeepSeek-V4.1-Flash
+  ($0.44).
+- Plugin verified live (2026-09-22): day-gated session run rewrote
+  `modelRoles` + chains (unmanaged roles and owner-written chain keys
+  untouched), second same-day session no-op, `/refresh-roles` forced run
+  reported every decision, `update-roles.ts --dry-run --json` matched the
+  in-session decisions, 39/39 unit tests green.
 
 ## Known quirks
 
@@ -152,3 +195,13 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   and sanity-check stderr match counts and eligible counts.
 - The OpenRouter join is by slug suffix only; models whose llm-stats id has no
   OpenRouter counterpart (or no routed traffic in the last 30m) are unranked.
+- omp's extension registry differs from its CLI JSON in two spots (adapted in
+  `src/extension.ts` only): the key comes from
+  `modelRegistry.getApiKeyForProvider("openrouter")` (`getApiKey` returns
+  undefined there), and registry rows carry `thinking` as an effort object
+  (`{mode, efforts[], …}`) which `extDeps` normalizes to the CLI's string
+  array. In print/headless mode `ctx.ui.notify` is a no-op, so the extension
+  mirrors decisions and aborts to stderr.
+- `required` is the eligibility gate, not a weight: the shipped defaults
+  require `throughput` without weighting it, so settings validation checks
+  `required` against the known-metric set, not against `weights`.
