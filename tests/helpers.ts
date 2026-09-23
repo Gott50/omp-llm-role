@@ -69,6 +69,7 @@ export function fakeDeps(models: Model[], settings: Record<string, unknown> = {}
     getToken: async () => "sk-or-test",
     getCatalog: async () => makeCatalog(models.map((m) => m.id)),
     getKeyMeta: async () => PAID_KEY_META,
+    probeModel: async () => "ok",
     getRankData: async () => rankData,
     getSettings: async () => settings,
     notify: () => {},

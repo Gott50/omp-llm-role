@@ -151,6 +151,30 @@ matching). Among matched candidates, emit in this order:
 Never emit `:batch`. `:free` only when the free-tier branch of §5.2 is active. Ties break
 lexicographically. The emitted selector is always `openrouter/<catalogId>` (decision #12).
 
+### 5.5 Provider-allowlist probe (added 2026-09-23)
+
+The account-level **allowed-providers privacy whitelist** (openrouter.ai/settings/privacy)
+is enforced at request time and invisible to every catalog surface: `/api/v1/key` has no
+provider field (§2 facts), and the key-authenticated `GET /api/v1/models/{id}/endpoints`
+still returns 200 with the full serving-provider list for blocked models. The only
+reliable signal is a real request: a one-token `POST /api/v1/chat/completions` whose 404
+body reads "No allowed providers are available for the selected model …". Models are
+runnable iff at least one serving endpoint's provider is whitelisted — the org prefix is
+**not** a valid filter (aggregator-org models such as `deepseek/*`, `z-ai/*`,
+`inclusionai/*` run via whitelisted third-party endpoints while `openai/*` and
+`anthropic/*` fail on first-party-only routing).
+
+Per role, candidates are verified with `probeModel` (`availability.ts`) in a bounded
+walk: the current selector's candidate first (hysteresis must see it), then rank order,
+until `1 + fallbackChainDepth` clean candidates — walked past the current rank when the
+current candidate is clean, so kept roles still get runnable chain entries. Budget-capped
+at 12 probes per role; verdicts are cached per run (roles share candidates). Only the
+narrow no-allowed-providers 404 disqualifies; every other failure (5xx, timeout, unknown
+model) counts as usable and stays in omp's runtime-fallback domain. Blocked candidates
+are excluded from selection and from fallback chains, are recorded on the decision
+(`blocked[]`) and in history, and a role whose probed candidates are all blocked is left
+untouched with a notify note.
+
 ## 6. Selection pipeline
 
 Per run, per role in the **resolved role set** (shipped defaults ∪ user-defined roles

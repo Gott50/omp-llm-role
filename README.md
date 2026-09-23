@@ -12,7 +12,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `llm-role-rank.ts` | CLI report (Node 26, type-stripping — no bun/deno/tsx, no build step) |
 | `src/engine.ts` | Ranking engine shared by CLI and plugin: fetch/caches, percentile norms, `loadRankData`, `computeRankings` |
 | `src/settings.ts` | Shipped role defaults (`DEFAULT_ROLES`), plugin-settings deep-merge + validation |
-| `src/availability.ts` | OpenRouter key tier gate, catalog filter, variant resolution (`resolveVariant`) |
+| `src/availability.ts` | OpenRouter key tier gate, catalog filter, variant resolution (`resolveVariant`), provider-allowlist probe (`probeModel`) |
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains`, atomic write |
 | `src/state.ts` | State/history/lock files under the agent dir; agent-dir resolution |
 | `src/updater.ts` | Orchestration: rank → tier gate → hysteresis → chains → config write |
@@ -40,6 +40,15 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   `:batch` never. Every candidate must resolve in omp's catalog; ranking rows
   map to selectors exact id → newest dated (`-MMDD`/`-YYYYMMDD`) → bare →
   `~org/…-latest` alias, ties lexicographic.
+  On top of the tier gate, every candidate is verified with a one-token
+  completion probe: the account's OpenRouter **allowed-providers privacy
+  whitelist** is invisible to `/api/v1/key` and the catalog endpoints, and a
+  real request's 404 ("No allowed providers are available …") is the only
+  reliable signal. The probe walk verifies the current selector's candidate
+  first, then rank order, until `1 + fallbackChainDepth` clean candidates
+  (budget-capped at 12 probes per role, verdicts cached per run); blocked
+  candidates are excluded from selection and chains, recorded on the decision
+  (`blocked[]`), and a role with no clean candidate is left untouched.
 - **Switch policy**: hysteresis — a role switches only when its current model
   became ineligible (or left today's ranked pool) or the new best beats it by
   `switchMargin` (default 0.02; 0 = always take the best). Kept roles still
@@ -165,22 +174,20 @@ no enrichment (affected models unranked). An empty/unusable OpenRouter payload
 is never cached, so the next run retries. llm-stats fetch failure is fatal
 (no data at all); OpenRouter failure is non-fatal.
 
-## Current state (2026-09-22)
+## Current state (2026-09-23)
 
-- 395 llm-stats models; OpenRouter matched 149/395 (throughput), 148 priced.
-- Eligible per role: 140 (vision 72, image-input filter).
-- Role leaders: `default` DeepSeek-V4.1-Flash (0.966), `smol`/`commit`
-  Ling 3.0 Flash, `slow` Claude Fable 5, `vision` GPT-6 Astra, `plan`/`advisor`
-  GPT-5.6 Sol, `tiny` Ling 3.0 Flash Fin, `task` DeepSeek-V4.1-Flash.
-- Value lens frontier sizes: default 8/140, smol 8, slow 9, vision 11/72,
-  plan 8, commit 6, tiny 5, task 8, advisor 6; best `default` $/score
-  GLM-5.3-Flash ($0.28 per point above median), then DeepSeek-V4.1-Flash
-  ($0.44).
-- Plugin verified live (2026-09-22): day-gated session run rewrote
-  `modelRoles` + chains (unmanaged roles and owner-written chain keys
-  untouched), second same-day session no-op, `/refresh-roles` forced run
-  reported every decision, `update-roles.ts --dry-run --json` matched the
-  in-session decisions, 39/39 unit tests green.
+- 398 llm-stats models; OpenRouter matched 150/398 (throughput), 149 priced.
+- Eligible per role: 141 (vision 74, image-input filter).
+- Report leaders (pre-probe ranking): `default`/`task` DeepSeek-V4.1-Flash
+  (0.965), `smol`/`commit` Laguna-S-2.1, `slow` GLM-5.3, `vision` GPT-6 Astra,
+  `plan`/`advisor` GPT-5.6 Sol, `tiny` Ling 3.0 Flash Fin.
+- Plugin verified live (2026-09-23) with the provider-allowlist probe: the
+  account's allowed-providers whitelist excludes first-party openai/azure/
+  anthropic endpoints, so the probe gate rewrote `slow` → GLM-5.3 (`:max`),
+  `vision` → Kimi-K3 (`:auto`), `plan` → Hy3 (`:high`), `advisor` →
+  Hy4-Preview and refilled their chains with probe-clean entries; all 16
+  configured roles then served on their configured selector in headless
+  sessions (transcript-verified, no fallbacks). 49/49 unit tests green.
 
 ## Known quirks
 
@@ -205,3 +212,11 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 - `required` is the eligibility gate, not a weight: the shipped defaults
   require `throughput` without weighting it, so settings validation checks
   `required` against the known-metric set, not against `weights`.
+- The OpenRouter account's allowed-providers privacy whitelist excludes
+  first-party `openai`/`azure`/`anthropic` endpoints on this account, so
+  first-party-hosted models rank well but fail at request time with a 404
+  naming the permitted providers. The probe gate (§5.5) filters them before
+  writing; without it, fallback chains silently mask three of four affected
+  roles and `vision` hard-fails. Org prefixes are not a valid filter —
+  `deepseek/*`, `z-ai/*`, `inclusionai/*` work via whitelisted third-party
+  endpoints.

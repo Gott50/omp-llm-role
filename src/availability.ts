@@ -83,6 +83,40 @@ export function tierGate(meta: KeyMeta): Tier {
   return "none";
 }
 
+export type ProbeVerdict = "ok" | "blocked" | "unknown";
+
+const OPENROUTER_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+/** 404 body OpenRouter returns when the account's allowed-providers privacy
+ * whitelist (or a data-policy toggle) leaves a model without a runnable endpoint. */
+const BLOCKED_RE = /no allowed providers/i;
+
+/**
+ * One-token completion probe (SPEC §5 addendum): the only reliable signal for
+ * account-level provider restrictions — neither `/api/v1/key` nor the catalog
+ * endpoints expose the allowed-providers whitelist, but a real request's 404
+ * body names it. Only the narrow no-allowed-providers verdict blocks a
+ * candidate; every other failure is "unknown" and counts as usable (transient
+ * errors are omp's runtime-fallback domain, not ours).
+ */
+export async function probeModel(token: string, catalogId: string, fetchImpl: typeof fetch = fetch): Promise<ProbeVerdict> {
+  try {
+    const res = await fetchImpl(OPENROUTER_COMPLETIONS_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: catalogId, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (res.ok) return "ok";
+    if (res.status !== 404) return "unknown";
+    const body: unknown = await res.json().catch(() => null);
+    const message = isRecord(body) && isRecord(body.error) && typeof body.error.message === "string" ? body.error.message : "";
+    return BLOCKED_RE.test(message) ? "blocked" : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 /** Keep openrouter catalog rows the tier may run: never `:batch`; `:free` only on free tier. */
 export function filterCatalog(catalog: CatalogEntry[], tier: Tier): CatalogEntry[] {
   if (tier === "none") return [];

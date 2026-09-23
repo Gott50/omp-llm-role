@@ -12,7 +12,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { computeRankings, loadRankData, type Ranked, type RankData } from "./engine.ts";
-import { currentRankingId, fetchKeyMeta, filterCatalog, resolveVariant, tierGate, type CatalogEntry, type KeyMeta } from "./availability.ts";
+import { currentRankingId, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, tierGate, type CatalogEntry, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "./settings.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
@@ -27,6 +27,8 @@ export type Decision = {
   score: number;
   bestScore: number;
   currentScore: number | null;
+  /** Catalog ids probed blocked (provider allowlist) while selecting this role. */
+  blocked: string[];
 };
 
 export type RunResult = {
@@ -46,9 +48,13 @@ export type Deps = {
   getRankData?(): Promise<RankData>;
   getSettings?(): Promise<Record<string, unknown>>;
   getKeyMeta?(token: string): Promise<KeyMeta>;
+  probeModel?(token: string, catalogId: string): Promise<ProbeVerdict>;
 };
 
 const CONFLICT_RETRIES = 3;
+
+/** Per-role cap on allowlist probe requests (budget against pathological all-blocked pools). */
+const PROBE_BUDGET = 12;
 
 function mtimeOf(path: string): number {
   try {
@@ -61,9 +67,10 @@ function mtimeOf(path: string): number {
 function decisionLine(d: Decision): string {
   const from = d.from ?? "(unset)";
   const scores = `score ${d.score.toFixed(3)}, best ${d.bestScore.toFixed(3)}${d.currentScore == null ? "" : `, was ${d.currentScore.toFixed(3)}`}`;
+  const blocked = d.blocked.length > 0 ? `; blocked: ${d.blocked.join(", ")}` : "";
   return d.from === d.to
-    ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores})`
-    : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores})`;
+    ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked})`
+    : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked})`;
 }
 
 export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: boolean; dryRun?: boolean }): Promise<RunResult> {
@@ -111,23 +118,67 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     }
     const current = parseConfig(configText);
 
-    // Per-role selection: rank -> tier/catalog filter -> hysteresis -> suffix.
+    // Per-role selection: rank -> tier/catalog filter -> probe gate ->
+    // hysteresis -> suffix. The probe walk verifies candidates with one-token
+    // completions because the key's allowed-providers privacy whitelist is
+    // invisible to /api/v1/key and the catalog endpoints (SPEC §5 addendum).
     const decisions: Decision[] = [];
+    const notes: string[] = [];
     const poolByRole: Record<string, Array<{ ranked: Ranked; catalogId: string }>> = {};
     const chainKeyByRole: Record<string, string> = {};
     const chainValuesByRole: Record<string, string[]> = {};
+    const probe = deps.probeModel ?? probeModel;
+    const probeVerdicts = new Map<string, ProbeVerdict>();
     for (const [role, def] of Object.entries(settings.roles)) {
       const rankings = computeRankings(rank.models, { [role]: def });
-      const pool: Array<{ ranked: Ranked; catalogId: string }> = [];
+      const candidates: Array<{ ranked: Ranked; catalogId: string }> = [];
       for (const ranked of rankings[role] ?? []) {
         const catalogId = resolveVariant(ranked.model.id, eligible, tier);
-        if (catalogId !== null) pool.push({ ranked, catalogId });
+        if (catalogId !== null) candidates.push({ ranked, catalogId });
       }
-      if (pool.length === 0) continue; // nothing eligible — role untouched
-      poolByRole[role] = pool;
-      const best = pool[0];
+      if (candidates.length === 0) continue; // nothing eligible — role untouched
+
       const currentSelector = current.modelRoles[role] ?? null;
       const currentId = currentSelector === null ? null : currentRankingId(currentSelector);
+      const currentIdx = currentId === null ? -1 : candidates.findIndex((c) => c.ranked.model.id === currentId);
+
+      // Probe walk: current candidate first (hysteresis must see it), then rank
+      // order, until 1 + chain depth clean candidates — walked past the current
+      // rank when the current candidate is clean, so a kept role still gets
+      // runnable chain entries. Budget-capped; verdicts cached across roles.
+      const target = 1 + settings.fallbackChainDepth;
+      const order: number[] = [];
+      if (currentIdx >= 0) order.push(currentIdx);
+      for (let i = 0; i < candidates.length; i++) {
+        if (i !== currentIdx) order.push(i);
+      }
+      const probed: number[] = [];
+      const blockedForRole: string[] = [];
+      let cleanCount = 0;
+      for (const idx of order) {
+        if (probed.length >= PROBE_BUDGET) break;
+        const id = candidates[idx].catalogId;
+        let verdict = probeVerdicts.get(id);
+        if (verdict === undefined) {
+          verdict = await probe(token, id);
+          probeVerdicts.set(id, verdict);
+        }
+        probed.push(idx);
+        if (verdict === "blocked") blockedForRole.push(id);
+        else cleanCount++;
+        const currentClean = currentIdx >= 0 && probeVerdicts.get(candidates[currentIdx].catalogId) !== "blocked";
+        if (cleanCount >= target && !(currentClean && idx < currentIdx)) break;
+      }
+      const pool = probed
+        .filter((idx) => probeVerdicts.get(candidates[idx].catalogId) !== "blocked")
+        .sort((a, b) => a - b)
+        .map((idx) => candidates[idx]);
+      if (pool.length === 0) {
+        notes.push(`@${role}: no probe-clean candidate among ${probed.length} probed (blocked: ${blockedForRole.join(", ")}) — role untouched`);
+        continue;
+      }
+      poolByRole[role] = pool;
+      const best = pool[0];
       const currentEntry = currentId === null ? null : pool.find((p) => p.ranked.model.id === currentId) ?? null;
 
       let chosen = best;
@@ -154,6 +205,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         score: chosen.ranked.score,
         bestScore: best.ranked.score,
         currentScore: currentEntry?.ranked.score ?? null,
+        blocked: blockedForRole,
       });
 
       // Fallback chain for every managed role: key = chosen selector without suffix,
@@ -230,6 +282,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
     const lines: string[] = [];
     if (notifyAll) {
+      lines.push(...notes);
       for (const d of decisions) lines.push(decisionLine(d));
       lines.push(wrote ? `wrote ${configPath}` : `no changes to ${configPath}${opts?.dryRun ? " (dry run)" : ""}`);
       deps.notify(lines);
@@ -237,7 +290,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       for (const d of decisions) {
         if (d.from !== d.to) lines.push(decisionLine(d));
       }
-      if (lines.length > 0) deps.notify(lines);
+      if (lines.length > 0 || notes.length > 0) deps.notify([...notes, ...lines]);
     }
     return { decisions, wrote };
   } catch (err) {
