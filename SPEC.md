@@ -165,10 +165,12 @@ runnable iff at least one serving endpoint's provider is whitelisted — the org
 `anthropic/*` fail on first-party-only routing).
 
 Per role, candidates are verified with `probeModel` (`availability.ts`) in a bounded
-walk: the current selector's candidate first (hysteresis must see it), then rank order,
-until `1 + fallbackChainDepth` clean candidates — walked past the current rank when the
-current candidate is clean, so kept roles still get runnable chain entries. Budget-capped
-at 12 probes per role; verdicts are cached per run (roles share candidates). Only the
+walk: the current selector's candidate first (hysteresis must see it), then rank order.
+It stops only when `1 + fallbackChainDepth` clean candidates exist AND — when the current
+candidate is clean — `fallbackChainDepth` clean candidates lie beyond the current rank,
+so every chain entry written to the config is probe-verified and a kept role's chain is
+filled to full depth. Budget-capped at 12 probes per role (a short chain is the graceful
+degradation); verdicts are cached per run (roles share candidates). Only the
 narrow no-allowed-providers 404 disqualifies; every other failure (5xx, timeout, unknown
 model) counts as usable and stays in omp's runtime-fallback domain. Blocked candidates
 are excluded from selection and from fallback chains, are recorded on the decision

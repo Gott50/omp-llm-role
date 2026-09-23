@@ -106,3 +106,23 @@ test("all candidates blocked -> role untouched with a note", async () => {
   assert.equal(result.decisions.find((x) => x.role === "default"), undefined);
   assert.ok(notified.some((l) => l.includes("@default: no probe-clean candidate")));
 });
+
+const SIX = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 2, 90), makeModel("model-c", 70, 3, 80), makeModel("model-d", 60, 4, 70), makeModel("model-e", 50, 5, 60), makeModel("model-f", 40, 6, 50)];
+const SEVEN = [...SIX, makeModel("model-g", 30, 7, 50)];
+
+test("walk fills a kept role's chain to full depth with probe-clean entries", async () => {
+  const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-d"\n');
+  const deps = fakeDeps(SIX, { switchMargin: 1, fallbackChainDepth: 2 }, { probeModel: blockedExcept([]) });
+  await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  const text = readFileSync(join(dir, "config.yml"), "utf8");
+  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-e"\n\s+- "openrouter\/org\/model-f"/);
+});
+
+test("blocked candidates beyond a kept current do not count toward chain depth", async () => {
+  const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-d"\n');
+  const deps = fakeDeps(SEVEN, { switchMargin: 1, fallbackChainDepth: 2 }, { probeModel: blockedExcept(["org/model-e"]) });
+  await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  const text = readFileSync(join(dir, "config.yml"), "utf8");
+  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-f"\n\s+- "openrouter\/org\/model-g"/);
+  assert.doesNotMatch(text, /model-e/);
+});

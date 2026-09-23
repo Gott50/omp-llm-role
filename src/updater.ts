@@ -143,9 +143,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const currentIdx = currentId === null ? -1 : candidates.findIndex((c) => c.ranked.model.id === currentId);
 
       // Probe walk: current candidate first (hysteresis must see it), then rank
-      // order, until 1 + chain depth clean candidates — walked past the current
-      // rank when the current candidate is clean, so a kept role still gets
-      // runnable chain entries. Budget-capped; verdicts cached across roles.
+      // order. It stops only when 1 + chain depth clean candidates exist AND —
+      // when the current candidate is clean — `fallbackChainDepth` clean
+      // candidates lie beyond the current rank, so a kept role's written chain
+      // is filled with probe-verified entries. Budget-capped (a short chain is
+      // the graceful degradation); verdicts cached across roles.
       const target = 1 + settings.fallbackChainDepth;
       const order: number[] = [];
       if (currentIdx >= 0) order.push(currentIdx);
@@ -155,6 +157,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const probed: number[] = [];
       const blockedForRole: string[] = [];
       let cleanCount = 0;
+      let cleanAfterCurrent = 0;
       for (const idx of order) {
         if (probed.length >= PROBE_BUDGET) break;
         const id = candidates[idx].catalogId;
@@ -164,10 +167,14 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           probeVerdicts.set(id, verdict);
         }
         probed.push(idx);
-        if (verdict === "blocked") blockedForRole.push(id);
-        else cleanCount++;
+        if (verdict === "blocked") {
+          blockedForRole.push(id);
+        } else {
+          cleanCount++;
+          if (currentIdx >= 0 && idx > currentIdx) cleanAfterCurrent++;
+        }
         const currentClean = currentIdx >= 0 && probeVerdicts.get(candidates[currentIdx].catalogId) !== "blocked";
-        if (cleanCount >= target && !(currentClean && idx < currentIdx)) break;
+        if (cleanCount >= target && (!currentClean || cleanAfterCurrent >= settings.fallbackChainDepth)) break;
       }
       const pool = probed
         .filter((idx) => probeVerdicts.get(candidates[idx].catalogId) !== "blocked")

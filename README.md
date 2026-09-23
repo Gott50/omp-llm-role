@@ -45,10 +45,13 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   whitelist** is invisible to `/api/v1/key` and the catalog endpoints, and a
   real request's 404 ("No allowed providers are available …") is the only
   reliable signal. The probe walk verifies the current selector's candidate
-  first, then rank order, until `1 + fallbackChainDepth` clean candidates
-  (budget-capped at 12 probes per role, verdicts cached per run); blocked
-  candidates are excluded from selection and chains, recorded on the decision
-  (`blocked[]`), and a role with no clean candidate is left untouched.
+  first, then rank order, and stops only when `1 + fallbackChainDepth` clean
+  candidates exist and — for a clean current selector — `fallbackChainDepth`
+  clean candidates lie beyond it, so every written chain entry is
+  probe-verified (budget-capped at 12 probes per role, verdicts cached per
+  run); blocked candidates are excluded from selection and chains, recorded
+  on the decision (`blocked[]`), and a role with no clean candidate is left
+  untouched.
 - **Switch policy**: hysteresis — a role switches only when its current model
   became ineligible (or left today's ranked pool) or the new best beats it by
   `switchMargin` (default 0.02; 0 = always take the best). Kept roles still
