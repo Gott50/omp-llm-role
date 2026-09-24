@@ -4,7 +4,7 @@
  * model ranking for each omp model role:
  *   default, smol, slow, vision, plan, commit, tiny, task, advisor
  *
- * The ranking engine (fetch/caches, percentile norms, per-role scoring) lives
+ * The ranking engine (fetch/caches, cardinal transforms, per-role value scoring) lives
  * in src/engine.ts and is shared with the omp-llm-role plugin; this CLI is the
  * report surface. Role weight defaults live in src/settings.ts.
  *
@@ -28,7 +28,7 @@ import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { catalogFromOmpModelsJson, resolveVariant, type CatalogEntry } from "./src/availability.ts";
-import { computeRankings, loadRankData, paretoFrontier, type Model, type Ranked } from "./src/engine.ts";
+import { computeRankings, loadRankData, paretoFrontier, roleLambda, type Model, type Ranked } from "./src/engine.ts";
 import { DEFAULT_ROLES as ROLES } from "./src/settings.ts";
 
 const execFileP = promisify(execFile);
@@ -64,15 +64,16 @@ function formatRankings(
   const lines: string[] = [
     `llm-stats.com best-fit ranking per omp model role — ${models.length} models, ` +
       `${fetchedAt.slice(0, 10)}`,
-    "Score = Σ weight × percentile per metric (1.0 = best). Each metric column shows that",
-    "metric's weighted contribution (weight × percentile); the metric columns of a row sum",
-    "to the score. price is the inverted (cheaper = better) percentile; — = metric missing",
-    "(contributes 0). Metric column headers show the weight.",
+    "Value ranking per role: each metric is cardinal-normalized with fixed anchors",
+    "(no ranks): llm-stats index_* affine (v+20)/80 (interval scale, observed −16..+60),",
+    "benchmarks chance-anchored pass rates, throughput log-anchored 10..300 tok/s.",
+    "q = Σ weight × metric over the quality metrics (weights renormalized excluding",
+    "price); value = q − λ·$/M sorts each role. λ = price-weight share ÷ $20, per-role",
+    "override via plugin settings roles.<role>.lambda. Metric columns show weighted",
+    "contributions and sum to q; — = metric missing (contributes 0).",
     "Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context",
-    "sea=search vis=vision tput=throughput (code, price, mrcr as-is).",
-    "★ = Pareto-frontier: no eligible model is both cheaper and better (price-free score).",
-    "$/score = $/M ÷ (score without price − 0.5), cost per quality point above the median;",
-    "— when the price-free score is ≤ 0.5 (price not double-counted: it is excluded there).",
+    "sea=search vis=vision tput=throughput (code, mrcr as-is).",
+    "★ = Pareto-frontier: no eligible model is both cheaper and better (q).",
   ];
   lines.push(
     `Throughput + price: OpenRouter (p50 tok/s, last 30m routed traffic; standard-route` +
@@ -88,20 +89,21 @@ function formatRankings(
       lines.push("eligible: 0 — no eligible models", "");
       continue;
     }
-    lines.push(`eligible: ${ranked.length}`, "");
+    lines.push(`eligible: ${ranked.length} — λ ${roleLambda(def).toFixed(5)} $/quality-point`, "");
     const frontier = paretoFrontier(ranked);
-    const metricKeys = Object.keys(def.weights);
+    const metricKeys = Object.keys(def.weights).filter((k) => k !== "price");
+    const qW = 1 - (def.weights.price ?? 0);
     const rows: string[][] = [
       [
         "#",
-        "score",
+        "value",
+        "q",
         "model",
         "org",
         "$/M",
         "tok/s",
-        "$/score",
         "ctx",
-        ...metricKeys.map((k) => `${METRIC_ABBR[k]} ${Number((def.weights[k] * 100).toFixed(1))}%`),
+        ...metricKeys.map((k) => `${METRIC_ABBR[k]} ${Number(((def.weights[k] / qW) * 100).toFixed(1))}%`),
       ],
     ];
     for (let i = 0; i < Math.min(top, ranked.length); i++) {
@@ -116,34 +118,29 @@ function formatRankings(
           : m.context >= 1e6
             ? `${(m.context / 1e6).toFixed(1)}M`
             : `${Math.round(m.context / 1e3)}k`;
-      let value = "—";
-      if (m.price != null && r.qScore > 0.5) {
-        const pps = m.price / (r.qScore - 0.5);
-        value = `$${pps < 10 ? pps.toFixed(2) : Number(pps.toFixed(1))}`;
-      }
       rows.push([
         String(i + 1),
-        r.score.toFixed(3),
+        r.value.toFixed(3),
+        r.q.toFixed(3),
         frontier.has(m.id) ? `★ ${m.name}` : m.name,
         m.org,
         price,
         tokS,
-        value,
         ctx,
         ...metricKeys.map((k) => {
           const p: number | undefined = r.parts[k];
-          return p == null ? "—" : (def.weights[k] * p).toFixed(3);
+          return p == null ? "—" : p.toFixed(3);
         }),
       ]);
     }
     // Columns 2 (model) and 3 (org) hold text: left-align. All others: right-align.
     const widths = rows[0].map((_, c) => Math.max(...rows.map((row) => row[c].length)));
     const padded = rows.map((row) =>
-      row.map((v, c) => (c === 2 || c === 3 ? v.padEnd(widths[c]) : v.padStart(widths[c]))),
+      row.map((v, c) => (c === 3 || c === 4 ? v.padEnd(widths[c]) : v.padStart(widths[c]))),
     );
     lines.push(`| ${padded[0].join(" | ")} |`);
     lines.push(
-      `| ${widths.map((w, c) => (c === 2 || c === 3 ? "-".repeat(w) : `${"-".repeat(w - 1)}:`)).join(" | ")} |`,
+      `| ${widths.map((w, c) => (c === 3 || c === 4 ? "-".repeat(w) : `${"-".repeat(w - 1)}:`)).join(" | ")} |`,
     );
     for (let ri = 1; ri < padded.length; ri++) lines.push(`| ${padded[ri].join(" | ")} |`);
     lines.push("");
@@ -219,7 +216,8 @@ async function main(): Promise<void> {
       source,
       modelCount: models.length,
       roles: Object.fromEntries(
-        Object.entries(rankings).map(([role, ranked]) => {
+        Object.entries(ROLES).map(([role, def]) => {
+          const ranked = rankings[role] ?? [];
           const frontier = paretoFrontier(ranked);
           return [
             role,
@@ -228,12 +226,9 @@ async function main(): Promise<void> {
               modelId: r.model.id,
               name: r.model.name,
               organization: r.model.org,
-              score: Number(r.score.toFixed(4)),
-              priceFreeScore: Number(r.qScore.toFixed(4)),
-              valueUsdPerScore:
-                r.model.price != null && r.qScore > 0.5
-                  ? Number((r.model.price / (r.qScore - 0.5)).toFixed(4))
-                  : null,
+              value: Number(r.value.toFixed(4)),
+              q: Number(r.q.toFixed(4)),
+              lambda: Number(roleLambda(def).toFixed(6)),
               paretoFrontier: frontier.has(r.model.id),
               priceBlendedUsdPerM: r.model.price,
               throughputTokS: r.model.throughput,

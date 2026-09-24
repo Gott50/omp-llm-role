@@ -1,7 +1,8 @@
 /**
  * Ranking engine for the omp model roles: fetches the llm-stats.com
  * leaderboard, enriches it with OpenRouter per-endpoint p50 throughput and
- * pricing, and computes percentile-weighted best-fit rankings per role.
+ * pricing, and computes per-role value rankings: a cardinal quality composite q
+ * minus a λ·($/M) cost penalty, with fixed-anchor metric transforms.
  *
  * Data sources:
  *   Quality: https://llm-stats.com/leaderboards/llm-leaderboard — the page
@@ -91,15 +92,19 @@ export type Model = {
 
 export type RoleDef = {
   description: string;
-  /** metric -> weight; metrics are percentile-normalized across all models */
+  /** metric -> weight; metrics are cardinal-normalized with fixed anchors */
   weights: Record<string, number>;
   /** metrics the model must have to be ranked at all for this role */
   required: string[];
   /** schema-capability filters applied before ranking eligibility */
   filters?: { image?: boolean };
+  /** explicit λ override ($ per quality point); default derives from the price weight */
+  lambda?: number;
 };
 
-export type Ranked = { model: Model; score: number; qScore: number; parts: Record<string, number> };
+/** One role's ranking: `q` is the price-free quality composite (parts sum to it),
+ * `value = q − λ·$/M` is the sort key. */
+export type Ranked = { model: Model; value: number; q: number; parts: Record<string, number> };
 
 export type RankData = {
   models: Model[];
@@ -287,31 +292,61 @@ export function extractJsonArray(buf: string, key: string): unknown[] {
 }
 
 // ---------------------------------------------------------------------------
-// Normalization + scoring
+// Cardinal scoring
 // ---------------------------------------------------------------------------
 
-/** Midrank percentile (0..1) per model for one metric; null-safe. */
-export function percentileNorm(models: Model[], key: string): Map<string, number> {
-  const present = models
-    .filter((m) => m.metrics[key] != null)
-    .map((m) => [m.id, m.metrics[key] as number] as const)
-    .sort((a, b) => a[1] - b[1]);
-  const norm = new Map<string, number>();
-  const n = present.length;
-  if (n === 0) return norm;
-  if (n === 1) {
-    norm.set(present[0][0], 0.5);
-    return norm;
+/** Fixed dollar reference for λ derivation: a price weight share w means
+ * $P_REF_USD buys w/(1−w) quality points. */
+const P_REF_USD = 20;
+
+/** llm-stats index_* metrics: interval scale with arbitrary zero (observed
+ * −16..+60 across the field). Fixed affine anchors −20→0, +60→1 preserve
+ * intervals; values outside the anchors extrapolate (no clamping — clamping
+ * would destroy cardinality at the edges). */
+const INDEX_METRICS: Record<string, true> = {
+  general: true,
+  reasoning: true,
+  math: true,
+  code: true,
+  agents: true,
+  search: true,
+  vision: true,
+  tool_calling: true,
+  long_context: true,
+};
+
+/** Chance-level pass rates for benchmark metrics (guessing baseline = true zero
+ * of skill). Benchmarks absent here guess ≈ 0 and use the raw pass rate. */
+const BENCHMARK_CHANCE: Record<string, number> = {
+  gpqa: 0.25, // 4-way multiple choice
+};
+
+/** Throughput log anchor: equal log-ratios count equally (10→0, 300→1 tok/s);
+ * saturated outside the anchors (slower than the floor adds no speed value). */
+const TPUT_MIN_TOKS = 10;
+const TPUT_MAX_TOKS = 300;
+
+/** Fixed-anchor cardinal transform for one metric value. Uses no field
+ * statistics — the scale is sample-independent, unlike percentile ranks. */
+export function cardinalMetric(metric: string, v: number): number {
+  if (metric === "throughput") {
+    const t = Math.log(v / TPUT_MIN_TOKS) / Math.log(TPUT_MAX_TOKS / TPUT_MIN_TOKS);
+    return Math.min(1, Math.max(0, t));
   }
-  let i = 0;
-  while (i < n) {
-    let j = i;
-    while (j + 1 < n && present[j + 1][1] === present[i][1]) j++;
-    const mid = (i + j) / (2 * (n - 1)); // average 0-indexed rank of the tie group -> 0..1
-    for (let k = i; k <= j; k++) norm.set(present[k][0], mid);
-    i = j + 1;
-  }
-  return norm;
+  const chance = BENCHMARK_CHANCE[metric];
+  if (chance !== undefined) return (v - chance) / (1 - chance);
+  if (INDEX_METRICS[metric]) return (v + 20) / 80;
+  return v; // unclassed benchmark: raw 0-1 pass rate, chance ≈ 0
+}
+
+/** λ ($ per quality point) for a role: explicit override wins; default derives
+ * from the price weight's share — w_price/(1−w_price) quality points per $P_REF. */
+export function roleLambda(def: RoleDef): number {
+  if (def.lambda !== undefined) return def.lambda;
+  const wPrice = def.weights.price ?? 0;
+  if (wPrice <= 0) return 0; // quality-only role: cost is not a factor
+  if (wPrice >= 1) return 1 / P_REF_USD; // pure-cost role: no quality blend to trade against
+  return wPrice / (1 - wPrice) / P_REF_USD;
 }
 
 export function buildModels(rows: LlmStatsRow[]): Model[] {
@@ -342,39 +377,40 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
       mrcr: r.mrcr_v2_score,
       terminal_bench: r.terminal_bench_score,
       tau_bench: r.tau_bench_retail_score,
-      price: null, // set by OpenRouter enrichment; inverted at scoring time (cheaper is better)
+      price: null, // set by OpenRouter enrichment; the λ·$ penalty axis, never blended
       throughput: null,
     },
   }));
 }
 
-export function rankRole(def: RoleDef, models: Model[], norms: Record<string, Map<string, number>>): Ranked[] {
-  const totalW = Object.values(def.weights).reduce((a, b) => a + b, 0);
+export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
+  const wPrice = def.weights.price ?? 0;
+  const qW = 1 - wPrice;
+  const lambda = roleLambda(def);
   const ranked: Ranked[] = [];
   for (const m of models) {
     if (def.required.some((k) => m.metrics[k] == null)) continue;
     if (def.filters?.image && !m.multimodal) continue;
+    if (m.price == null) continue; // value needs a billed price
 
-    let score = 0;
+    let q = 0;
     const parts: Record<string, number> = {};
     for (const [metric, w] of Object.entries(def.weights)) {
-      let v = norms[metric]?.get(m.id);
-      if (v == null) continue; // missing optional metric contributes nothing
-      if (metric === "price") v = 1 - v; // cheaper is better
-      parts[metric] = v;
-      score += w * v;
+      if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
+      const raw = m.metrics[metric];
+      if (raw == null) continue; // missing optional metric contributes nothing
+      const contrib = (w / qW) * cardinalMetric(metric, raw);
+      parts[metric] = contrib;
+      q += contrib;
     }
-    const wPrice = def.weights.price ?? 0;
-    const qScore =
-      wPrice > 0 ? (score - wPrice * parts.price) / (totalW - wPrice) : score / totalW;
-    ranked.push({ model: m, score: score / totalW, qScore, parts });
+    ranked.push({ model: m, value: q - lambda * m.price, q, parts });
   }
-  ranked.sort((a, b) => b.score - a.score);
+  ranked.sort((a, b) => b.value - a.value);
   return ranked;
 }
 
-/** Ids of undominated models: no other ranked model is both cheaper and at least as good
- * (price-free score). Equal price+score ties leave both on the frontier. */
+/** Ids of undominated models: no other ranked model is both cheaper and at least
+ * as good (quality q). Equal price+quality ties leave both on the frontier. */
 export function paretoFrontier(ranked: Ranked[]): Set<string> {
   const frontier = new Set<string>();
   for (const a of ranked) {
@@ -384,8 +420,8 @@ export function paretoFrontier(ranked: Ranked[]): Set<string> {
         b.model.price != null &&
         a.model.price != null &&
         b.model.price <= a.model.price &&
-        b.qScore >= a.qScore &&
-        (b.model.price < a.model.price || b.qScore > a.qScore),
+        b.q >= a.q &&
+        (b.model.price < a.model.price || b.q > a.q),
     );
     if (!dominated) frontier.add(a.model.id);
   }
@@ -575,18 +611,11 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
   return { models, fetchedAt, source, orMatched, orPriced };
 }
 
-/**
- * Percentile-normalize every metric referenced by `roles` once, then rank each
- * role. `roles` comes from resolved settings (shipped defaults and/or user-defined
- * role weight sets), not a hardcoded table.
+/** Rank each role over the models. `roles` comes from resolved settings (shipped
+ * defaults and/or user-defined role weight sets), not a hardcoded table.
  */
 export function computeRankings(models: Model[], roles: Record<string, RoleDef>): Record<string, Ranked[]> {
-  const metricKeys = new Set<string>();
-  for (const def of Object.values(roles)) for (const k of Object.keys(def.weights)) metricKeys.add(k);
-  const norms: Record<string, Map<string, number>> = {};
-  for (const k of metricKeys) norms[k] = percentileNorm(models, k);
-
   const rankings: Record<string, Ranked[]> = {};
-  for (const [role, def] of Object.entries(roles)) rankings[role] = rankRole(def, models, norms);
+  for (const [role, def] of Object.entries(roles)) rankings[role] = rankRole(def, models);
   return rankings;
 }

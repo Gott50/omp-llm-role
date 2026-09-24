@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
-// Uniform quality metrics -> scores: A 1.0, B 0.5, C 0.0; margin(A,B) = 0.5.
+// Uniform quality metrics -> q = (v+20)/80: A 1.375, B 1.25, C 1.125.
+// value = q − λ·price with λ = 0.05/0.95/20; margin(A,B) = 0.125 + 4λ ≈ 0.1355.
 const MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
 
 async function run(configText: string | null, settings: Record<string, unknown> = {}) {
@@ -34,11 +35,12 @@ test("best not better by margin -> keep current (kept-margin)", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.6 });
   assert.equal(result.decisions[0].reason, "kept-margin");
   assert.equal(result.decisions[0].to, "openrouter/org/model-b");
-  assert.equal(result.decisions[0].bestScore - (result.decisions[0].currentScore ?? 0), 0.5);
+  const margin = result.decisions[0].bestValue - (result.decisions[0].currentValue ?? 0);
+  assert.ok(Math.abs(margin - (0.125 + 4 * (0.05 / 0.95 / 20))) < 1e-9);
 });
 
 test("best beats current by margin -> switch (switched)", async () => {
-  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.4 });
+  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.1 });
   assert.equal(result.decisions[0].reason, "switched");
   assert.equal(result.decisions[0].to, "openrouter/org/model-a");
 });

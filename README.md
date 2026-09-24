@@ -10,7 +10,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | File | Purpose |
 |---|---|
 | `llm-role-rank.ts` | CLI report (Node 26, type-stripping — no bun/deno/tsx, no build step) |
-| `src/engine.ts` | Ranking engine shared by CLI and plugin: fetch/caches, percentile norms, `loadRankData`, `computeRankings` |
+| `src/engine.ts` | Ranking engine shared by CLI and plugin: fetch/caches, cardinal transforms, value scoring, `loadRankData`, `computeRankings` |
 | `src/settings.ts` | Shipped role defaults (`DEFAULT_ROLES`), plugin-settings deep-merge + validation |
 | `src/availability.ts` | OpenRouter key tier gate, catalog filter, variant resolution (`resolveVariant`), provider-allowlist probe (`probeModel`) |
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains`, atomic write |
@@ -116,22 +116,26 @@ as fallback — a $0 free tier never sets the price.
 
 ## Scoring
 
-Per role, each metric is percentile-normalized across all models (midrank
-`(i+j)/(2*(n-1))`, null-safe), then a weighted score is computed. Report
-tables show each metric's contribution (`weight × percentile`) after a `|`;
-they sum to the score (`—` = missing optional metric, contributes 0). Price
-is OpenRouter's standard-route $/M (3:1 input:output blend), inverted so
-cheaper is better. Every role weights price AND throughput. A model is
+Per role, each metric is cardinal-normalized with **fixed anchors** (no ranks —
+the scale is sample-independent): llm-stats `index_*` scores are interval-scale
+with arbitrary zero (observed −16..+60), mapped affinely `(v+20)/80`; benchmarks
+are chance-anchored pass rates (gpqa 0.25 four-way guessing baseline, others
+chance ≈ 0); throughput is log-anchored 10..300 tok/s (equal log-ratios count
+equally, saturated outside the anchors). The quality composite
+`q = Σ (weight / (1 − w_price)) × metric` excludes price; the sort key is
+`value = q − λ·$/M` with `λ = (w_price/(1−w_price)) / $20` — the price weight's
+share, overridable per role via plugin settings `roles.<role>.lambda`. Report
+tables show each metric's weighted contribution after a `|` (they sum to `q`;
+`—` = missing optional metric, contributes 0) plus the `q` and `value` columns.
+Price is OpenRouter's standard-route $/M (3:1 input:output blend) — the penalty
+axis, never blended. Every role weights price AND throughput. A model is
 eligible for a role only when all `required` metrics are non-null (`required`
 is the eligibility gate, independent of weights — e.g. every role requires
-throughput without weighting it). Two cost lenses accompany the score in the
-report, both built on the **price-free score** — the weighted score with the
-price metric stripped and the remaining weights renormalized (derived exactly
-as `(score − w_price·price_percentile) / (1 − w_price)`, no second ranking
-pass): **★** marks the Pareto frontier (no eligible model is both cheaper and
-better), and **$/score** is blended $/M ÷ (price-free score − 0.5) — cost per
-quality point above the median; models at or below the median get no value
-entry. This kills the cheap-and-bad artifact of a raw price/score ratio.
+throughput without weighting it) and it has a billed price. **★** marks the
+Pareto frontier (no eligible model is both cheaper and better on `q`). Cardinal
+scoring kills two percentile artifacts: rank compression (real magnitude gaps
+now count — e.g. @default flipped DeepSeek-V4.1-Flash → GPT-6 Astra) and
+field-dependent scales (adding a model no longer reshuffles everyone).
 
 Roles and weights (see `DEFAULT_ROLES` in `src/settings.ts`, overridable via
 plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
@@ -151,8 +155,8 @@ node --test tests/
   per-metric weighted-contribution columns + suggested `settings.modelRoles`).
 - `--top N`: rows per role (default 10). `--json`: machine payload
   (`fetchedAt, source, modelCount, roles{role:[{rank, modelId, name,
-  organization, score, priceFreeScore, valueUsdPerScore, paretoFrontier,
-  priceBlendedUsdPerM, throughputTokS, contextTokens}]}`). `--out FILE`:
+  organization, value, q, lambda, paretoFrontier, priceBlendedUsdPerM,
+  throughputTokS, contextTokens}]}`). `--out FILE`:
   write instead of stdout. `--refresh`: bypass both caches. `--url`: override
   the llm-stats page URL.
 - `update-roles.ts` runs the plugin pipeline headlessly (key + catalog via the
@@ -177,13 +181,13 @@ no enrichment (affected models unranked). An empty/unusable OpenRouter payload
 is never cached, so the next run retries. llm-stats fetch failure is fatal
 (no data at all); OpenRouter failure is non-fatal.
 
-## Current state (2026-09-23)
+## Current state (2026-09-24)
 
-- 398 llm-stats models; OpenRouter matched 150/398 (throughput), 149 priced.
-- Eligible per role: 141 (vision 74, image-input filter).
-- Report leaders (pre-probe ranking): `default`/`task` DeepSeek-V4.1-Flash
-  (0.965), `smol`/`commit` Laguna-S-2.1, `slow` GLM-5.3, `vision` GPT-6 Astra,
-  `plan`/`advisor` GPT-5.6 Sol, `tiny` Ling 3.0 Flash Fin.
+- 398 llm-stats models; OpenRouter matched 152/398 (throughput), 151 priced.
+- Eligible per role: 143 (vision 74, image-input filter).
+- Value-ranking leaders: `default` GPT-6 Astra (0.835), `smol`/`commit`/`tiny`
+  Muse Spark 1.1, `slow` GPT-6 Astra (0.857), `vision` GPT-6 Astra (0.809),
+  `plan`/`advisor` GPT-5.6 Sol, `task` Muse Spark 1.3.
 - Plugin verified live (2026-09-23) with the provider-allowlist probe: the
   account's allowed-providers whitelist excludes first-party openai/azure/
   anthropic endpoints, so the probe gate rewrote `slow` → GLM-5.3 (`:max`),
@@ -199,7 +203,8 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   re-fetch before debugging join logic.
 - llm-stats has no public API; the RSC flight extraction depends on the page's
   `initialData` key (do not include `[` in the search key).
-- `index_general` can be negative; percentile normalization handles it.
+- `index_*` scores are interval-scale (observed −16..+60, can be negative); the
+  fixed affine anchors (−20→0, +60→1) handle it.
 - Node type-stripping does not typecheck: property-name typos surface as
   `undefined` at runtime, not compile errors. Always run the script after edits
   and sanity-check stderr match counts and eligible counts.

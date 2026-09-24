@@ -257,6 +257,12 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
         errors.push(`role ${name}: filters.image must be a boolean`);
       }
     }
+    if (rdef.lambda !== undefined) {
+      if (typeof rdef.lambda !== "number" || !Number.isFinite(rdef.lambda) || rdef.lambda < 0) {
+        errors.push(`role ${name}: lambda must be a number ≥ 0`);
+        delete rdef.lambda;
+      }
+    }
     if (rdef.description === undefined) rdef.description = "";
   }
 

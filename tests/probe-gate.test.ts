@@ -6,7 +6,7 @@ import { probeModel } from "../src/availability.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
-// Uniform quality metrics -> scores: A 1.0, B 0.5, C 0.0; margin(A,B) = 0.5.
+// Uniform quality metrics -> q = (v+20)/80: A 1.375, B 1.25, C 1.125; margin(A,B) ≈ 0.1355.
 const MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
 
 function fetchResponding(status: number, body: unknown): typeof fetch {

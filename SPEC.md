@@ -61,8 +61,8 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
   package.json              # name: omp-llm-role, omp.extensions: ["./src/extension.ts"]
   llm-role-rank.ts          # existing CLI (report) — refactored to export the engine
   src/
-    engine.ts               # extracted from llm-role-rank.ts: fetch/caches, percentile norm,
-                            # computeRankings(models, rolesConfig) → Record<role, Ranked[]>
+    engine.ts               # extracted from llm-role-rank.ts: fetch/caches, cardinal
+                            # transforms, value scoring; computeRankings(models, rolesConfig)
     settings.ts             # defaults + dotted-key deep-merge of plugin settings map
     availability.ts         # key fetch, tier gate, catalog check, variant resolution
     config-edit.ts          # surgical YAML edit for modelRoles + retry.fallbackChains
@@ -71,7 +71,7 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
     extension.ts            # Bun/omp entry: session_start day gate + /refresh-roles
     cli.ts                  # node entry: update-roles.ts shim → headless run
   update-roles.ts           # `node update-roles.ts [--dry-run] [--json]` (thin shim)
-  llm-role-rankings.md      # existing report output (unchanged format)
+  llm-role-rankings.md      # existing report output (value-ranking format)
   *.json caches             # unchanged (daily UTC freshness)
 ```
 
@@ -83,9 +83,10 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
 
 - `loadRankData(deps?)` — existing fetch/cache chain (fresh cache → live fetch → stale
   cache → none), returns models + match counts. Unchanged behavior.
-- `computeRankings(models, roles)` — existing percentile normalization (`(i+j)/(2*(n-1))`,
-  midrank) + weighted score + eligibility (`required` non-null). `roles` comes from
-  resolved settings (§7), not the hardcoded `ROLES`.
+- `computeRankings(models, roles)` — cardinal fixed-anchor transforms (index_* affine
+  `(v+20)/80`, benchmarks chance-anchored, throughput log-anchored) + quality composite
+  `q` + value `q − λ·$/M` + eligibility (`required` non-null, billed price). `roles`
+  comes from resolved settings (§7), not the hardcoded `ROLES`.
 - `llm-role-rank.ts` keeps its CLI, flags, report format, and suggested-YAML output; its
   suggested `modelRoles` block switches from `PROVIDER_BY_ORG` first-party guesses to the
   same catalog-resolved `openrouter/*` selectors the plugin emits (`PROVIDER_BY_ORG`
@@ -182,18 +183,18 @@ untouched with a notify note.
 Per run, per role in the **resolved role set** (shipped defaults ∪ user-defined roles
 that declare weights):
 
-1. **Rank** — `computeRankings` with that role's weights/required (existing math; a
-   0.5-weight dominant metric correctly beats combined 0.05 tiebreakers).
+1. **Rank** — `computeRankings` with that role's weights/required (cardinal value
+   math: `value = q − λ·$/M`; λ from the price-weight share ÷ $20 or `roles.<r>.lambda`).
 2. **Filter** — tier gate (§5.2) → catalog resolution (§5.4); unresolvable models drop.
 3. **Choose** with hysteresis (decision #7):
 
 ```
-best        = candidates[0]                       // highest score
+best        = candidates[0]                       // highest value
 current     = today's config.yml value for role   // suffix stripped for identity
 if no current entry            → adopt best
 else if current fails tier or catalog gate
   (incl. not in today's ranked pool) → adopt best
-else if best.score - current.score >= switchMargin → adopt best
+else if best.value - current.value >= switchMargin → adopt best
 else                             → keep current (chain still refreshed, §6.4)
 ```
 

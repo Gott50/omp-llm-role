@@ -24,9 +24,9 @@ export type Decision = {
   from: string | null;
   to: string;
   reason: DecisionReason;
-  score: number;
-  bestScore: number;
-  currentScore: number | null;
+  value: number;
+  bestValue: number;
+  currentValue: number | null;
   /** Catalog ids probed blocked (provider allowlist) while selecting this role. */
   blocked: string[];
 };
@@ -66,7 +66,7 @@ function mtimeOf(path: string): number {
 
 function decisionLine(d: Decision): string {
   const from = d.from ?? "(unset)";
-  const scores = `score ${d.score.toFixed(3)}, best ${d.bestScore.toFixed(3)}${d.currentScore == null ? "" : `, was ${d.currentScore.toFixed(3)}`}`;
+  const scores = `value ${d.value.toFixed(3)}, best ${d.bestValue.toFixed(3)}${d.currentValue == null ? "" : `, was ${d.currentValue.toFixed(3)}`}`;
   const blocked = d.blocked.length > 0 ? `; blocked: ${d.blocked.join(", ")}` : "";
   return d.from === d.to
     ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked})`
@@ -195,7 +195,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       else if (currentEntry.ranked.model.id === best.ranked.model.id) {
         chosen = currentEntry;
         reason = "kept-eligible";
-      } else if (best.ranked.score - currentEntry.ranked.score >= settings.switchMargin) reason = "switched";
+      } else if (best.ranked.value - currentEntry.ranked.value >= settings.switchMargin) reason = "switched";
       else {
         chosen = currentEntry;
         reason = "kept-margin";
@@ -209,9 +209,9 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         from: currentSelector,
         to: finalSelector,
         reason,
-        score: chosen.ranked.score,
-        bestScore: best.ranked.score,
-        currentScore: currentEntry?.ranked.score ?? null,
+        value: chosen.ranked.value,
+        bestValue: best.ranked.value,
+        currentValue: currentEntry?.ranked.value ?? null,
         blocked: blockedForRole,
       });
 
