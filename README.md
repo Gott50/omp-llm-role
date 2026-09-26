@@ -214,8 +214,8 @@ a role's weight keys are additive: you can adjust values and add metrics, but a
 metric the shipped default weights cannot be dropped from the key set (the
 default's weight survives the merge and the sum check fails). The editor's `×`
 therefore parks an inherited metric at a negligible weight (`0.001`) instead of
-deleting the key — click `Normalize` to redistribute and the export validates;
-metrics you added yourself are deleted outright.
+deleting the key — click `Normalize` to redistribute (it rescales the ε too) and
+the export validates; metrics you added yourself are deleted outright.
 
 ## Caching
 

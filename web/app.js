@@ -334,12 +334,20 @@ function renderExplain() {
 // Weight editor
 // ---------------------------------------------------------------------------
 
+/** Drop a metric from the role's weights. An inherited metric (one the shipped
+ * default weights) cannot leave the key set — the plugin deep-merges over
+ * DEFAULT_ROLES, so the default's weight would survive and break the sum — so it
+ * is parked at EPSILON instead. A metric the user added is deleted outright. */
+function dropWeight(metric) {
+  const def = state.defs[state.role];
+  if (state.defaults[state.role] && metric in state.defaults[state.role].weights) def.weights[metric] = EPSILON;
+  else delete def.weights[metric];
+}
+
 function setWeight(metric, value) {
   const def = state.defs[state.role];
-  const inherited = !!(state.defaults[state.role] && metric in state.defaults[state.role].weights);
   if (!Number.isFinite(value) || value <= 0) {
-    if (inherited) def.weights[metric] = EPSILON;
-    else delete def.weights[metric];
+    dropWeight(metric);
     renderEditor();
   } else {
     def.weights[metric] = value;
@@ -391,8 +399,7 @@ function renderEditor() {
             ? "set to ~0 — the plugin deep-merges weights over the shipped defaults, so an inherited metric cannot be removed"
             : "remove",
           onclick: () => {
-            if (inherited) def.weights[metric] = EPSILON;
-            else delete def.weights[metric];
+            dropWeight(metric);
             renderEditor();
             renderRoles();
             scheduleRecompute();
