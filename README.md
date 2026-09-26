@@ -210,10 +210,12 @@ numbers the plugin would use. The server binds `127.0.0.1` only (no auth) and
 serves the SPA from `web/` with no build step and no external requests.
 
 Because the plugin's settings are **overrides deep-merged over `DEFAULT_ROLES`**,
-a role's weight keys are additive: you can adjust values and add metrics, but
-removing a metric the shipped default weights is not expressible (the default's
-weight survives the merge and the sum check fails). The editor surfaces that as
-a validation error rather than writing an invalid config.
+a role's weight keys are additive: you can adjust values and add metrics, but a
+metric the shipped default weights cannot be dropped from the key set (the
+default's weight survives the merge and the sum check fails). The editor's `×`
+therefore parks an inherited metric at a negligible weight (`0.001`) instead of
+deleting the key — click `Normalize` to redistribute and the export validates;
+metrics you added yourself are deleted outright.
 
 ## Caching
 
@@ -237,9 +239,11 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 
 - 398 llm-stats models; OpenRouter matched 152/398 (throughput), 151 priced.
 - Eligible per role: 143 (vision 74, image-input filter).
-- Value-ranking leaders: `default` GPT-6 Astra (0.835), `smol`/`commit`/`tiny`
-  Muse Spark 1.1, `slow` GPT-6 Astra (0.857), `vision` GPT-6 Astra (0.809),
-  `plan`/`advisor` GPT-5.6 Sol, `task` Muse Spark 1.3.
+- Value-ranking leaders (committed 2026-09-24 report; today's 09-26 cache shifts
+  `smol`/`commit` → Gemini 3.8 Flash and `tiny` → Ling 3.0 Flash Fin):
+  `default` GPT-6 Astra (0.835), `smol`/`commit`/`tiny` Muse Spark 1.1, `slow`
+  GPT-6 Astra (0.857), `vision` GPT-6 Astra (0.809), `plan`/`advisor` GPT-5.6
+  Sol, `task` Muse Spark 1.3.
 - Plugin verified live (2026-09-23) with the provider-allowlist probe: the
   account's allowed-providers whitelist excludes first-party openai/azure/
   anthropic endpoints, so the probe gate rewrote `slow` → GLM-5.3 (`:max`),

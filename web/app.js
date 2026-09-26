@@ -23,6 +23,12 @@ const state = {
   exportMessage: "",
 };
 
+// The plugin deep-merges a role's weights over DEFAULT_ROLES, so a metric the
+// shipped default weights cannot be dropped from the key set — the default's
+// weight survives the merge and the sum check fails. "Remove" therefore parks an
+// inherited metric at this negligible weight instead of deleting the key.
+const EPSILON = 0.001;
+
 function el(tag, props, children) {
   const node = document.createElement(tag);
   if (props) {
@@ -330,8 +336,10 @@ function renderExplain() {
 
 function setWeight(metric, value) {
   const def = state.defs[state.role];
+  const inherited = !!(state.defaults[state.role] && metric in state.defaults[state.role].weights);
   if (!Number.isFinite(value) || value <= 0) {
-    delete def.weights[metric];
+    if (inherited) def.weights[metric] = EPSILON;
+    else delete def.weights[metric];
     renderEditor();
   } else {
     def.weights[metric] = value;
@@ -360,8 +368,9 @@ function renderEditor() {
   for (const metric of state.metrics) {
     if (!(metric in def.weights)) continue;
     const value = def.weights[metric];
-    const range = el("input", { type: "range", min: "0", max: "1", step: "0.01", value: String(value) });
-    const num = el("input", { type: "number", min: "0", max: "1", step: "0.01", class: "wnum", value: String(value) });
+    const inherited = !!(state.defaults[state.role] && metric in state.defaults[state.role].weights);
+    const range = el("input", { type: "range", min: "0", max: "1", step: "0.001", value: String(value) });
+    const num = el("input", { type: "number", min: "0", max: "1", step: "0.001", class: "wnum", value: String(value) });
     range.addEventListener("input", () => {
       num.value = range.value;
       setWeight(metric, Number(range.value));
@@ -371,11 +380,24 @@ function renderEditor() {
       setWeight(metric, Number(num.value));
     });
     wbody.append(
-      el("tr", {}, [
+      el("tr", { class: value <= EPSILON ? "off" : "" }, [
         el("td", { text: metricLabel(metric) }),
         el("td", {}, range),
         el("td", {}, num),
-        el("td", {}, el("button", { class: "x", text: "×", title: "remove", onclick: () => { delete def.weights[metric]; renderEditor(); renderRoles(); scheduleRecompute(); } })),
+        el("td", {}, el("button", {
+          class: "x",
+          text: "×",
+          title: inherited
+            ? "set to ~0 — the plugin deep-merges weights over the shipped defaults, so an inherited metric cannot be removed"
+            : "remove",
+          onclick: () => {
+            if (inherited) def.weights[metric] = EPSILON;
+            else delete def.weights[metric];
+            renderEditor();
+            renderRoles();
+            scheduleRecompute();
+          },
+        })),
       ]),
     );
   }

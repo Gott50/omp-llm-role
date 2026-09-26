@@ -173,9 +173,12 @@ table.comp tr.note-row td { border-bottom: none; font-size: 11px; padding-top: 0
 .closing, .dominators { margin: 6px 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; }
 
 table.weights td:first-child { color: var(--muted); }
+table.weights tr.off td:first-child { color: #5b6270; font-style: italic; }
 table.weights input[type="range"] { width: 110px; vertical-align: middle; }
 table.weights input.wnum { width: 68px; }
 button.x { padding: 1px 7px; color: var(--down); }
+
+#lambda-readout { color: var(--fg); font-family: var(--mono); }
 
 .row-controls { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
 .sum { font-family: var(--mono); }

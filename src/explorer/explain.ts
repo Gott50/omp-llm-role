@@ -159,7 +159,7 @@ export type Explanation =
 
 /** Full decomposition of one model's rank for a role, or the eligibility gates it
  * failed (same gates `rankRole` applies, listed in the same order). */
-export function explainModel(def: RoleDef, models: Model[], modelId: string): Explanation {
+export function explainModel(def: RoleDef, models: Model[], modelId: string, roleName = ""): Explanation {
   const model = models.find((m) => m.id === modelId);
   if (!model) return { eligible: false, reasons: ["model not found in today's dataset"] };
 
@@ -253,7 +253,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string): Ex
     value: self.value,
     q: self.q,
     price: model.price,
-    role: { name: "", lambda, derivedLambda, wPrice, qW },
+    role: { name: roleName, lambda, derivedLambda, wPrice, qW },
     contributions,
     cost: { price: model.price, lambda, penalty: lambda * model.price, q: self.q, value: self.value },
     gapAbove,

@@ -152,7 +152,7 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
     throw new HttpError(400, "expected { role: string, def: object, modelId: string }");
   }
   const def = body.def as unknown as RoleDef;
-  const explanation = explainModel(def, opts.getSnapshot().rank.models, body.modelId);
+  const explanation = explainModel(def, opts.getSnapshot().rank.models, body.modelId, body.role);
   sendJson(res, 200, { ...explanation, errors: validateRole(body.role, def) });
 }
 
