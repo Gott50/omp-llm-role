@@ -29,6 +29,11 @@ const state = {
 // inherited metric at this negligible weight instead of deleting the key.
 const EPSILON = 0.001;
 
+// The λ derivation exactly as the engine computes it (roleLambda:
+// w_price/(1−w_price)/P_REF_USD, P_REF_USD = $20). One copy so the λ tooltip and
+// the explain panel's derived line cannot drift apart.
+const LAMBDA_DERIVATION = "w_price/(1−w_price)/$20";
+
 function el(tag, props, children) {
   const node = document.createElement(tag);
   if (props) {
@@ -121,7 +126,7 @@ const TIPS = {
   costPenalty: "value = q − λ·price: the penalty grows linearly with price, at λ $/M per quality point.",
   whyNotHigher: "The value gap to the model ranked above, and the per-metric raw target that would close it (inverse of the cardinal transform).",
   dominated: "Models that are both cheaper and at least as good on q.",
-  lambda: "λ = price of one quality point, in $/M. Derived as w_price/(1−w_price)/$20 unless the role overrides lambda.",
+  lambda: "λ = price of one quality point, in $/M. Derived as " + LAMBDA_DERIVATION + " unless the role overrides lambda.",
   sum: "Weights must sum to 1.0 (±0.01) or the plugin rejects the role.",
   required: "Eligibility gate, not a weight: a model missing this metric is not ranked at all for the role.",
   imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
@@ -398,7 +403,7 @@ function renderExplain() {
 
   panel.append(el("h3", { "data-tip": TIPS.lambda, text: "Cost" }));
   const derived = ex.role.lambda === ex.role.derivedLambda;
-  panel.append(el("p", { class: "cost", "data-tip": TIPS.lambda, text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = w_price/(1−w_price)/$20)" : " (override)") }));
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.lambda, text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = " + LAMBDA_DERIVATION + ")" : " (override)") }));
   panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "price $" + fmt(ex.cost.price, 2) + "/M · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
 
   panel.append(el("h3", { "data-tip": TIPS.whyNotHigher, text: "Why not higher" }));
