@@ -263,6 +263,10 @@ a power-user escape hatch for whole-object overrides.
   "writeFallbackChains": true,
   "fallbackChainDepth": 2,
   "suffixes": {                  // canonical thinking suffix per role (decision #5)
+    // Hand-authored, never derived: the values mirror the owner's pre-plugin
+    // config.yml (§2 ground truth: role values carried `:off/:high/:max`) and were
+    // frozen as shipped defaults. No ranking input (value, $/M, Pareto) feeds them,
+    // so a different model winning a role keeps that role's level unchanged.
     "smol": "off", "slow": "max", "vision": "auto", "plan": "high", "commit": "off"
     // default, task, tiny, advisor: bare (absent = no suffix)
   },
