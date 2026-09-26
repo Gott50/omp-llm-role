@@ -199,6 +199,28 @@ button.x { padding: 1px 7px; color: var(--down); }
 }
 #export-status { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 
+#tip {
+  position: fixed;
+  z-index: 50;
+  display: none;
+  max-width: 330px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  color: var(--fg);
+  font: 11px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  white-space: pre-line;
+  pointer-events: none;
+}
+#tip.show { display: block; }
+
+/* elements that carry an explanation read as hoverable without being links */
+[data-tip] { cursor: help; }
+button[data-tip], select[data-tip], input[data-tip] { cursor: pointer; }
+#table thead th[data-tip], .tab[data-tip], table.comp th[data-tip], table.weights td[data-tip] { text-decoration: underline dotted var(--line); text-underline-offset: 3px; }
+
 @media (max-width: 1100px) {
   main { grid-template-columns: 1fr; }
   #right { border-left: none; border-top: 1px solid var(--line); min-height: 0; }

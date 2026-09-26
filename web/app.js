@@ -91,6 +91,108 @@ function dirtyRoles() {
 }
 
 // ---------------------------------------------------------------------------
+// Hover tooltips
+// ---------------------------------------------------------------------------
+
+/* Static explanations for columns and controls. Metric and role tooltips are
+ * built from the bootstrap payload (METRIC_META / role descriptions) instead of
+ * being duplicated here, so they cannot drift from the engine's transforms. */
+const TIPS = {
+  models: "Models in the cached llm-stats leaderboard snapshot.",
+  fetched: "UTC day of the cached snapshot; a cache older than today is refetched on boot.",
+  orJoin: "OpenRouter join: matched = models paired by slug suffix (source of throughput and price); priced = matched models that carry an OpenRouter price.",
+  lock: "Plugin settings lock file that Export writes to.",
+  refresh: "Refetch llm-stats and OpenRouter data (hits the network).",
+  rank: "Rank among this role's eligible models, by value, descending.",
+  delta: "Rank change against the role's saved (effective) definition: + means this definition ranks the model higher than the plugin does today.",
+  frontier: "Pareto frontier on (price, q): no other model is both cheaper and at least as good.",
+  value: "Sort key: value = q − λ·$/M. λ is the price of one quality point, in $/M.",
+  q: "Quality q = Σ (wᵢ/(1−w_price))·tᵢ over the weighted quality metrics. Price is not blended in — it is the penalty axis.",
+  price: "Blended price in $/M at 3:1 input:output, OpenRouter standard route.",
+  throughput: "Output throughput in tok/s (OpenRouter p50 when matched, else llm-stats).",
+  context: "Context window in tokens.",
+  explainSub: "value = q − λ·$/M, where q is the weighted quality sum and λ the price of one quality point.",
+  composition: "Raw source value → cardinal transform t → this role's renormalized weight → contribution to q. Bars show each metric's share of q.",
+  raw: "Raw value from the source: llm-stats index score, benchmark pass rate, $/M, or tok/s.",
+  t: "Cardinal-normalized value t with sample-independent fixed anchors — this is what the weights multiply.",
+  weight: "This role's weight for the metric, renormalized over the quality metrics (price excluded).",
+  contrib: "Renormalized weight × t. Contributions sum to q.",
+  share: "Share of q contributed by this metric.",
+  costPenalty: "value = q − λ·price: the penalty grows linearly with price, at λ $/M per quality point.",
+  whyNotHigher: "The value gap to the model ranked above, and the per-metric raw target that would close it (inverse of the cardinal transform).",
+  dominated: "Models that are both cheaper and at least as good on q.",
+  lambda: "λ = price of one quality point, in $/M. Derived as w_price/(1−w_price)/$20 unless the role overrides lambda.",
+  sum: "Weights must sum to 1.0 (±0.01) or the plugin rejects the role.",
+  required: "Eligibility gate, not a weight: a model missing this metric is not ranked at all for the role.",
+  imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
+  normalize: "Rescale every weight so the sum is 1.0 (the parked ε is rescaled too).",
+  addMetric: "Add a metric at weight 0.05, then Normalize.",
+  resetEffective: "Discard edits and restore the role's saved (effective) definition.",
+  resetDefaults: "Restore the shipped default definition from src/settings.ts.",
+  dropInherited: "set to ~0 — the plugin deep-merges weights over the shipped defaults, so an inherited metric cannot be removed",
+  dropAdded: "remove — this metric is not in the shipped default, so the key is deleted outright",
+  exportBtn: "Write the edited roles into the plugin lock file (a .bak-<timestamp> sibling is written first); takes effect on the next /refresh-roles in a freshly started session.",
+  copy: "Copy the dirty-roles payload (the shape the lock file stores) to the clipboard.",
+  download: "Download the dirty-roles payload as JSON.",
+};
+
+function metricTip(metric) {
+  const meta = state.metricMeta[metric];
+  if (!meta) return metric;
+  const lines = [meta.label + " (" + metric + ") — " + meta.unit, "cardinal t = " + meta.formula, "anchors: " + meta.anchors];
+  if (meta.kind === "price") lines.push("penalty axis: value = q − λ·price, never blended into q");
+  return lines.join("\n");
+}
+
+let tipEl = null;
+let tipOwner = null;
+
+function hideTip() {
+  tipOwner = null;
+  if (tipEl) tipEl.classList.remove("show");
+}
+
+function placeTip(event) {
+  const pad = 12;
+  const rect = tipEl.getBoundingClientRect();
+  let left = event.clientX + pad;
+  let top = event.clientY + pad;
+  if (left + rect.width > window.innerWidth - 8) left = event.clientX - rect.width - pad;
+  if (top + rect.height > window.innerHeight - 8) top = event.clientY - rect.height - pad;
+  tipEl.style.left = Math.max(4, left) + "px";
+  tipEl.style.top = Math.max(4, top) + "px";
+}
+
+function tipTarget(node) {
+  return node instanceof Element ? node.closest("[data-tip]") : null;
+}
+
+/** One delegated pair of listeners for the whole SPA: any element carrying a
+ * `data-tip` attribute gets the floating tooltip, so re-rendered tables and
+ * editors need no per-node wiring. */
+function initTips() {
+  tipEl = el("div", { id: "tip" });
+  document.body.append(tipEl);
+  document.addEventListener("mouseover", (event) => {
+    const target = tipTarget(event.target);
+    if (!target || target === tipOwner) return;
+    tipOwner = target;
+    tipEl.textContent = target.dataset.tip;
+    tipEl.classList.add("show");
+    placeTip(event);
+  });
+  document.addEventListener("mousemove", (event) => {
+    if (!tipOwner) return;
+    if (tipOwner.isConnected && tipTarget(event.target) === tipOwner) placeTip(event);
+    else hideTip();
+  });
+  document.addEventListener("mouseout", (event) => {
+    if (tipOwner && !tipOwner.contains(event.relatedTarget)) hideTip();
+  });
+  document.addEventListener("scroll", hideTip, true);
+}
+
+// ---------------------------------------------------------------------------
 // Header + role tabs
 // ---------------------------------------------------------------------------
 
@@ -100,14 +202,14 @@ function renderMeta(data) {
   meta.append(
     el("span", { class: "brand", text: "omp-llm-role explorer" }),
     el("span", { class: "sep", text: "·" }),
-    el("span", { text: data.modelCount + " models" }),
+    el("span", { "data-tip": TIPS.models, text: data.modelCount + " models" }),
     el("span", { class: "sep", text: "·" }),
-    el("span", { text: "fetched " + data.fetchedAt.slice(0, 10) }),
+    el("span", { "data-tip": TIPS.fetched, text: "fetched " + data.fetchedAt.slice(0, 10) }),
     el("span", { class: "sep", text: "·" }),
-    el("span", { text: "OpenRouter " + data.orMatched + " matched / " + data.orPriced + " priced" }),
+    el("span", { "data-tip": TIPS.orJoin, text: "OpenRouter " + data.orMatched + " matched / " + data.orPriced + " priced" }),
     el("span", { class: "sep", text: "·" }),
-    el("span", { class: "lock", text: "lock: " + data.lockPath }),
-    el("button", { id: "refresh", text: "Refresh data", onclick: onRefresh }),
+    el("span", { class: "lock", "data-tip": TIPS.lock, text: "lock: " + data.lockPath }),
+    el("button", { id: "refresh", "data-tip": TIPS.refresh, text: "Refresh data", onclick: onRefresh }),
   );
 }
 
@@ -119,6 +221,7 @@ function renderRoles() {
     nav.append(
       el("button", {
         class: "tab" + (role === state.role ? " active" : "") + (dirty ? " dirty" : ""),
+        "data-tip": state.defs[role].description || null,
         text: role,
         onclick: () => selectRole(role),
       }),
@@ -178,16 +281,16 @@ function renderTable() {
   table.textContent = "";
   table.append(
     el("thead", {}, el("tr", {}, [
-      el("th", { text: "#" }),
-      el("th", { text: "Δ" }),
-      el("th", { text: "★" }),
+      el("th", { "data-tip": TIPS.rank, text: "#" }),
+      el("th", { "data-tip": TIPS.delta, text: "Δ" }),
+      el("th", { "data-tip": TIPS.frontier, text: "★" }),
       el("th", { text: "model" }),
       el("th", { text: "org" }),
-      el("th", { class: "num", text: "value" }),
-      el("th", { class: "num", text: "q" }),
-      el("th", { class: "num", text: "$/M" }),
-      el("th", { class: "num", text: "tok/s" }),
-      el("th", { class: "num", text: "ctx" }),
+      el("th", { class: "num", "data-tip": TIPS.value, text: "value" }),
+      el("th", { class: "num", "data-tip": TIPS.q, text: "q" }),
+      el("th", { class: "num", "data-tip": TIPS.price, text: "$/M" }),
+      el("th", { class: "num", "data-tip": TIPS.throughput, text: "tok/s" }),
+      el("th", { class: "num", "data-tip": TIPS.context, text: "ctx" }),
     ])),
   );
   const tbody = el("tbody");
@@ -253,20 +356,21 @@ function renderExplain() {
   panel.append(
     el("p", {
       class: "sub",
+      "data-tip": TIPS.explainSub,
       text: ex.model.org + " · rank " + ex.rank + " of " + ex.total + " · value " + fmt(ex.value, 3) + " · q " + fmt(ex.q, 3) + " · $" + fmt(ex.price, 2) + "/M",
     }),
   );
 
-  panel.append(el("h3", { text: "Value composition" }));
+  panel.append(el("h3", { "data-tip": TIPS.composition, text: "Value composition" }));
   const comp = el("table", { class: "comp" });
   comp.append(
     el("thead", {}, el("tr", {}, [
       el("th", { text: "metric" }),
-      el("th", { class: "num", text: "raw" }),
-      el("th", { class: "num", text: "t" }),
-      el("th", { class: "num", text: "weight" }),
-      el("th", { class: "num", text: "contrib" }),
-      el("th", { text: "" }),
+      el("th", { class: "num", "data-tip": TIPS.raw, text: "raw" }),
+      el("th", { class: "num", "data-tip": TIPS.t, text: "t" }),
+      el("th", { class: "num", "data-tip": TIPS.weight, text: "weight" }),
+      el("th", { class: "num", "data-tip": TIPS.contrib, text: "contrib" }),
+      el("th", { "data-tip": TIPS.share, text: "" }),
     ])),
   );
   const cbody = el("tbody");
@@ -277,7 +381,7 @@ function renderExplain() {
     bar.append(fill);
     cbody.append(
       el("tr", { class: c.raw === null ? "missing-row" : "" }, [
-        el("td", { text: metricLabel(c.metric) }),
+        el("td", { "data-tip": metricTip(c.metric), text: metricLabel(c.metric) }),
         el("td", { class: "num", text: c.raw === null ? "—" : fmt(c.raw, 2) }),
         el("td", { class: "num", text: c.t === null ? "—" : fmt(c.t, 3) }),
         el("td", { class: "num", text: (c.renormWeight * 100).toFixed(1) + "%" }),
@@ -292,12 +396,12 @@ function renderExplain() {
   comp.append(cbody);
   panel.append(comp);
 
-  panel.append(el("h3", { text: "Cost" }));
+  panel.append(el("h3", { "data-tip": TIPS.lambda, text: "Cost" }));
   const derived = ex.role.lambda === ex.role.derivedLambda;
-  panel.append(el("p", { class: "cost", text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = w_price/(1−w_price)/$20)" : " (override)") }));
-  panel.append(el("p", { class: "cost", text: "price $" + fmt(ex.cost.price, 2) + "/M · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.lambda, text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = w_price/(1−w_price)/$20)" : " (override)") }));
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "price $" + fmt(ex.cost.price, 2) + "/M · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
 
-  panel.append(el("h3", { text: "Why not higher" }));
+  panel.append(el("h3", { "data-tip": TIPS.whyNotHigher, text: "Why not higher" }));
   if (ex.gapAbove === null) {
     panel.append(el("p", { class: "muted", text: "Already #1 for this role." }));
   } else {
@@ -320,7 +424,7 @@ function renderExplain() {
     panel.append(ul);
   }
 
-  panel.append(el("h3", { text: "Dominated by" }));
+  panel.append(el("h3", { "data-tip": TIPS.dominated, text: "Dominated by" }));
   if (ex.dominators.length === 0) {
     panel.append(el("p", { class: "muted", text: "No model is both cheaper and at least as good (Pareto-optimal)." }));
   } else {
@@ -389,15 +493,13 @@ function renderEditor() {
     });
     wbody.append(
       el("tr", { class: value <= EPSILON ? "off" : "" }, [
-        el("td", { text: metricLabel(metric) }),
+        el("td", { "data-tip": metricTip(metric), text: metricLabel(metric) }),
         el("td", {}, range),
         el("td", {}, num),
         el("td", {}, el("button", {
           class: "x",
           text: "×",
-          title: inherited
-            ? "set to ~0 — the plugin deep-merges weights over the shipped defaults, so an inherited metric cannot be removed"
-            : "remove",
+          "data-tip": inherited ? TIPS.dropInherited : TIPS.dropAdded,
           onclick: () => {
             dropWeight(metric);
             renderEditor();
@@ -412,7 +514,7 @@ function renderEditor() {
   panel.append(weights);
 
   const sum = Object.values(def.weights).reduce((a, b) => a + b, 0);
-  const addSel = el("select", { id: "add-metric" });
+  const addSel = el("select", { id: "add-metric", "data-tip": TIPS.addMetric });
   addSel.append(el("option", { value: "", text: "add metric…" }));
   for (const metric of state.metrics) if (!(metric in def.weights)) addSel.append(el("option", { value: metric, text: metricLabel(metric) }));
   addSel.addEventListener("change", () => {
@@ -424,13 +526,13 @@ function renderEditor() {
   });
   panel.append(
     el("div", { class: "row-controls" }, [
-      el("span", { id: "sum", class: "sum " + (Math.abs(sum - 1) > 0.01 ? "bad" : "ok"), text: "Σ = " + sum.toFixed(3) }),
-      el("button", { id: "normalize", text: "Normalize", onclick: () => { normalizeWeights(def); renderEditor(); renderRoles(); scheduleRecompute(); } }),
+      el("span", { id: "sum", class: "sum " + (Math.abs(sum - 1) > 0.01 ? "bad" : "ok"), "data-tip": TIPS.sum, text: "Σ = " + sum.toFixed(3) }),
+      el("button", { id: "normalize", "data-tip": TIPS.normalize, text: "Normalize", onclick: () => { normalizeWeights(def); renderEditor(); renderRoles(); scheduleRecompute(); } }),
       addSel,
     ]),
   );
 
-  panel.append(el("h3", { text: "Required (eligibility gate)" }));
+  panel.append(el("h3", { "data-tip": TIPS.required, text: "Required (eligibility gate)" }));
   const checks = el("div", { class: "checks" });
   for (const metric of state.metrics) {
     const cb = el("input", { type: "checkbox" });
@@ -443,7 +545,7 @@ function renderEditor() {
       }
       scheduleRecompute();
     });
-    checks.append(el("label", { class: "check" }, [cb, el("span", { text: metricLabel(metric) })]));
+    checks.append(el("label", { class: "check" }, [cb, el("span", { "data-tip": TIPS.required + "\n\n" + metricTip(metric), text: metricLabel(metric) })]));
   }
   panel.append(checks);
 
@@ -454,10 +556,10 @@ function renderEditor() {
     def.filters.image = imgCb.checked;
     scheduleRecompute();
   });
-  panel.append(el("label", { class: "check" }, [imgCb, el("span", { text: "requires image input (filters.image)" })]));
+  panel.append(el("label", { class: "check" }, [imgCb, el("span", { "data-tip": TIPS.imageFilter, text: "requires image input (filters.image)" })]));
 
-  panel.append(el("h3", { text: "λ override" }));
-  const lam = el("input", { type: "number", min: "0", step: "0.0001", class: "wnum", placeholder: "derived" });
+  panel.append(el("h3", { "data-tip": TIPS.lambda, text: "λ override" }));
+  const lam = el("input", { type: "number", min: "0", step: "0.0001", class: "wnum", placeholder: "derived", "data-tip": TIPS.lambda });
   if (def.lambda !== undefined) lam.value = String(def.lambda);
   lam.addEventListener("input", () => {
     if (lam.value === "") delete def.lambda;
@@ -468,8 +570,8 @@ function renderEditor() {
 
   panel.append(
     el("div", { class: "row-controls" }, [
-      el("button", { id: "reset-effective", text: "Reset to effective", onclick: () => { state.defs[state.role] = structuredClone(state.effective[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } }),
-      el("button", { id: "reset-defaults", text: "Reset to shipped default", onclick: () => { state.defs[state.role] = structuredClone(state.defaults[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } }),
+      el("button", { id: "reset-effective", "data-tip": TIPS.resetEffective, text: "Reset to effective", onclick: () => { state.defs[state.role] = structuredClone(state.effective[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } }),
+      el("button", { id: "reset-defaults", "data-tip": TIPS.resetDefaults, text: "Reset to shipped default", onclick: () => { state.defs[state.role] = structuredClone(state.defaults[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } }),
     ]),
   );
 
@@ -576,6 +678,7 @@ async function boot() {
   state.metricMeta = data.metricMeta;
   state.lockPath = data.lockPath;
   state.defs = structuredClone(data.roles);
+  initTips();
   renderMeta(data);
   renderRoles();
 
@@ -587,9 +690,15 @@ async function boot() {
     state.topn = e.target.value;
     renderTable();
   });
-  document.getElementById("export").addEventListener("click", onExport);
-  document.getElementById("copy").addEventListener("click", onCopy);
-  document.getElementById("download").addEventListener("click", onDownload);
+  const exportBtn = document.getElementById("export");
+  exportBtn.dataset.tip = TIPS.exportBtn;
+  exportBtn.addEventListener("click", onExport);
+  const copyBtn = document.getElementById("copy");
+  copyBtn.dataset.tip = TIPS.copy;
+  copyBtn.addEventListener("click", onCopy);
+  const downloadBtn = document.getElementById("download");
+  downloadBtn.dataset.tip = TIPS.download;
+  downloadBtn.addEventListener("click", onDownload);
 
   const first = Object.keys(state.defs)[0];
   if (first) selectRole(first);

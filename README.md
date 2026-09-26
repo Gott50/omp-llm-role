@@ -205,6 +205,14 @@ the CLI.
   change takes effect on the next `/refresh-roles` in a **freshly started** omp
   session — a session started before the write already loaded the old settings.
   `Copy JSON` / `Download JSON` emit the same dirty-roles payload for manual use.
+- **Hover explanations** — every column header, metric name, role tab, and
+  control carries a tooltip: the rank table's `#`/`Δ`/`★`/`value`/`q`/`$/M`/
+  `tok/s`/`ctx` columns explain what they hold, metric names show their cardinal
+  transform and anchors (built from `METRIC_META`, so they cannot drift from the
+  engine), role tabs show the role's description, and `λ`, `Σ`, `required`, the
+  `×` remove button, and the export buttons explain their semantics. One
+  delegated listener drives a single floating `#tip` element, so re-rendered
+  tables and editors need no per-node wiring.
 
 All ranking math is the plugin's own (`src/engine.ts`): the UI never
 reimplements `value = q − λ·$/M`, so the numbers on screen are exactly the
