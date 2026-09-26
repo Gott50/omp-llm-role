@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "description": "omp plugin: daily model-role updater driven by llm-stats/OpenRouter rankings",
+  "scripts": {
+    "explore": "node explore.ts"
+  },
   "omp": {
     "extensions": ["./src/extension.ts"]
   },

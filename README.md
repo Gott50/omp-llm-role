@@ -157,6 +157,7 @@ plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
 node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]
 node update-roles.ts [--dry-run] [--json]
 node explore.ts [--port N] [--lock PATH] [--refresh] [--no-open]
+npm run explore [-- --port N --lock PATH --refresh --no-open]
 node --test tests/
 ```
 
@@ -173,7 +174,8 @@ node --test tests/
   `{wrote, aborted, decisions[]}` only.
 - `explore.ts` boots the interactive explorer (below); `--port` (default 5177),
   `--lock` (default `~/.omp/plugins/omp-plugins.lock.json`), `--refresh` (force
-  a refetch before serving), `--no-open` (skip the browser launch).
+  a refetch before serving), `--no-open` (skip the browser launch). `npm run
+  explore` is the same command (pass flags after `--`).
 
 ## Explorer (interactive ranking UI)
 
