@@ -78,7 +78,7 @@ const SUFFIX_LEVELS: Record<SuffixLevel, true> = {
 };
 
 /** Metrics a role weight/required entry may name (SPEC §7). */
-const KNOWN_METRICS: Record<string, true> = {
+export const KNOWN_METRICS: Record<string, true> = {
   general: true,
   reasoning: true,
   math: true,
@@ -111,7 +111,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
 
 
 /** Deep-merge `patch` into `target` in place; plain objects merge, everything else replaces. */
-function deepMergeInto(target: Record<string, unknown>, patch: Record<string, unknown>): void {
+export function deepMergeInto(target: Record<string, unknown>, patch: Record<string, unknown>): void {
   for (const [k, v] of Object.entries(patch)) {
     if (isRecord(v) && isRecord(target[k])) deepMergeInto(target[k], v);
     else target[k] = v;

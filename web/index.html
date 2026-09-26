@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>omp-llm-role explorer</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="meta"></header>
+<nav id="roles"></nav>
+<main>
+  <section id="left">
+    <div id="controls">
+      <input id="filter" type="text" placeholder="filter models…" autocomplete="off">
+      <label class="topn-label">top
+        <select id="topn">
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="all">all</option>
+        </select>
+      </label>
+    </div>
+    <div id="errors"></div>
+    <div id="table-wrap"><table id="table"></table></div>
+  </section>
+  <aside id="right">
+    <div id="explain"></div>
+    <div id="editor"></div>
+    <div id="export-bar">
+      <button id="export">Export</button>
+      <button id="copy">Copy JSON</button>
+      <button id="download">Download JSON</button>
+      <span id="export-status"></span>
+    </div>
+  </aside>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

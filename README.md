@@ -18,8 +18,12 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `src/updater.ts` | Orchestration: rank → tier gate → hysteresis → chains → config write |
 | `src/extension.ts` | omp extension entry: day-gated `session_start` run + `/refresh-roles` |
 | `update-roles.ts` | Headless shim: `node update-roles.ts [--dry-run] [--json]` (always forces) |
+| `explore.ts` | Interactive ranking explorer: loopback web UI for why-this-rank, live weight tuning, and lock-file export |
+| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, export merge |
+| `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
+| `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
 | `package.json` | Plugin manifest (`omp.extensions`) + the single dependency (`yaml`) |
-| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes |
+| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
@@ -152,6 +156,7 @@ plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
 ```
 node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]
 node update-roles.ts [--dry-run] [--json]
+node explore.ts [--port N] [--lock PATH] [--refresh] [--no-open]
 node --test tests/
 ```
 
@@ -166,6 +171,49 @@ node --test tests/
 - `update-roles.ts` runs the plugin pipeline headlessly (key + catalog via the
   `omp` CLI); `--dry-run` prints decisions without writing, `--json` emits
   `{wrote, aborted, decisions[]}` only.
+- `explore.ts` boots the interactive explorer (below); `--port` (default 5177),
+  `--lock` (default `~/.omp/plugins/omp-plugins.lock.json`), `--refresh` (force
+  a refetch before serving), `--no-open` (skip the browser launch).
+
+## Explorer (interactive ranking UI)
+
+`node explore.ts` boots a loopback-only web UI (`http://127.0.0.1:5177`) that
+answers "why is model X at rank 7 for `@slow`?" and "what happens if I care
+more about price than agents?" without editing `src/settings.ts` and re-running
+the CLI.
+
+- **Rank table** — every eligible model for the selected role, with `value`,
+  `q`, `$/M`, `tok/s`, `ctx`, a `★` Pareto marker, and a `Δ` column showing the
+  rank delta against the role's **effective** def (what the plugin does today).
+- **Explain panel** — click a row for the full decomposition: each weighted
+  metric's raw value → cardinal transform → renormalized weight → contribution
+  (bars show share of `q`), the cost block (`λ`, `penalty = λ·price`,
+  `value = q − penalty`), "why not higher" (the value gap to the model above
+  plus the per-metric target that would close it, with unreachable/extrapolated
+  notes), and the models that dominate it on (price, q).
+- **Weight editor** — edit the role's weights, `required` set, `filters.image`,
+  and `λ` override live; the table re-ranks on every change (120 ms debounce).
+  Weights are edited freely (no implicit rescaling): the `Σ` readout turns red
+  until `|Σ − 1| ≤ 0.01`, and `Normalize` rescales in one click. Changing the
+  price weight visibly changes `λ`.
+- **Export** — writes the edited roles into the plugin's settings lock file
+  (`~/.omp/plugins/omp-plugins.lock.json` → `settings["omp-llm-role"].roles`),
+  atomically and with a `.bak-<timestamp>` sibling, touching only the roles you
+  edited (the `plugins` block and sibling settings keys are preserved). The
+  change takes effect on the next `/refresh-roles` in a **freshly started** omp
+  session — a session started before the write already loaded the old settings.
+  `Copy JSON` / `Download JSON` emit the same dirty-roles payload for manual use.
+
+All ranking math is the plugin's own (`src/engine.ts`): the UI never
+reimplements `value = q − λ·$/M`, so the numbers on screen are exactly the
+numbers the plugin would use. The server binds `127.0.0.1` only (no auth) and
+serves the SPA from `web/` with no build step and no external requests.
+
+Because the plugin's settings are **overrides deep-merged over `DEFAULT_ROLES`**,
+a role's weight keys are additive: you can adjust values and add metrics, but
+removing a metric the shipped default weights is not expressible (the default's
+weight survives the merge and the sum check fails). The editor surfaces that as
+a validation error rather than writing an invalid config.
 
 ## Caching
 
