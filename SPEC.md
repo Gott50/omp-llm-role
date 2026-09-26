@@ -27,7 +27,7 @@ These facts constrain the design; they were probed live, not assumed.
 | omp catalog exposes concrete ids incl. `~org/…-latest` aliases and `:batch`/`:free` variants | `omp models find deepseek-v4-flash`: `~deepseek/deepseek-v4-flash-latest`, `deepseek/deepseek-v4-flash`, `deepseek/deepseek-v4-flash-0731`, `…:batch`, `…:free` |
 | `omp models ls --json` is the selector universe | rows: `{provider, id, selector, name, contextWindow, maxTokens, reasoning, thinking[], input[], cost{}}` |
 | `modelRoles` values are `provider/modelId[:thinkingLevel]` | `omp://models.md`; levels `off|minimal|low|medium|high|xhigh|max|auto` |
-| `retry.fallbackChains` keys are selectors **without** thinking suffix | user's config.yml: role values carry `:off/:high/:max`, chain keys don't |
+| `retry.fallbackChains` keys are selectors **without** thinking suffix | user's config.yml: role values carry `:off/:high/:max`, chain keys don't (values may — `omp://settings.md`: "selectors accept an optional thinking suffix") |
 | omp plugins load via package manifest; `omp plugin link <dir>` for dev | `omp://plugin-manager-installer-plumbing.md`; settings map in `omp-plugins.lock.json`, `omp plugin config <pkg> --set=k=v` |
 | Extensions run in-process under Bun; `ctx.modelRegistry`, `ctx.ui.notify`, `registerCommand` available; `ctx.setTimeout` for contained background work | `omp://extensions.md` |
 | config.yml hot-reloads (task/eval preflight re-reads settings); omp writes it under `config.yml.lock` | `omp://config-usage.md`, `omp://task-agent-discovery.md` |
@@ -200,6 +200,7 @@ else                             → keep current (chain still refreshed, §6.4)
 
 4. **Suffix** — append `suffixes[role]` (§7) unless the chosen model's catalog
    `thinking[]` is empty; suffixes pass through unchanged (omp clamps unsupported levels).
+   The same gate is applied per target when building fallback-chain values (§6.4).
 5. **Diff** — a role with unchanged final selector produces no write and no notify line.
 
 Roles in `config.yml` that have **no** weights in resolved settings are never touched
@@ -227,9 +228,15 @@ behavior — vision already filters this way).
 
 After decisions, for **every managed role** (switched, adopted, or kept):
 
-- key = chosen selector **without thinking suffix**
+- key = chosen selector **without thinking suffix** (a chain key matches the active
+  model id, never a level)
 - value = next `fallbackChainDepth` (default 2) tier-eligible candidates after the chosen
-  one, as bare selectors without suffix, deduped
+  one, deduped, each carrying the role's thinking suffix when the role has one and that
+  entry's own catalog row advertises thinking support (§6 step 4 rule, applied per
+  target) — so a fallback runs at the role's effort instead of the session
+  `defaultThinkingLevel`. **Exception:** a key claimed by more than one managed role (two
+  roles chosen onto the same model) gets level-free values — one model-scoped chain
+  cannot serve two different role levels, so no role's suffix is imposed on another.
 
 Maintenance rules:
 

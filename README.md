@@ -19,7 +19,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `src/extension.ts` | omp extension entry: day-gated `session_start` run + `/refresh-roles` |
 | `update-roles.ts` | Headless shim: `node update-roles.ts [--dry-run] [--json]` (always forces) |
 | `package.json` | Plugin manifest (`omp.extensions`) + the single dependency (`yaml`) |
-| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning |
+| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
@@ -65,6 +65,10 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   nothing is written. Thinking suffixes come from a canonical per-role table
   (`smol: off, slow: max, vision: auto, plan: high, commit: off`; others bare)
   and are only appended when the chosen catalog entry supports thinking.
+  Fallback-chain entries carry the same suffix when their own target supports
+  thinking, so a fallback runs at the role's effort rather than the session
+  `defaultThinkingLevel`; a key shared by several managed roles (one
+  model-scoped chain, two role levels) stays level-free.
 - **Rollback aid**: `~/.omp/agent/llm-role-state.json` snapshots the previous
   `modelRoles` block on every write (`previousModelRoles`).
 - **Settings**: `omp plugin config omp-llm-role --set=<dotted.key>=<value>`
@@ -181,7 +185,7 @@ no enrichment (affected models unranked). An empty/unusable OpenRouter payload
 is never cached, so the next run retries. llm-stats fetch failure is fatal
 (no data at all); OpenRouter failure is non-fatal.
 
-## Current state (2026-09-24)
+## Current state (2026-09-26)
 
 - 398 llm-stats models; OpenRouter matched 152/398 (throughput), 151 priced.
 - Eligible per role: 143 (vision 74, image-input filter).
@@ -194,7 +198,14 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   `vision` → Kimi-K3 (`:auto`), `plan` → Hy3 (`:high`), `advisor` →
   Hy4-Preview and refilled their chains with probe-clean entries; all 16
   configured roles then served on their configured selector in headless
-  sessions (transcript-verified, no fallbacks). 49/49 unit tests green.
+  sessions (transcript-verified, no fallbacks).
+- Plugin run re-verified live (2026-09-26) into a throwaway agent dir
+  (`OMP_LLM_ROLE_AGENT_DIR` + a copy of the real config): all 9 roles kept
+  their current probe-clean selectors (`commit`/`task` by margin), and the
+  written chains showed the new suffix rule — solo keys suffixed
+  (`ling-3.0-flash` → `:off`, `kimi-k3` → `:auto`), shared keys level-free
+  (plan+advisor on `tencent/hy4-preview`, smol+slow on `z-ai/glm-5.3`).
+  60/60 unit tests green.
 
 ## Known quirks
 

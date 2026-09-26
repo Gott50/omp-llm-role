@@ -39,6 +39,9 @@ export type RunResult = {
 
 export type Trigger = "session-start" | "manual" | "cli";
 
+/** A ranked model resolved to a concrete catalog id. */
+type Candidate = { ranked: Ranked; catalogId: string };
+
 export type Deps = {
   getToken(): Promise<string>;
   getCatalog(): Promise<CatalogEntry[]>;
@@ -107,6 +110,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
     const catalog = await deps.getCatalog();
     const eligible = filterCatalog(catalog, tier);
+    const rowById = new Map(eligible.map((c) => [c.id, c]));
 
     const dir = agentDir();
     const configPath = join(dir, "config.yml");
@@ -124,14 +128,14 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     // invisible to /api/v1/key and the catalog endpoints (SPEC §5 addendum).
     const decisions: Decision[] = [];
     const notes: string[] = [];
-    const poolByRole: Record<string, Array<{ ranked: Ranked; catalogId: string }>> = {};
-    const chainKeyByRole: Record<string, string> = {};
-    const chainValuesByRole: Record<string, string[]> = {};
+    const poolByRole: Record<string, Candidate[]> = {};
+    /** Per managed role: its bare chain key, role suffix, and the pool it was chosen from. */
+    const chainPlanByRole: Record<string, { key: string; suffix: string | undefined; pool: Candidate[]; chosenIdx: number }> = {};
     const probe = deps.probeModel ?? probeModel;
     const probeVerdicts = new Map<string, ProbeVerdict>();
     for (const [role, def] of Object.entries(settings.roles)) {
       const rankings = computeRankings(rank.models, { [role]: def });
-      const candidates: Array<{ ranked: Ranked; catalogId: string }> = [];
+      const candidates: Candidate[] = [];
       for (const ranked of rankings[role] ?? []) {
         const catalogId = resolveVariant(ranked.model.id, eligible, tier);
         if (catalogId !== null) candidates.push({ ranked, catalogId });
@@ -202,7 +206,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       }
 
       const suffix = settings.suffixes[role];
-      const chosenRow = eligible.find((c) => c.id === chosen.catalogId);
+      const chosenRow = rowById.get(chosen.catalogId);
       const finalSelector = `openrouter/${chosen.catalogId}${suffix !== undefined && (chosenRow?.thinking.length ?? 0) > 0 ? `:${suffix}` : ""}`;
       decisions.push({
         role,
@@ -215,16 +219,12 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         blocked: blockedForRole,
       });
 
-      // Fallback chain for every managed role: key = chosen selector without suffix,
-      // values = next tier-eligible candidates after it (deduped, key excluded).
+      // Fallback chain inputs for every managed role: the bare key (a chain key
+      // matches the active model id, never a level) plus the pool the chosen model
+      // came from. Values are built after the loop, once every key claim is known.
       if (settings.writeFallbackChains) {
         const key = suffix !== undefined && finalSelector.endsWith(`:${suffix}`) ? finalSelector.slice(0, -(suffix.length + 1)) : finalSelector;
-        const chosenIdx = pool.indexOf(chosen);
-        const values = [
-          ...new Set(pool.slice(chosenIdx + 1, chosenIdx + 1 + settings.fallbackChainDepth).map((p) => `openrouter/${p.catalogId}`)),
-        ].filter((v) => v !== key);
-        chainKeyByRole[role] = key;
-        chainValuesByRole[role] = values;
+        chainPlanByRole[role] = { key, suffix, pool, chosenIdx: pool.indexOf(chosen) };
       }
     }
 
@@ -233,10 +233,25 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     const chainUpserts: Record<string, string[]> = {};
     const referenced = new Set<string>();
     if (settings.writeFallbackChains) {
+      // A chain key is model-oriented: when several managed roles land on the same
+      // model, one chain serves all of them, so its values stay level-free instead
+      // of imposing whichever role iterated last. A key claimed by exactly one role
+      // carries that role's thinking suffix on every entry whose target advertises
+      // thinking support — so a fallback runs at the role's effort, not the
+      // session default. Deduped, key excluded.
+      const claims: Record<string, number> = {};
+      for (const d of decisions) claims[chainPlanByRole[d.role].key] = (claims[chainPlanByRole[d.role].key] ?? 0) + 1;
       for (const d of decisions) {
-        const key = chainKeyByRole[d.role];
-        chainUpserts[key] = chainValuesByRole[d.role];
-        referenced.add(key);
+        const plan = chainPlanByRole[d.role];
+        const suffix = claims[plan.key] === 1 ? plan.suffix : undefined;
+        chainUpserts[plan.key] = [
+          ...new Set(plan.pool.slice(plan.chosenIdx + 1, plan.chosenIdx + 1 + settings.fallbackChainDepth).map((p) => {
+            const row = rowById.get(p.catalogId);
+            const level = suffix !== undefined && (row?.thinking.length ?? 0) > 0 ? `:${suffix}` : "";
+            return `openrouter/${p.catalogId}${level}`;
+          })),
+        ].filter((v) => v !== plan.key);
+        referenced.add(plan.key);
       }
     }
     const chainPrunes = settings.writeFallbackChains ? state.pluginWrittenChainKeys.filter((k) => !referenced.has(k)) : [];
