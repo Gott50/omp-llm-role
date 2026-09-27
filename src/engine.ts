@@ -83,9 +83,15 @@ export type Model = {
   orgId: string;
   context: number | null;
   multimodal: boolean;
-  /** supports reasoning (OpenRouter `supports_reasoning`); gates the role's
-   * thinking price factor here and the selector suffix at write time */
+  /** supports reasoning (OpenRouter `supports_reasoning`) — the fallback gate
+   * for the role's thinking price factor and the selector suffix at write
+   * time; the omp catalog's per-model level list (`thinkingLevels`) wins when
+   * present */
   thinking: boolean;
+  /** omp catalog `thinking[]` for the joined model (per-model level list), set
+   * by `enrichThinkingLevels` when the catalog is available. Undefined = no
+   * catalog data — the ranking falls back to the `supports_reasoning` flag. */
+  thinkingLevels?: string[];
   /** OpenRouter blended $/M (3:1 in:out, standard route); null until enrichment */
   price: number | null;
   /** output tok/s — OpenRouter p50 only; null when OpenRouter has no data */
@@ -377,6 +383,13 @@ export const SUFFIX_LEVELS: Record<SuffixLevel, true> = {
   auto: true,
 };
 
+/** Levels omp accepts for any thinking-capable model regardless of the model's
+ * own effort list: `off` (reasoning off) and `auto` (model decides per turn). */
+export const META_LEVELS: Record<string, true> = {
+  off: true,
+  auto: true,
+};
+
 /** Thinking tokens per unit of visible output, by level (coding-agent workload:
  * ~1-2k visible tokens/turn; effort budgets roughly double per step). `auto`
  * nets out to ~medium — models think when the turn warrants it. */
@@ -447,9 +460,16 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     if (def.filters?.image && !m.multimodal) continue;
     if (m.price == null) continue; // value needs a billed price
 
-    // Thinking scales the price axis only for models that will actually run at
-    // the role's level (a non-thinking model ignores the suffix at write time).
-    const priceEff = levelFactor === 1 || !m.thinking ? m.price : m.price * levelFactor;
+    // The factor assumes the model runs at the role's level. omp clamps
+    // unsupported levels, so a model whose catalog thinking[] excludes the
+    // level is priced bare — matching the updater, which appends no suffix in
+    // that case. Catalog data wins when present; without it (standalone
+    // ranking), the OR supports_reasoning flag gates.
+    const levels = m.thinkingLevels;
+    const runsAtLevel = levels
+      ? levels.length > 0 && (def.thinking === undefined || META_LEVELS[def.thinking] === true || levels.includes(def.thinking))
+      : m.thinking;
+    const priceEff = levelFactor === 1 || !runsAtLevel ? m.price : m.price * levelFactor;
 
     let q = 0;
     const parts: Record<string, number> = {};

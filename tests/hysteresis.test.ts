@@ -80,6 +80,15 @@ test("no suffix when the chosen catalog entry has empty thinking[]", async () =>
   assert.equal(result.decisions[0].to, "openrouter/org/model-a");
 });
 
+test("no suffix when the pinned level is not in the model's thinking[]", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(MODELS, { roles: { default: { thinking: "high" } } }, {
+    getCatalog: async () => makeCatalog(MODELS.map((m) => m.id), ["low"]),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a"); // omp would clamp: bare
+});
+
 test("day gate: second same-day run without force is a silent no-op", async () => {
   const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-b"\n');
   const deps = fakeDeps(MODELS);

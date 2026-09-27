@@ -27,7 +27,7 @@
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
-import { catalogFromOmpModelsJson, resolveVariant, type CatalogEntry } from "./src/availability.ts";
+import { catalogFromOmpModelsJson, enrichThinkingLevels, resolveVariant, type CatalogEntry } from "./src/availability.ts";
 import { computeRankings, loadRankData, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked } from "./src/engine.ts";
 import { DEFAULT_ROLES as ROLES } from "./src/settings.ts";
 
@@ -200,10 +200,11 @@ async function main(): Promise<void> {
   }
 
   const { models, fetchedAt, source, orMatched, orPriced } = await loadRankData({ refresh, url });
-  const rankings = computeRankings(models, ROLES);
-
-  // The omp catalog resolves each role's #1 into a concrete openrouter/<id>
-  // selector. Unavailable omp (or a failed call) only skips the suggested block.
+  // The omp catalog gates the thinking price factor per model (a model whose
+  // thinking[] excludes the role's level is priced bare, matching the plugin's
+  // suffix gate) and resolves each role's #1 into a concrete openrouter/<id>
+  // selector. Unavailable omp (or a failed call) falls back to the OR
+  // supports_reasoning flag and only skips the suggested block.
   let catalog: CatalogEntry[] = [];
   try {
     const res = await execFileP("omp", ["models", "ls", "--json"], { maxBuffer: 16 * 1024 * 1024 });
@@ -211,6 +212,9 @@ async function main(): Promise<void> {
   } catch {
     catalog = [];
   }
+  enrichThinkingLevels(models, catalog);
+
+  const rankings = computeRankings(models, ROLES);
 
   let report: string;
   if (asJson) {

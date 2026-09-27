@@ -19,6 +19,7 @@ import { promisify } from "node:util";
 import { loadRankData, type RankData } from "./src/engine.ts";
 import { createExplorerServer } from "./src/explorer/server.ts";
 import { DEFAULT_ROLES, readPluginSettingsMap, resolveSettings } from "./src/settings.ts";
+import { catalogFromOmpModelsJson, enrichThinkingLevels, type CatalogEntry } from "./src/availability.ts";
 
 const execFileP = promisify(execFile);
 const REPO_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +55,17 @@ async function main(): Promise<void> {
 
   let rank: RankData = await loadRankData({ refresh });
 
+  // The omp catalog gates the thinking price factor per model, matching the
+  // plugin's ranking; unavailable omp falls back to the OR flag.
+  let catalog: CatalogEntry[] = [];
+  try {
+    const res = await execFileP("omp", ["models", "ls", "--json"], { maxBuffer: 16 * 1024 * 1024 });
+    catalog = catalogFromOmpModelsJson(JSON.parse(res.stdout));
+  } catch {
+    catalog = [];
+  }
+  enrichThinkingLevels(rank.models, catalog);
+
   // User-level lock file only: pass project: null so no project-anchor file is
   // merged in (the explorer edits the user-level file).
   const raw = readPluginSettingsMap({ global: lockPath, project: null });
@@ -67,6 +79,7 @@ async function main(): Promise<void> {
     getSnapshot: () => ({ rank, roles, defaults: DEFAULT_ROLES }),
     refresh: async () => {
       rank = await loadRankData({ refresh: true });
+      enrichThinkingLevels(rank.models, catalog);
     },
   });
 

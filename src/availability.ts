@@ -8,6 +8,7 @@
  * `resolveVariant` (exact -> newest dated -> bare -> ~org/…-latest alias).
  */
 import { isRecord } from "./guards.ts";
+import type { Model } from "./engine.ts";
 
 export type CatalogEntry = {
   provider: string;
@@ -168,6 +169,24 @@ export function resolveVariant(rankingId: string, candidates: CatalogEntry[], ti
     if (datedExact.length > 0) return datedExact.reduce((a, b) => (b.id < a.id ? b : a)).id;
   }
   return minLex.id; // newest dated (equal dates) or ~org/…-latest alias — last resort
+}
+
+
+/** Set each model's omp catalog `thinking[]` (per-model level list) by the
+ * ranking-id join (`rankingIdOf`). Models without a catalog match keep
+ * `thinkingLevels` undefined — the ranking falls back to the OR
+ * `supports_reasoning` flag for them; a matched model with an empty list is
+ * priced bare even when OR advertises `supports_reasoning`. */
+export function enrichThinkingLevels(models: Model[], catalog: CatalogEntry[]): void {
+  const byRankingId = new Map<string, string[]>();
+  for (const c of catalog) {
+    const rid = rankingIdOf(c.id);
+    if (c.thinking.length > 0 && !byRankingId.has(rid)) byRankingId.set(rid, c.thinking);
+  }
+  for (const m of models) {
+    const levels = byRankingId.get(m.id);
+    if (levels) m.thinkingLevels = levels;
+  }
 }
 
 /**

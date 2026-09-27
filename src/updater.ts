@@ -11,8 +11,8 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { computeRankings, loadRankData, type Ranked, type RankData } from "./engine.ts";
-import { currentRankingId, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, tierGate, type CatalogEntry, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { computeRankings, loadRankData, META_LEVELS, type Ranked, type RankData } from "./engine.ts";
+import { currentRankingId, enrichThinkingLevels, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, tierGate, type CatalogEntry, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "./settings.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
@@ -111,6 +111,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     const catalog = await deps.getCatalog();
     const eligible = filterCatalog(catalog, tier);
     const rowById = new Map(eligible.map((c) => [c.id, c]));
+    enrichThinkingLevels(rank.models, catalog);
 
     const dir = agentDir();
     const configPath = join(dir, "config.yml");
@@ -207,7 +208,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
       const suffix = def.thinking;
       const chosenRow = rowById.get(chosen.catalogId);
-      const finalSelector = `openrouter/${chosen.catalogId}${suffix !== undefined && (chosenRow?.thinking.length ?? 0) > 0 ? `:${suffix}` : ""}`;
+      // Append only a level the model's catalog thinking[] actually supports —
+      // omp clamps unsupported levels, so an unsupported pin would run at a
+      // different effort than the role intends (and than the ranking priced).
+      const appendSuffix = suffix !== undefined && chosenRow !== undefined && (META_LEVELS[suffix] === true || chosenRow.thinking.includes(suffix));
+      const finalSelector = `openrouter/${chosen.catalogId}${appendSuffix ? `:${suffix}` : ""}`;
       decisions.push({
         role,
         from: currentSelector,
@@ -247,7 +252,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         chainUpserts[plan.key] = [
           ...new Set(plan.pool.slice(plan.chosenIdx + 1, plan.chosenIdx + 1 + settings.fallbackChainDepth).map((p) => {
             const row = rowById.get(p.catalogId);
-            const level = suffix !== undefined && (row?.thinking.length ?? 0) > 0 ? `:${suffix}` : "";
+            const level = suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix)) ? `:${suffix}` : "";
             return `openrouter/${p.catalogId}${level}`;
           })),
         ].filter((v) => v !== plan.key);

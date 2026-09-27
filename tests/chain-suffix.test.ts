@@ -29,7 +29,7 @@ async function run(catalog?: CatalogEntry[]) {
 }
 
 test("chain values carry the role's thinking suffix; the chain key stays bare", async () => {
-  const { result, doc } = await run();
+  const { result, doc } = await run(makeCatalog(["model-a", "model-b", "model-c"], ["max"]));
   assert.equal(result.aborted, undefined);
   assert.equal(doc.modelRoles.smol, "openrouter/org/model-a:max");
   // Key without suffix (it must match the active model id), values with it.
@@ -37,7 +37,7 @@ test("chain values carry the role's thinking suffix; the chain key stays bare", 
 });
 
 test("a chain entry without thinking support gets no suffix", async () => {
-  const { doc } = await run([...makeCatalog(["model-a", "model-b"]), ...makeCatalog(["model-c"], [])]);
+  const { doc } = await run([...makeCatalog(["model-a", "model-b"], ["max"]), ...makeCatalog(["model-c"], [])]);
   assert.equal(doc.modelRoles.smol, "openrouter/org/model-a:max");
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b:max", "openrouter/org/model-c"]);
 });
@@ -49,7 +49,9 @@ test("two roles on the same model share one level-free chain", async () => {
     ["slow", "vision", "plan", "commit", "tiny", "task", "advisor", "designer"].map((r) => [r, { weights: null }]),
   );
   const dir = setupAgentDir("other: 1\n");
-  const deps = fakeDeps(MODELS, { roles: { ...optOut, smol: { thinking: "max" } } });
+  const deps = fakeDeps(MODELS, { roles: { ...optOut, smol: { thinking: "max" } } }, {
+    getCatalog: async () => makeCatalog(["model-a", "model-b", "model-c"], ["max"]),
+  });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const doc = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as ConfigDoc;
   assert.equal(doc.modelRoles.default, "openrouter/org/model-a");

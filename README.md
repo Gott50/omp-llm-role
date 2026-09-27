@@ -69,9 +69,13 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   nothing is written. Thinking suffixes come from each role's `thinking` field
   in `DEFAULT_ROLES` (`smol: off, slow: max, vision: auto, plan: high,
   commit: off, designer: high`; others bare) and are only appended when the
-  chosen catalog entry supports thinking.
-  Fallback-chain entries carry the same suffix when their own target supports
-  thinking, so a fallback runs at the role's effort rather than the session
+  chosen catalog entry's `thinking[]` includes the level — meta levels
+  (`off`, `auto`) need only a non-empty list, because omp clamps unsupported
+  levels and an unsupported pin would run at a different effort than the role
+  intends.
+  Fallback-chain entries carry the same suffix when their own target's
+  `thinking[]` includes the level, so a fallback runs at the role's effort
+  rather than the session
   `defaultThinkingLevel`; a key shared by several managed roles (one
   model-scoped chain, two role levels) stays level-free.
 - **Rollback aid**: `~/.omp/agent/llm-role-state.json` snapshots the previous
@@ -214,10 +218,15 @@ billed blend scales by the level's factor `(3ρ+1+T)/(3ρ+1)` (ρ = input:output
 price ratio 1:4; T = thinking tokens per visible-output token: off 0, minimal
 0.25, low 0.75, medium 1.5, high 3, xhigh 6, max 12, auto 1.5) — thinking
 tokens bill as output, so a `:max` role pays ~8× the blend's assumed output
-share. Models without OpenRouter `supports_reasoning` are not adjusted (they
-ignore the suffix at write time); bare roles are not adjusted (the session
-`defaultThinkingLevel` is user-controlled). The report's `$/M` column and the
-explorer show the effective price.
+share. The factor is gated per model on what the model will actually run: the
+omp catalog's per-model `thinking[]` wins when available — a model whose level
+list excludes the role's level is priced bare, because omp clamps unsupported
+levels and the written selector stays bare in that case (ranking and write
+agree); meta levels (`off`, `auto`) need only a non-empty list. Without the
+catalog (standalone ranking), the OR `supports_reasoning` flag gates. Bare
+roles are not adjusted (the session `defaultThinkingLevel` is
+user-controlled). The report's `$/M` column and the explorer show the
+effective price.
 
 Roles and weights (see `DEFAULT_ROLES` in `src/settings.ts`, overridable via
 plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
@@ -358,6 +367,12 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
   flipped its full-pool leader GPT-5.6 Sol → GLM-5.3, `vision` (`:auto`, ×1.86)
   flipped GPT-6 Astra → GPT-5.6 Sol; bare/off roles unchanged.
+- The factor is gated per model on the omp catalog's `thinking[]` (2026-09-27):
+  a model whose level list excludes the role's pin is priced bare and gets no
+  suffix — `slow` (`:max`) had over-priced 95 of its 112 thinking-capable
+  ranked models by the clamp ratio (Hy4 preview $9.83 → $1.25, Muse Spark
+  $15.71 → $2.00); meta pins (`off`, `auto`) bypass the membership check, so
+  the live `vision: auto` pick is untouched.
 - Weights reviewed and rebalanced (2026-09-27): coverage-aware backbone,
   throughput weighted in every role, `mrcr`/`search` dropped, `plan`/`advisor`
   price raised, `tiny` left alone. Rules in Scoring; the per-role deltas are in

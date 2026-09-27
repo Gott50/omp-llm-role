@@ -186,8 +186,12 @@ that declare weights):
 1. **Rank** — `computeRankings` with that role's weights/required (cardinal value
    math: `value = q − λ·priceEff`; λ from the price-weight share ÷ $20 or
    `roles.<r>.lambda`. `priceEff` = billed blend × the role's thinking factor
-   `(3ρ+1+T)/(3ρ+1)` for models advertising `supports_reasoning`; bare/off roles
-   and non-thinking models are unadjusted).
+   `(3ρ+1+T)/(3ρ+1)`, gated per model on what it will actually run: the omp
+   catalog's per-model `thinking[]` wins when available (a model whose level
+   list excludes the role's level is priced bare — omp clamps unsupported
+   levels, and the written selector stays bare in that case), meta levels
+   (`off`, `auto`) need only a non-empty list, and without the catalog the OR
+   `supports_reasoning` flag gates; bare/off roles are unadjusted).
 2. **Filter** — tier gate (§5.2) → catalog resolution (§5.4); unresolvable models drop.
 3. **Choose** with hysteresis (decision #7):
 
@@ -201,9 +205,11 @@ else if best.value - current.value >= switchMargin → adopt best
 else                             → keep current (chain still refreshed, §6.4)
 ```
 
-4. **Suffix** — append `roles[role].thinking` (§7) unless the chosen model's catalog
-   `thinking[]` is empty; suffixes pass through unchanged (omp clamps unsupported levels).
-   The same gate is applied per target when building fallback-chain values (§6.4).
+4. **Suffix** — append `roles[role].thinking` (§7) only when the chosen model's
+   catalog `thinking[]` includes the level (meta levels `off`, `auto` need only
+   a non-empty list) — omp clamps unsupported levels, so an unsupported pin
+   would run at a different effort than the role intends; the same gate is
+   applied per target when building fallback-chain values (§6.4).
 5. **Diff** — a role with unchanged final selector produces no write and no notify line.
 
 Roles in `config.yml` that have **no** weights in resolved settings are never touched
@@ -273,11 +279,12 @@ a power-user escape hatch for whole-object overrides.
       "required": ["general", "price", "throughput"],
       "thinking": "max",
       // Per-role thinking level (decision #5; moved out of the former `suffixes`
-      // map). Hand-authored in the design session, never derived from the ranking;
-      // shipped defaults: smol off, slow max, vision auto, plan high, commit off,
-      // designer high — default, task, tiny, advisor bare (absent = no suffix).
-      // Also scales the ranking's price axis (§6 step 1) for models advertising
-      // `supports_reasoning`.
+      // map). The shipped VALUES are hand-authored (design session, never
+      // derived from the ranking): smol off, slow max, vision auto, plan high,
+      // commit off, designer high — default, task, tiny, advisor bare (absent =
+      // no suffix). The FIELD is ranking-active: it scales the price axis
+      // (§6 step 1) for models whose catalog thinking[] includes the level, so
+      // editing a role's level can change its ranking and picks.
       "filters": { "image": false }
     }
     // add "my-custom-role": { weights: {...}, required: [...], filters: {...} }
