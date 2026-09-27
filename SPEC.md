@@ -41,10 +41,10 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 | # | Question | Decision |
 |---|---|---|
 | 1 | Form factor | **omp plugin** living in this repo, installed via `omp plugin link` (dev) / install (later) |
-| 2 | Role coverage | **Config-driven weights.** Shipped defaults cover only the 9 official roles; the settings schema is flexible enough to define full weight sets for custom agent roles |
+| 2 | Role coverage | **Config-driven weights.** Shipped defaults cover the official roles plus `designer`; the settings schema is flexible enough to define full weight sets for custom agent roles |
 | 3 | Key-scoped availability | **Tier gate + catalog check** (§5) |
 | 4 | Config write | **Surgical in-place edit** of `~/.omp/agent/config.yml` (only managed lines change; atomic tmp+rename) |
-| 5 | Thinking suffixes | **Canonical per-role table** shipped as defaults, overridable in settings |
+| 5 | Thinking suffixes | **Per-role `thinking` field** on the role def, shipped as defaults, overridable in settings |
 | 6 | Trigger | **session_start, UTC-day gated** (first omp session of the day refreshes; later sessions no-op) + manual `/refresh-roles` |
 | 7 | Switch policy | **Hysteresis**: switch only if current model ineligible or new best beats current score by `switchMargin` (default `0.02`; `0` = always take today's best) |
 | 8 | Settings home | **omp plugin settings** (`omp-plugins.lock.json` via `omp plugin config omp-llm-role --set=k=v`); plugin deep-merges dotted keys itself |
@@ -184,7 +184,10 @@ Per run, per role in the **resolved role set** (shipped defaults ∪ user-define
 that declare weights):
 
 1. **Rank** — `computeRankings` with that role's weights/required (cardinal value
-   math: `value = q − λ·$/M`; λ from the price-weight share ÷ $20 or `roles.<r>.lambda`).
+   math: `value = q − λ·priceEff`; λ from the price-weight share ÷ $20 or
+   `roles.<r>.lambda`. `priceEff` = billed blend × the role's thinking factor
+   `(3ρ+1+T)/(3ρ+1)` for models advertising `supports_reasoning`; bare/off roles
+   and non-thinking models are unadjusted).
 2. **Filter** — tier gate (§5.2) → catalog resolution (§5.4); unresolvable models drop.
 3. **Choose** with hysteresis (decision #7):
 
@@ -198,7 +201,7 @@ else if best.value - current.value >= switchMargin → adopt best
 else                             → keep current (chain still refreshed, §6.4)
 ```
 
-4. **Suffix** — append `suffixes[role]` (§7) unless the chosen model's catalog
+4. **Suffix** — append `roles[role].thinking` (§7) unless the chosen model's catalog
    `thinking[]` is empty; suffixes pass through unchanged (omp clamps unsupported levels).
    The same gate is applied per target when building fallback-chain values (§6.4).
 5. **Diff** — a role with unchanged final selector produces no write and no notify line.
@@ -214,12 +217,12 @@ Same inputs → same output. Ranking ties break by: score desc → blended $/M a
 
 Exactly the current `ROLES` from `llm-role-rank.ts` (weights/required verbatim, see
 `llm-role-rankings.md` legend for metric meanings): `default, smol, slow, vision, plan,
-commit, tiny, task, advisor`. No custom roles ship by default (decision #2).
+commit, tiny, task, advisor, designer`. No custom roles ship beyond these (decision #2).
 
 ### 6.3 Role filters (schema capability)
 
 Role definitions may declare `filters: { image: true }` (require image input) and
-`filters: { maxPriceUsdPerM, minContextTokens }`. Shipped defaults: only `vision` sets
+`filters: { maxPriceUsdPerM, minContextTokens }`. Shipped defaults: `vision` and `designer` set
 `image: true` (matching the existing multimodal eligibility filter). Filters apply
 before ranking eligibility so percentile norms stay on the unfiltered pool (existing
 behavior — vision already filters this way).
@@ -262,21 +265,19 @@ a power-user escape hatch for whole-object overrides.
   "switchMargin": 0.02,          // hysteresis margin on the 0–1 score; 0 = always switch
   "writeFallbackChains": true,
   "fallbackChainDepth": 2,
-  "suffixes": {                  // canonical thinking suffix per role (decision #5)
-    // Hand-authored in the design session, never derived from the ranking: §2 records
-    // that the owner's config already carried role-level suffixes before the plugin
-    // existed; these five pairs were then frozen as shipped defaults. No ranking input
-    // (value, $/M, Pareto) feeds them, so a different model winning a role keeps that
-    // role's level unchanged.
-    "smol": "off", "slow": "max", "vision": "auto", "plan": "high", "commit": "off"
-    // default, task, tiny, advisor: bare (absent = no suffix)
-  },
   "roles": {
     "slow": {
       "description": "…",
       "weights": { "general": 0.26, "reasoning": 0.26, "code": 0.18, "agents": 0.13,
                    "math": 0.08, "throughput": 0.04, "price": 0.05 },
       "required": ["general", "price", "throughput"],
+      "thinking": "max",
+      // Per-role thinking level (decision #5; moved out of the former `suffixes`
+      // map). Hand-authored in the design session, never derived from the ranking;
+      // shipped defaults: smol off, slow max, vision auto, plan high, commit off,
+      // designer high — default, task, tiny, advisor bare (absent = no suffix).
+      // Also scales the ranking's price axis (§6 step 1) for models advertising
+      // `supports_reasoning`.
       "filters": { "image": false }
     }
     // add "my-custom-role": { weights: {...}, required: [...], filters: {...} }
@@ -286,10 +287,12 @@ a power-user escape hatch for whole-object overrides.
 ```
 
 Validation (fail the run, notify, no write): weights > 0, each role's weights sum to
-1.0 ± 0.01, `required ⊆ weights`, metric names ∈ {general, reasoning, math, code, agents,
-search, vision, tool_calling, long_context, mrcr, price, throughput}, suffix ∈
+1.0 ± 0.01, `required` entries ∈ {general, reasoning, math, code, agents, search,
+vision, tool_calling, long_context, mrcr, price, throughput} (the eligibility gate,
+independent of weights), weightable metric names ∈ the same set, `roles.<role>.thinking` ∈
 {off, minimal, low, medium, high, xhigh, max, auto}. A role entry with `weights: null`
-explicitly opts that role out.
+explicitly opts that role out. Legacy `suffixes.*` keys are rejected with a migration
+hint (moved into `roles.<role>.thinking`).
 
 ## 8. State, history, and the write
 

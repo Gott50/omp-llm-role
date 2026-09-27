@@ -1,7 +1,7 @@
 # omp-llm-role
 
 Ranks today's LLM leaderboard into best-fit picks for each omp model role
-(`default, smol, slow, vision, plan, commit, tiny, task, advisor`), and ships
+(`default, smol, slow, vision, plan, commit, tiny, task, advisor, designer`), and ships
 an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 `SPEC.md` is the normative spec for the plugin.
 
@@ -11,7 +11,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 |---|---|
 | `llm-role-rank.ts` | CLI report (Node 26, type-stripping — no bun/deno/tsx, no build step) |
 | `src/engine.ts` | Ranking engine shared by CLI and plugin: fetch/caches, cardinal transforms, value scoring, `loadRankData`, `computeRankings` |
-| `src/settings.ts` | Shipped role defaults (`DEFAULT_ROLES`), plugin-settings deep-merge + validation |
+| `src/settings.ts` | Shipped role defaults (`DEFAULT_ROLES`, incl. per-role `thinking` levels), plugin-settings deep-merge + validation |
 | `src/availability.ts` | OpenRouter key tier gate, catalog filter, variant resolution (`resolveVariant`), provider-allowlist probe (`probeModel`) |
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains`, atomic write |
 | `src/state.ts` | State/history/lock files under the agent dir; agent-dir resolution |
@@ -23,7 +23,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
 | `package.json` | Plugin manifest (`omp.extensions`) + the single dependency (`yaml`) |
-| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer |
+| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, thinking-price |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
@@ -66,9 +66,10 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   equals the new selector (any quoting) is left untouched, so a no-change run
   writes nothing and never touches the config mtime. Atomic tmp+rename with a
   3-attempt mtime-conflict retry; the patched text must re-parse as YAML or
-  nothing is written. Thinking suffixes come from a canonical per-role table
-  (`smol: off, slow: max, vision: auto, plan: high, commit: off`; others bare)
-  and are only appended when the chosen catalog entry supports thinking.
+  nothing is written. Thinking suffixes come from each role's `thinking` field
+  in `DEFAULT_ROLES` (`smol: off, slow: max, vision: auto, plan: high,
+  commit: off, designer: high`; others bare) and are only appended when the
+  chosen catalog entry supports thinking.
   Fallback-chain entries carry the same suffix when their own target supports
   thinking, so a fallback runs at the role's effort rather than the session
   `defaultThinkingLevel`; a key shared by several managed roles (one
@@ -78,8 +79,8 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
 - **Settings**: `omp plugin config omp-llm-role --set=<dotted.key>=<value>`
   (flat dotted keys are deep-merged by the plugin; `config=<json>` is a
   whole-object escape hatch). Knobs: `switchMargin`, `writeFallbackChains`,
-  `fallbackChainDepth`, `suffixes.<role>`, `roles.<name>.{description,weights,
-  required,filters}`. `weights: null` opts a role out; a new role with a full
+  `fallbackChainDepth`, `roles.<name>.{description,weights,required,filters,
+  thinking,lambda}`. `weights: null` opts a role out; a new role with a full
   weight set gets managed too. Invalid settings abort the run with the
   offending role/key and no write.
 - **State files** (next to the config): `llm-role-state.json` (day gate,
@@ -145,11 +146,21 @@ scoring kills two percentile artifacts: rank compression (real magnitude gaps
 now count — e.g. @default flipped DeepSeek-V4.1-Flash → GPT-6 Astra) and
 field-dependent scales (adding a model no longer reshuffles everyone).
 
+Roles with a `thinking` level rank on the **thinking-adjusted price**: the
+billed blend scales by the level's factor `(3ρ+1+T)/(3ρ+1)` (ρ = input:output
+price ratio 1:4; T = thinking tokens per visible-output token: off 0, minimal
+0.25, low 0.75, medium 1.5, high 3, xhigh 6, max 12, auto 1.5) — thinking
+tokens bill as output, so a `:max` role pays ~8× the blend's assumed output
+share. Models without OpenRouter `supports_reasoning` are not adjusted (they
+ignore the suffix at write time); bare roles are not adjusted (the session
+`defaultThinkingLevel` is user-controlled). The report's `$/M` column and the
+explorer show the effective price.
+
 Roles and weights (see `DEFAULT_ROLES` in `src/settings.ts`, overridable via
 plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
 `slow` (capability-heavy), `vision` (requires image input), `plan`
 (reasoning/long-context), `commit`, `tiny` (price+throughput dominated),
-`task` (agentic), `advisor` (deep reasoning).
+`task` (agentic), `advisor` (deep reasoning), `designer` (visual/UX, image input).
 
 Weight design rules (2026-09-27 review):
 
@@ -189,7 +200,7 @@ node --test tests/
 - `--top N`: rows per role (default 10). `--json`: machine payload
   (`fetchedAt, source, modelCount, roles{role:[{rank, modelId, name,
   organization, value, q, lambda, paretoFrontier, priceBlendedUsdPerM,
-  throughputTokS, contextTokens}]}`). `--out FILE`:
+  priceEffUsdPerM, throughputTokS, contextTokens}]}`). `--out FILE`:
   write instead of stdout. `--refresh`: bypass both caches. `--url`: override
   the llm-stats page URL.
 - `update-roles.ts` runs the plugin pipeline headlessly (key + catalog via the
@@ -208,11 +219,13 @@ more about price than agents?" without editing `src/settings.ts` and re-running
 the CLI.
 
 - **Rank table** — every eligible model for the selected role, with `value`,
-  `q`, `$/M`, `tok/s`, `ctx`, a `★` Pareto marker, and a `Δ` column showing the
+  `q`, `$/M` (effective, thinking-adjusted), `tok/s`, `ctx`, a `★` Pareto
+  marker, and a `Δ` column showing the
   rank delta against the role's **effective** def (what the plugin does today).
 - **Explain panel** — click a row for the full decomposition: each weighted
   metric's raw value → cardinal transform → renormalized weight → contribution
-  (bars show share of `q`), the cost block (`λ`, `penalty = λ·price`,
+  (bars show share of `q`), the cost block (`λ`, effective vs billed price,
+  `penalty = λ·price`,
   `value = q − penalty`), "why not higher" (the value gap to the model above
   plus the per-metric target that would close it, with unreachable/extrapolated
   notes), and the models that dominate it on (price, q).
@@ -271,11 +284,17 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 ## Current state (2026-09-27)
 
 - 395 llm-stats models; OpenRouter matched 147/395 (throughput), 146 priced.
-- Eligible per role: 138 (vision 70, image-input filter).
-- Value-ranking leaders (this report): `default` GPT-6 Astra (0.836), `smol`
-  Muse Spark 1.1 (0.750), `slow` GPT-5.6 Sol (0.838), `vision` GPT-6 Astra
-  (0.800), `plan` GPT-5.6 Sol (0.804), `commit` Muse Spark 1.1 (0.779), `tiny`
-  Muse Spark 1.1 (0.792), `task` GLM-5.3 (0.752), `advisor` GPT-5.6 Sol (0.828).
+- Eligible per role: 138 (vision 70, designer 82, image-input filter).
+- Value-ranking leaders (this report, thinking-adjusted prices): `default`
+  GPT-6 Astra (0.836), `smol` Muse Spark 1.1 (0.750), `slow` GLM-5.3 (0.813),
+  `vision` GPT-5.6 Sol (0.773), `plan` GPT-5.6 Sol (0.766), `commit` Muse
+  Spark 1.1 (0.779), `tiny` Muse Spark 1.1 (0.792), `task` GLM-5.3 (0.752),
+  `advisor` GPT-5.6 Sol (0.828), `designer` Gemini 3.8 Flash (0.741).
+- Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
+  `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
+  the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
+  flipped its full-pool leader GPT-5.6 Sol → GLM-5.3, `vision` (`:auto`, ×1.86)
+  flipped GPT-6 Astra → GPT-5.6 Sol; bare/off roles unchanged.
 - Weights reviewed and rebalanced (2026-09-27): coverage-aware backbone,
   throughput weighted in every role, `mrcr`/`search` dropped, `plan`/`advisor`
   price raised, `tiny` left alone. Rules in Scoring; the per-role deltas are in
@@ -284,8 +303,12 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   completion each): 76 ok / 61 blocked / 1 unknown of the 138 eligible, so the
   actionable pool is 77 (vision 34). Actionable leaders under the shipped
   weights: `default`/`smol`/`slow`/`task` GLM-5.3, `vision` Kimi K3,
-  `plan`/`advisor` Hy4 preview, `commit` DeepSeek-V4-Flash-Vision-Exp, `tiny`
-  Ling 3.0 Flash Fin.
+  `plan`/`advisor` Hy4 preview, `commit`/`designer`
+  DeepSeek-V4-Flash-Vision-Exp, `tiny` Ling 3.0 Flash Fin.
+- Plugin dry-run re-verified (2026-09-27, post-restructure): all 9 existing
+  roles kept their probe-clean selectors with suffixes now read from
+  `roles.<role>.thinking`; the new `designer` role got managed
+  (DeepSeek-V4-Flash-Vision-Exp `:high`). 64/64 unit tests green.
 - Plugin verified live (2026-09-23) with the provider-allowlist probe: the
   account's allowed-providers whitelist excludes first-party openai/azure/
   anthropic endpoints, so the probe gate rewrote `slow` → GLM-5.3 (`:max`),

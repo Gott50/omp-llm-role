@@ -205,7 +205,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         reason = "kept-margin";
       }
 
-      const suffix = settings.suffixes[role];
+      const suffix = def.thinking;
       const chosenRow = rowById.get(chosen.catalogId);
       const finalSelector = `openrouter/${chosen.catalogId}${suffix !== undefined && (chosenRow?.thinking.length ?? 0) > 0 ? `:${suffix}` : ""}`;
       decisions.push({

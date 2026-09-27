@@ -78,7 +78,7 @@ test("zero-change run writes nothing and leaves no mtime trace", async () => {
   // Restrict the run to the default role (opt the shipped defaults out) so the
   // pre-set config is genuinely a zero-change match.
   const optOut = Object.fromEntries(
-    ["smol", "slow", "vision", "plan", "commit", "tiny", "task", "advisor"].map((r) => [r, { weights: null }]),
+    ["smol", "slow", "vision", "plan", "commit", "tiny", "task", "advisor", "designer"].map((r) => [r, { weights: null }]),
   );
   const before = readFileSync(join(dir, "config.yml"), "utf8");
   const result = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(MODELS, { roles: optOut }), { force: true }));

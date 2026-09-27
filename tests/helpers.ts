@@ -10,7 +10,7 @@ import type { Deps } from "../src/updater.ts";
 /** Model with uniform quality metrics (general = code = agents = tool = reasoning) so
  * q reduces to the cardinal transform (v+20)/80 of `general` for roles that weight only
  * the uniform index metrics; value = q − λ·price. */
-export function makeModel(id: string, general: number, price: number, tput: number): Model {
+export function makeModel(id: string, general: number, price: number, tput: number, thinking = false): Model {
   return {
     id,
     name: id,
@@ -18,6 +18,7 @@ export function makeModel(id: string, general: number, price: number, tput: numb
     orgId: "org",
     context: 200000,
     multimodal: false,
+    thinking,
     price,
     throughput: tput,
     metrics: {

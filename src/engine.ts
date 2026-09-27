@@ -83,6 +83,9 @@ export type Model = {
   orgId: string;
   context: number | null;
   multimodal: boolean;
+  /** supports reasoning (OpenRouter `supports_reasoning`); gates the role's
+   * thinking price factor here and the selector suffix at write time */
+  thinking: boolean;
   /** OpenRouter blended $/M (3:1 in:out, standard route); null until enrichment */
   price: number | null;
   /** output tok/s — OpenRouter p50 only; null when OpenRouter has no data */
@@ -100,11 +103,16 @@ export type RoleDef = {
   filters?: { image?: boolean };
   /** explicit λ override ($ per quality point); default derives from the price weight */
   lambda?: number;
+  /** thinking level appended to the role's selector (`:level`) when the chosen
+   * catalog entry supports thinking; absent = bare (session default level).
+   * Also scales the price axis for ranking (thinkingPriceFactor). */
+  thinking?: SuffixLevel;
 };
 
 /** One role's ranking: `q` is the price-free quality composite (parts sum to it),
- * `value = q − λ·$/M` is the sort key. */
-export type Ranked = { model: Model; value: number; q: number; parts: Record<string, number> };
+ * `value = q − λ·priceEff` is the sort key — `priceEff` is the billed blend scaled
+ * by the role's thinking factor when the model supports thinking. */
+export type Ranked = { model: Model; value: number; q: number; priceEff: number; parts: Record<string, number> };
 
 export type RankData = {
   models: Model[];
@@ -133,22 +141,23 @@ export type RankData = {
 type OpenRouterPerf = { p50_latency: number | null; p50_throughput: number | null };
 
 type OpenRouterFindData = {
-  models: Array<{ slug: string; endpoint: { id: string; model_variant_permaslug: string | null; is_free: boolean | null } | null }>;
+  models: Array<{ slug: string; supports_reasoning: boolean | null; endpoint: { id: string; model_variant_permaslug: string | null; is_free: boolean | null } | null }>;
   endpoint_perf: Record<string, OpenRouterPerf>;
   /** endpoint id -> blended $/M (3:1 in:out); only endpoints with usable prompt+completion pricing */
   endpoint_price: Record<string, number>;
 };
 
-export type OrEnrichment = { tput: number; latency: number | null; price: number | null };
+export type OrEnrichment = { tput: number; latency: number | null; price: number | null; thinking: boolean };
 
 /**
- * Build llm-stats model_id -> OpenRouter enrichment (p50 throughput, latency, blended price).
- * :batch variants are skipped (no perf data, half-price async tier). Throughput is the
- * highest-p50 variant, :free tiers included. Price is the standard route's blended $/M,
- * cheapest billed route as fallback — a $0 :free tier never sets the price.
+ * Build llm-stats model_id -> OpenRouter enrichment (p50 throughput, latency, blended
+ * price, thinking support). :batch variants are skipped (no perf data, half-price async
+ * tier). Throughput is the highest-p50 variant, :free tiers included. Price is the
+ * standard route's blended $/M, cheapest billed route as fallback — a $0 :free tier
+ * never sets the price. Thinking is any variant row advertising `supports_reasoning`.
  */
 export function buildOpenRouterEnrichment(data: OpenRouterFindData): Record<string, OrEnrichment> {
-  const bySuffix: Record<string, Array<{ free: boolean; perf: OpenRouterPerf | null; price: number | null }>> = {};
+  const bySuffix: Record<string, Array<{ free: boolean; think: boolean; perf: OpenRouterPerf | null; price: number | null }>> = {};
   for (const m of data.models) {
     const ep = m.endpoint;
     if (!ep) continue;
@@ -157,6 +166,7 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData): Record<stri
     const key = m.slug.split("/")[1] ?? m.slug;
     (bySuffix[key] ??= []).push({
       free: variant.endsWith(":free") || ep.is_free === true,
+      think: m.supports_reasoning === true,
       perf: data.endpoint_perf[ep.id] ?? null,
       price: data.endpoint_price[ep.id] ?? null,
     });
@@ -178,7 +188,7 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData): Record<stri
     const billed: number[] = [];
     for (const c of cands) if (!c.free && c.price != null && c.price > 0) billed.push(c.price);
     const price = billed.length === 0 ? null : Math.min(...billed);
-    out[suffix] = { tput, latency, price };
+    out[suffix] = { tput, latency, price, thinking: cands.some((c) => c.think) };
   }
   return out;
 }
@@ -191,6 +201,7 @@ export function applyOpenRouterData(models: Model[], orData: Record<string, OrEn
     const or = orData[m.id];
     if (!or) continue;
     matched++;
+    m.thinking = or.thinking;
     m.throughput = or.tput;
     m.metrics.throughput = or.tput;
     if (or.price != null) {
@@ -348,6 +359,47 @@ export function roleLambda(def: RoleDef): number {
   if (wPrice >= 1) return 1 / P_REF_USD; // pure-cost role: no quality blend to trade against
   return wPrice / (1 - wPrice) / P_REF_USD;
 }
+// ---------------------------------------------------------------------------
+// Thinking-level price adjustment
+// ---------------------------------------------------------------------------
+
+/** Selector levels a role's `thinking` field may take (omp `provider/model[:level]`). */
+export type SuffixLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto";
+
+export const SUFFIX_LEVELS: Record<SuffixLevel, true> = {
+  off: true,
+  minimal: true,
+  low: true,
+  medium: true,
+  high: true,
+  xhigh: true,
+  max: true,
+  auto: true,
+};
+
+/** Thinking tokens per unit of visible output, by level (coding-agent workload:
+ * ~1-2k visible tokens/turn; effort budgets roughly double per step). `auto`
+ * nets out to ~medium — models think when the turn warrants it. */
+export const THINKING_TOKEN_OVERHEAD: Record<SuffixLevel, number> = {
+  off: 0,
+  minimal: 0.25,
+  low: 0.75,
+  medium: 1.5,
+  high: 3,
+  xhigh: 6,
+  max: 12,
+  auto: 1.5,
+};
+
+/** The 3:1 blend assumes output is 1/4 of the token mix; field-typical
+ * input:output price ratio is 1:4, so the billed blend is (3ρ+1)/4·p_out and
+ * thinking scales only the output share: factor = (3ρ+1+T)/(3ρ+1). */
+const IO_PRICE_RATIO = 0.25;
+
+/** Billed-blend multiplier for a role's thinking level (1 for `off`). */
+export function thinkingPriceFactor(level: SuffixLevel): number {
+  return (1 + 3 * IO_PRICE_RATIO + THINKING_TOKEN_OVERHEAD[level]) / (1 + 3 * IO_PRICE_RATIO);
+}
 
 export function buildModels(rows: LlmStatsRow[]): Model[] {
   // Price is OpenRouter-only (applyOpenRouterData); llm-stats input/output prices are unused.
@@ -358,6 +410,7 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
     orgId: r.organization_id,
     context: r.context,
     multimodal: r.multimodal === true,
+    thinking: false,
     price: null,
     throughput: null,
     metrics: {
@@ -387,11 +440,16 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
   const wPrice = def.weights.price ?? 0;
   const qW = 1 - wPrice;
   const lambda = roleLambda(def);
+  const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
   const ranked: Ranked[] = [];
   for (const m of models) {
     if (def.required.some((k) => m.metrics[k] == null)) continue;
     if (def.filters?.image && !m.multimodal) continue;
     if (m.price == null) continue; // value needs a billed price
+
+    // Thinking scales the price axis only for models that will actually run at
+    // the role's level (a non-thinking model ignores the suffix at write time).
+    const priceEff = levelFactor === 1 || !m.thinking ? m.price : m.price * levelFactor;
 
     let q = 0;
     const parts: Record<string, number> = {};
@@ -403,25 +461,24 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
       parts[metric] = contrib;
       q += contrib;
     }
-    ranked.push({ model: m, value: q - lambda * m.price, q, parts });
+    ranked.push({ model: m, value: q - lambda * priceEff, q, priceEff, parts });
   }
   ranked.sort((a, b) => b.value - a.value);
   return ranked;
 }
 
 /** Ids of undominated models: no other ranked model is both cheaper and at least
- * as good (quality q). Equal price+quality ties leave both on the frontier. */
+ * as good (quality q), on the thinking-adjusted effective price. Equal
+ * price+quality ties leave both on the frontier. */
 export function paretoFrontier(ranked: Ranked[]): Set<string> {
   const frontier = new Set<string>();
   for (const a of ranked) {
     const dominated = ranked.some(
       (b) =>
         b.model.id !== a.model.id &&
-        b.model.price != null &&
-        a.model.price != null &&
-        b.model.price <= a.model.price &&
+        b.priceEff <= a.priceEff &&
         b.q >= a.q &&
-        (b.model.price < a.model.price || b.q > a.q),
+        (b.priceEff < a.priceEff || b.q > a.q),
     );
     if (!dominated) frontier.add(a.model.id);
   }

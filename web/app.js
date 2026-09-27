@@ -110,20 +110,20 @@ const TIPS = {
   refresh: "Refetch llm-stats and OpenRouter data (hits the network).",
   rank: "Rank among this role's eligible models, by value, descending.",
   delta: "Rank change against the role's saved (effective) definition: + means this definition ranks the model higher than the plugin does today.",
-  frontier: "Pareto frontier on (price, q): no other model is both cheaper and at least as good.",
-  value: "Sort key: value = q − λ·$/M. λ is the price of one quality point, in $/M.",
+  frontier: "Pareto frontier on (effective price, q): no other model is both cheaper and at least as good. Price is the thinking-adjusted effective price.",
+  value: "Sort key: value = q − λ·$/M on the thinking-adjusted effective price. λ is the price of one quality point, in $/M.",
   q: "Quality q = Σ (wᵢ/(1−w_price))·tᵢ over the weighted quality metrics. Price is not blended in — it is the penalty axis.",
-  price: "Blended price in $/M at 3:1 input:output, OpenRouter standard route.",
+  price: "Effective price in $/M: OpenRouter standard-route blend (3:1 in:out) scaled by the role's thinking factor when the model supports thinking; unadjusted for bare/off roles.",
   throughput: "Output throughput in tok/s (OpenRouter p50 when matched, else llm-stats).",
   context: "Context window in tokens.",
-  explainSub: "value = q − λ·$/M, where q is the weighted quality sum and λ the price of one quality point.",
+  explainSub: "value = q − λ·$/M (effective price), where q is the weighted quality sum and λ the price of one quality point.",
   composition: "Raw source value → cardinal transform t → this role's renormalized weight → contribution to q. Bars show each metric's share of q.",
   raw: "Raw value from the source: llm-stats index score, benchmark pass rate, $/M, or tok/s.",
   t: "Cardinal-normalized value t with sample-independent fixed anchors — this is what the weights multiply.",
   weight: "This role's weight for the metric, renormalized over the quality metrics (price excluded).",
   contrib: "Renormalized weight × t. Contributions sum to q.",
   share: "Share of q contributed by this metric.",
-  costPenalty: "value = q − λ·price: the penalty grows linearly with price, at λ $/M per quality point.",
+  costPenalty: "value = q − λ·price (effective): the penalty grows linearly with the thinking-adjusted price, at λ $/M per quality point.",
   whyNotHigher: "The value gap to the model ranked above, and the per-metric raw target that would close it (inverse of the cardinal transform).",
   dominated: "Models that are both cheaper and at least as good on q.",
   lambda: "λ = price of one quality point, in $/M. Derived as " + LAMBDA_DERIVATION + " unless the role overrides lambda.",
@@ -313,7 +313,7 @@ function renderTable() {
         el("td", { class: "org", text: r.org }),
         el("td", { class: "num", text: fmt(r.value, 3) }),
         el("td", { class: "num", text: fmt(r.q, 3) }),
-        el("td", { class: "num", text: r.price === null ? "—" : fmt(r.price, 2) }),
+        el("td", { class: "num", text: fmt(r.priceEff, 2) }),
         el("td", { class: "num", text: r.throughput === null ? "—" : fmt(r.throughput, 0) }),
         el("td", { class: "num", text: r.context === null ? "—" : fmtCtx(r.context) }),
       ]),
@@ -362,7 +362,7 @@ function renderExplain() {
     el("p", {
       class: "sub",
       "data-tip": TIPS.explainSub,
-      text: ex.model.org + " · rank " + ex.rank + " of " + ex.total + " · value " + fmt(ex.value, 3) + " · q " + fmt(ex.q, 3) + " · $" + fmt(ex.price, 2) + "/M",
+      text: ex.model.org + " · rank " + ex.rank + " of " + ex.total + " · value " + fmt(ex.value, 3) + " · q " + fmt(ex.q, 3) + " · $" + fmt(ex.priceEff, 2) + "/M",
     }),
   );
 
@@ -404,7 +404,7 @@ function renderExplain() {
   panel.append(el("h3", { "data-tip": TIPS.lambda, text: "Cost" }));
   const derived = ex.role.lambda === ex.role.derivedLambda;
   panel.append(el("p", { class: "cost", "data-tip": TIPS.lambda, text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = " + LAMBDA_DERIVATION + ")" : " (override)") }));
-  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "price $" + fmt(ex.cost.price, 2) + "/M · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × thinking)" : "") + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
 
   panel.append(el("h3", { "data-tip": TIPS.whyNotHigher, text: "Why not higher" }));
   if (ex.gapAbove === null) {
@@ -415,7 +415,7 @@ function renderExplain() {
     for (const c of ex.closing) {
       let text;
       if (c.metric === "price") {
-        text = "price would need to drop to $" + fmt(c.targetRaw, 2) + "/M";
+        text = "eff price would need to drop to $" + fmt(c.targetRaw, 2) + "/M";
         if (c.note) text += " — " + c.note;
       } else if (c.targetRaw === null) {
         text = metricLabel(c.metric) + ": " + (c.note || "unreachable");
@@ -434,7 +434,7 @@ function renderExplain() {
     panel.append(el("p", { class: "muted", text: "No model is both cheaper and at least as good (Pareto-optimal)." }));
   } else {
     const ul = el("ul", { class: "dominators" });
-    for (const d of ex.dominators) ul.append(el("li", { text: d.name + " — $" + fmt(d.price, 2) + "/M, q " + fmt(d.q, 3) }));
+    for (const d of ex.dominators) ul.append(el("li", { text: d.name + " — $" + fmt(d.priceEff, 2) + "/M, q " + fmt(d.q, 3) }));
     panel.append(ul);
   }
 }

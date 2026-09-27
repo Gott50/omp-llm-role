@@ -8,7 +8,7 @@
  * src/engine.ts so the numbers on screen are exactly the plugin's numbers.
  */
 
-import { cardinalMetric, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef } from "../engine.ts";
+import { cardinalMetric, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { isRecord } from "../guards.ts";
 import { KNOWN_METRICS, deepMergeInto, resolveSettings } from "../settings.ts";
 
@@ -39,7 +39,7 @@ export const METRIC_META: Record<string, MetricMeta> = {
   tool_calling: { label: "Tool-calling index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   long_context: { label: "Long-context index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   mrcr: { label: "MRCR v2", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
-  price: { label: "Price", kind: "price", unit: "$/M", formula: "blended $/M 3:1 in:out", anchors: "OpenRouter standard route" },
+  price: { label: "Price", kind: "price", unit: "$/M", formula: "billed blend 3:1 in:out, ×(3ρ+1+T)/(3ρ+1) at the role's thinking level", anchors: "OpenRouter standard route" },
   throughput: { label: "Throughput", kind: "throughput", unit: "tok/s", formula: "ln(v/10)/ln(30)", anchors: "10 tok/s→0, 300 tok/s→1, clamped" },
 };
 
@@ -52,6 +52,9 @@ export type RankRow = {
   name: string;
   org: string;
   price: number | null;
+  /** the price the ranking penalized: billed blend × the role's thinking factor
+   * when the model supports thinking; equals `price` for bare/off roles */
+  priceEff: number;
   throughput: number | null;
   context: number | null;
   multimodal: boolean;
@@ -83,6 +86,7 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[]): Ran
       name: r.model.name,
       org: r.model.org,
       price: r.model.price,
+      priceEff: r.priceEff,
       throughput: r.model.throughput,
       context: r.model.context,
       multimodal: r.model.multimodal,
@@ -146,15 +150,15 @@ export type Explanation =
       total: number;
       value: number;
       q: number;
-      price: number;
-      role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number };
+      priceEff: number;
+      role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined };
       contributions: Contribution[];
-      cost: { price: number; lambda: number; penalty: number; q: number; value: number };
+      cost: { priceEff: number; billedPrice: number; lambda: number; penalty: number; q: number; value: number };
       gapAbove: number | null;
       gapToTop: number;
       above: { id: string; name: string; value: number } | null;
       closing: Closing[];
-      dominators: Array<{ id: string; name: string; price: number; q: number }>;
+      dominators: Array<{ id: string; name: string; priceEff: number; q: number }>;
     };
 
 /** Full decomposition of one model's rank for a role, or the eligibility gates it
@@ -221,12 +225,12 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
       closing.push(note ? { metric: c.metric, raw: c.raw, targetT, targetRaw, deltaRaw, note } : { metric: c.metric, raw: c.raw, targetT, targetRaw, deltaRaw });
     }
     if (lambda > 0) {
-      const targetPrice = model.price - gapAbove / lambda;
+      const targetPrice = self.priceEff - gapAbove / lambda;
       const note = targetPrice < 0 ? "unreachable — price cannot go below $0" : undefined;
       closing.push(
         note
-          ? { metric: "price", raw: model.price, targetT: targetPrice, targetRaw: targetPrice, deltaRaw: targetPrice - model.price, note }
-          : { metric: "price", raw: model.price, targetT: targetPrice, targetRaw: targetPrice, deltaRaw: targetPrice - model.price },
+          ? { metric: "price", raw: self.priceEff, targetT: targetPrice, targetRaw: targetPrice, deltaRaw: targetPrice - self.priceEff, note }
+          : { metric: "price", raw: self.priceEff, targetT: targetPrice, targetRaw: targetPrice, deltaRaw: targetPrice - self.priceEff },
       );
     }
   }
@@ -235,15 +239,13 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     .filter(
       (r) =>
         r.model.id !== modelId &&
-        r.model.price != null &&
-        model.price != null &&
-        r.model.price <= model.price &&
+        r.priceEff <= self.priceEff &&
         r.q >= self.q &&
-        (r.model.price < model.price || r.q > self.q),
+        (r.priceEff < self.priceEff || r.q > self.q),
     )
-    .sort((a, b) => (a.model.price as number) - (b.model.price as number))
+    .sort((a, b) => a.priceEff - b.priceEff)
     .slice(0, 3)
-    .map((r) => ({ id: r.model.id, name: r.model.name, price: r.model.price as number, q: r.q }));
+    .map((r) => ({ id: r.model.id, name: r.model.name, priceEff: r.priceEff, q: r.q }));
 
   return {
     eligible: true,
@@ -252,10 +254,10 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     total,
     value: self.value,
     q: self.q,
-    price: model.price,
-    role: { name: roleName, lambda, derivedLambda, wPrice, qW },
+    priceEff: self.priceEff,
+    role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking },
     contributions,
-    cost: { price: model.price, lambda, penalty: lambda * model.price, q: self.q, value: self.value },
+    cost: { priceEff: self.priceEff, billedPrice: model.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
     gapAbove,
     gapToTop,
     above,

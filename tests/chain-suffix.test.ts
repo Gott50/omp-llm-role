@@ -12,9 +12,9 @@ const MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60
 
 // Only `smol` is managed, with a non-default suffix, so the chain assertions are exact.
 const SMOL_ONLY = Object.fromEntries(
-  ["default", "slow", "vision", "plan", "commit", "tiny", "task", "advisor"].map((r) => [r, { weights: null }]),
+  ["default", "slow", "vision", "plan", "commit", "tiny", "task", "advisor", "designer"].map((r) => [r, { weights: null }]),
 );
-const SETTINGS = { roles: SMOL_ONLY, suffixes: { smol: "max" } };
+const SETTINGS = { roles: { ...SMOL_ONLY, smol: { thinking: "max" } } };
 
 type ConfigDoc = {
   modelRoles: Record<string, string>;
@@ -46,10 +46,10 @@ test("two roles on the same model share one level-free chain", async () => {
   // `default` (no suffix) and `smol` (`:max`) both rank model-a first, so the chain
   // key `openrouter/org/model-a` serves both and must not carry either role's level.
   const optOut = Object.fromEntries(
-    ["slow", "vision", "plan", "commit", "tiny", "task", "advisor"].map((r) => [r, { weights: null }]),
+    ["slow", "vision", "plan", "commit", "tiny", "task", "advisor", "designer"].map((r) => [r, { weights: null }]),
   );
   const dir = setupAgentDir("other: 1\n");
-  const deps = fakeDeps(MODELS, { roles: optOut, suffixes: { smol: "max" } });
+  const deps = fakeDeps(MODELS, { roles: { ...optOut, smol: { thinking: "max" } } });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const doc = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as ConfigDoc;
   assert.equal(doc.modelRoles.default, "openrouter/org/model-a");

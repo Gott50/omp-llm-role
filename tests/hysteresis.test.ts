@@ -67,13 +67,13 @@ test("current already best -> kept-eligible with identical selector", async () =
 });
 
 test("suffix appended from settings when the catalog entry thinks", async () => {
-  const { result } = await run("other: 1\n", { suffixes: { default: "high" } });
+  const { result } = await run("other: 1\n", { roles: { default: { thinking: "high" } } });
   assert.equal(result.decisions[0].to, "openrouter/org/model-a:high");
 });
 
 test("no suffix when the chosen catalog entry has empty thinking[]", async () => {
   const dir = setupAgentDir("other: 1\n");
-  const deps = fakeDeps(MODELS, { suffixes: { default: "high" } }, {
+  const deps = fakeDeps(MODELS, { roles: { default: { thinking: "high" } } }, {
     getCatalog: async () => makeCatalog(MODELS.map((m) => m.id), []),
   });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));

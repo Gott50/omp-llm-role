@@ -2,7 +2,7 @@
 /**
  * Fetches the current llm-stats.com leaderboard and computes a best-fit
  * model ranking for each omp model role:
- *   default, smol, slow, vision, plan, commit, tiny, task, advisor
+ *   default, smol, slow, vision, plan, commit, tiny, task, advisor, designer
  *
  * The ranking engine (fetch/caches, cardinal transforms, per-role value scoring) lives
  * in src/engine.ts and is shared with the omp-llm-role plugin; this CLI is the
@@ -28,7 +28,7 @@ import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { catalogFromOmpModelsJson, resolveVariant, type CatalogEntry } from "./src/availability.ts";
-import { computeRankings, loadRankData, paretoFrontier, roleLambda, type Model, type Ranked } from "./src/engine.ts";
+import { computeRankings, loadRankData, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked } from "./src/engine.ts";
 import { DEFAULT_ROLES as ROLES } from "./src/settings.ts";
 
 const execFileP = promisify(execFile);
@@ -71,6 +71,9 @@ function formatRankings(
     "price); value = q − λ·$/M sorts each role. λ = price-weight share ÷ $20, per-role",
     "override via plugin settings roles.<role>.lambda. Metric columns show weighted",
     "contributions and sum to q; — = metric missing (contributes 0).",
+    "Roles with a thinking level rank on the thinking-adjusted price: the billed",
+    "blend scales by the level's factor (thinking tokens bill as output); models",
+    "without thinking support are not adjusted.",
     "Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context",
     "sea=search vis=vision tput=throughput (code, mrcr as-is).",
     "★ = Pareto-frontier: no eligible model is both cheaper and better (q).",
@@ -89,7 +92,8 @@ function formatRankings(
       lines.push("eligible: 0 — no eligible models", "");
       continue;
     }
-    lines.push(`eligible: ${ranked.length} — λ ${roleLambda(def).toFixed(5)} $/quality-point`, "");
+    const tf = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
+    lines.push(`eligible: ${ranked.length} — λ ${roleLambda(def).toFixed(5)} $/quality-point` + (tf > 1 ? ` (thinking ×${tf.toFixed(3)})` : ""), "");
     const frontier = paretoFrontier(ranked);
     const metricKeys = Object.keys(def.weights).filter((k) => k !== "price");
     const qW = 1 - (def.weights.price ?? 0);
@@ -109,8 +113,7 @@ function formatRankings(
     for (let i = 0; i < Math.min(top, ranked.length); i++) {
       const r = ranked[i];
       const m = r.model;
-      const price =
-        m.price == null ? "—" : `$${m.price < 10 ? m.price.toFixed(2) : Number(m.price.toFixed(1))}`;
+      const price = `$${r.priceEff < 10 ? r.priceEff.toFixed(2) : Number(r.priceEff.toFixed(1))}`;
       const tokS = m.throughput?.toFixed(0) ?? "—";
       const ctx =
         m.context == null
@@ -231,6 +234,7 @@ async function main(): Promise<void> {
               lambda: Number(roleLambda(def).toFixed(6)),
               paretoFrontier: frontier.has(r.model.id),
               priceBlendedUsdPerM: r.model.price,
+              priceEffUsdPerM: r.priceEff,
               throughputTokS: r.model.throughput,
               contextTokens: r.model.context,
             })),

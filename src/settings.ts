@@ -13,7 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { RoleDef } from "./engine.ts";
+import { SUFFIX_LEVELS, type RoleDef } from "./engine.ts";
 import { isRecord } from "./guards.ts";
 export const DEFAULT_ROLES: Record<string, RoleDef> = {
   default: {
@@ -25,27 +25,32 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     description: "Fast lightweight model: cheap and quick, still competent",
     weights: { price: 0.3, throughput: 0.28, general: 0.2, code: 0.12, tool_calling: 0.1 },
     required: ["general", "price", "throughput"],
+    thinking: "off",
   },
   slow: {
     description: "Most capable model for hard problems; cost and speed as tiebreakers",
     weights: { general: 0.26, reasoning: 0.26, code: 0.18, agents: 0.13, math: 0.08, throughput: 0.04, price: 0.05 },
     required: ["general", "price", "throughput"],
+    thinking: "max",
   },
   vision: {
     description: "Image understanding: vision index dominates",
     weights: { vision: 0.52, general: 0.2, reasoning: 0.15, code: 0.06, throughput: 0.03, price: 0.04 },
     required: ["vision", "general", "price", "throughput"],
+    thinking: "auto",
     filters: { image: true },
   },
   plan: {
     description: "Planning: reasoning, math, long-context coherence",
     weights: { reasoning: 0.32, general: 0.26, long_context: 0.14, math: 0.14, throughput: 0.04, price: 0.1 },
     required: ["reasoning", "general", "price", "throughput"],
+    thinking: "high",
   },
   commit: {
     description: "Commit messages: cheap and fast with decent general quality",
     weights: { price: 0.35, throughput: 0.27, general: 0.28, code: 0.1 },
     required: ["general", "price", "throughput"],
+    thinking: "off",
   },
   tiny: {
     description: "Background tasks (titles, memory): cheapest and fastest wins",
@@ -62,20 +67,15 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     weights: { reasoning: 0.36, general: 0.3, long_context: 0.12, math: 0.1, throughput: 0.04, price: 0.08 },
     required: ["reasoning", "general", "price", "throughput"],
   },
+  designer: {
+    description: "Design work: visual/UX judgement on image-capable models",
+    weights: { general: 0.3, code: 0.2, vision: 0.2, price: 0.15, throughput: 0.15 },
+    required: ["general", "price", "throughput"],
+    thinking: "high",
+    filters: { image: true },
+  },
 };
 
-export type SuffixLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto";
-
-const SUFFIX_LEVELS: Record<SuffixLevel, true> = {
-  off: true,
-  minimal: true,
-  low: true,
-  medium: true,
-  high: true,
-  xhigh: true,
-  max: true,
-  auto: true,
-};
 
 /** Metrics a role weight/required entry may name (SPEC §7). */
 export const KNOWN_METRICS: Record<string, true> = {
@@ -97,7 +97,6 @@ export type ResolvedSettings = {
   switchMargin: number;
   writeFallbackChains: boolean;
   fallbackChainDepth: number;
-  suffixes: Record<string, SuffixLevel>;
   roles: Record<string, RoleDef>;
 };
 
@@ -105,7 +104,6 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   switchMargin: 0.02,
   writeFallbackChains: true,
   fallbackChainDepth: 2,
-  suffixes: { smol: "off", slow: "max", vision: "auto", plan: "high", commit: "off" },
   roles: DEFAULT_ROLES,
 };
 
@@ -186,6 +184,10 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   const patchObj: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (key === "config") continue;
+    if (key === "suffixes" || key.startsWith("suffixes.")) {
+      errors.push(`${key}: suffixes moved into roles — set roles.<role>.thinking instead`);
+      continue;
+    }
     setNested(patchObj, key.split("."), value);
   }
   deepMergeInto(merged as unknown as Record<string, unknown>, patchObj);
@@ -202,6 +204,9 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
     }
     if (isRecord(obj)) deepMergeInto(merged as unknown as Record<string, unknown>, obj);
   }
+  if (isRecord((merged as unknown as Record<string, unknown>).suffixes)) {
+    errors.push("config: suffixes moved into roles — set roles.<role>.thinking instead");
+  }
 
   if (typeof merged.switchMargin !== "number" || !Number.isFinite(merged.switchMargin) || merged.switchMargin < 0 || merged.switchMargin > 1) {
     errors.push(`switchMargin: must be a number in [0, 1], got ${JSON.stringify(merged.switchMargin)}`);
@@ -211,9 +216,6 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   }
   if (!Number.isInteger(merged.fallbackChainDepth) || merged.fallbackChainDepth < 0) {
     errors.push(`fallbackChainDepth: must be an integer >= 0, got ${JSON.stringify(merged.fallbackChainDepth)}`);
-  }
-  for (const [role, level] of Object.entries(merged.suffixes)) {
-    if (!(level in SUFFIX_LEVELS)) errors.push(`suffixes.${role}: unknown thinking level ${JSON.stringify(level)}`);
   }
 
   for (const [name, rdef] of Object.entries(merged.roles)) {
@@ -256,6 +258,10 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
       else if (rdef.filters.image !== undefined && typeof rdef.filters.image !== "boolean") {
         errors.push(`role ${name}: filters.image must be a boolean`);
       }
+    }
+    if (rdef.thinking !== undefined && (typeof rdef.thinking !== "string" || !(rdef.thinking in SUFFIX_LEVELS))) {
+      errors.push(`role ${name}: thinking must be one of ${Object.keys(SUFFIX_LEVELS).join(", ")}`);
+      delete rdef.thinking;
     }
     if (rdef.lambda !== undefined) {
       if (typeof rdef.lambda !== "number" || !Number.isFinite(rdef.lambda) || rdef.lambda < 0) {
