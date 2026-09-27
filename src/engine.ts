@@ -96,6 +96,11 @@ export type Model = {
   price: number | null;
   /** output tok/s — OpenRouter p50 only; null when OpenRouter has no data */
   throughput: number | null;
+  /** Design Arena `models-website` Elo (raw, from OpenRouter
+   * `benchmarks[permaslug].da.elo_by_category`); null when the model has no
+   * Design Arena data — `metrics.website` is then imputed, see
+   * `applyDesignPercentiles` */
+  designElo: number | null;
   metrics: Record<string, number | null>;
 };
 
@@ -219,9 +224,56 @@ export function applyOpenRouterData(models: Model[], orData: Record<string, OrEn
   return { matched, priced };
 }
 
+/**
+ * Design Arena `models-website` Elo -> the `website` metric: a percentile within
+ * the design-covered population. Models without Design Arena data get the covered
+ * median (0.5) — a neutral fill, not a capability-derived guess.
+ *
+ * Why neutral. The covered set is self-selected (arena participation picks
+ * stronger, cheaper models), so any capability-derived fill extrapolates a trend
+ * fitted on a biased subsample: a least-squares fit of percentile on the general
+ * index saturates at 0 for ~19% of the uncovered eligible pool, and a
+ * nearest-neighbour fill is discontinuous (0.49 jumps between models 0.06 index
+ * points apart). It would also double-count capability, which the role's
+ * general/code/vision terms already carry. A neutral fill leaves the uncovered
+ * half's ordering to those terms and only shifts it relative to the measured half.
+ *
+ * The percentile is taken over every model with Design Arena data (not the role's
+ * eligible pool), so the metric is role-independent and identical for every role
+ * that weights it.
+ */
+export function applyDesignPercentiles(
+  models: Model[],
+  designElo: Record<string, number>,
+): { covered: number; imputed: number } {
+  for (const m of models) m.designElo = designElo[m.id] ?? null;
+  const covered = models.filter((m) => m.designElo != null);
+  if (covered.length === 0) {
+    for (const m of models) m.metrics.website = null;
+    return { covered: 0, imputed: 0 };
+  }
+
+  const sorted = [...covered].sort((a, b) => (a.designElo ?? 0) - (b.designElo ?? 0));
+  const pct = new Map<string, number>();
+  sorted.forEach((m, i) => pct.set(m.id, (i + 0.5) / sorted.length));
+
+  let imputed = 0;
+  for (const m of models) {
+    const p = pct.get(m.id);
+    if (p != null) {
+      m.metrics.website = p;
+      continue;
+    }
+    m.metrics.website = 0.5; // covered median percentile: neutral fill
+    imputed++;
+  }
+  return { covered: covered.length, imputed };
+}
+
 /** Validated find payload: `find` is narrowed for throughput/price derivation; `data` is the
- * full response.data object (every section the endpoint returned), stored verbatim in the cache. */
-export function parseFindData(v: unknown): { find: OpenRouterFindData; data: object } | null {
+ * full response.data object (every section the endpoint returned), stored verbatim in the cache;
+ * `designElo` is the Design Arena `models-website` Elo keyed by llm-stats model id. */
+export function parseFindData(v: unknown): { find: OpenRouterFindData; data: object; designElo: Record<string, number> } | null {
   if (typeof v !== "object" || v === null || !("data" in v)) return null;
   const d: unknown = v.data;
   if (typeof d !== "object" || d === null || !("models" in d) || !("endpoint_perf" in d)) return null;
@@ -246,7 +298,41 @@ export function parseFindData(v: unknown): { find: OpenRouterFindData; data: obj
     if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt < 0 || completion < 0) continue;
     price[id] = ((3 * prompt + completion) / 4) * 1e6; // USD/token -> blended $/M, 3:1 in:out
   }
-  return { find: { models: d.models, endpoint_perf: perf, endpoint_price: price }, data: d };
+  return { find: { models: d.models, endpoint_perf: perf, endpoint_price: price }, data: d, designElo: extractDesignElo(d.models, "benchmarks" in d ? d.benchmarks : null) };
+}
+
+/**
+ * Design Arena `models-website` Elo -> llm-stats model id. The benchmark keys are
+ * dated permaslugs (`anthropic/claude-opus-5-20260723`) while `models[].slug` is
+ * bare (`anthropic/claude-opus-5`), so the join goes permaslug -> slug -> the bare
+ * id the leaderboard uses. Only the `models-website` category is read: it is the
+ * deepest design category that overlaps the ranked pool (116/131 entries, and the
+ * same set as the category union among eligible models); `graphicdesign`/`logo`
+ * cover image generators only, and `uicomponent` (r = 0.98 with website) is
+ * redundant.
+ */
+function extractDesignElo(models: unknown[], benchmarks: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (typeof benchmarks !== "object" || benchmarks === null) return out;
+  const suffixByPermaslug = new Map<string, string>();
+  for (const row of models) {
+    if (typeof row !== "object" || row === null) continue;
+    const permaslug: unknown = "permaslug" in row ? row.permaslug : null;
+    const slug: unknown = "slug" in row ? row.slug : null;
+    if (typeof permaslug !== "string" || typeof slug !== "string") continue;
+    suffixByPermaslug.set(permaslug, slug.split("/").pop() ?? slug);
+  }
+  for (const [permaslug, entry] of Object.entries(benchmarks)) {
+    const suffix = suffixByPermaslug.get(permaslug);
+    if (suffix === undefined || typeof entry !== "object" || entry === null) continue;
+    const da: unknown = "da" in entry ? entry.da : null;
+    if (typeof da !== "object" || da === null) continue;
+    const byCategory: unknown = "elo_by_category" in da ? da.elo_by_category : null;
+    if (typeof byCategory !== "object" || byCategory === null) continue;
+    const elo: unknown = "models-website" in byCategory ? byCategory["models-website"] : null;
+    if (typeof elo === "number") out[suffix] = elo;
+  }
+  return out;
 }
 
 // Flight-payload extraction
@@ -353,7 +439,7 @@ export function cardinalMetric(metric: string, v: number): number {
   const chance = BENCHMARK_CHANCE[metric];
   if (chance !== undefined) return (v - chance) / (1 - chance);
   if (INDEX_METRICS[metric]) return (v + 20) / 80;
-  return v; // unclassed benchmark: raw 0-1 pass rate, chance ≈ 0
+  return v; // unclassed metric: already 0-1 (benchmark pass rate, or a percentile such as `website`)
 }
 
 /** λ ($ per quality point) for a role: explicit override wins; default derives
@@ -426,6 +512,7 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
     thinking: false,
     price: null,
     throughput: null,
+    designElo: null,
     metrics: {
       general: r.index_general,
       reasoning: r.index_reasoning,
@@ -445,6 +532,7 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
       tau_bench: r.tau_bench_retail_score,
       price: null, // set by OpenRouter enrichment; the λ·$ penalty axis, never blended
       throughput: null,
+      website: null, // set by applyDesignPercentiles (percentile + conditional-expectation fill)
     },
   }));
 }
@@ -631,11 +719,13 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
   let orMatched = 0;
   let orPriced = 0;
   let orData: Record<string, OrEnrichment> | null = null;
+  let designElo: Record<string, number> = {};
   const cachedOr = refresh ? null : readOrCache(OPENROUTER_CACHE_PATH, true);
   if (cachedOr) {
     const parsed = parseFindData(cachedOr);
     if (parsed) {
       orData = buildOpenRouterEnrichment(parsed.find);
+      designElo = parsed.designElo;
       console.error(`using cache ${OPENROUTER_CACHE_PATH} (fetched ${cachedOr.fetchedAt})`);
     } else {
       console.error(`${OPENROUTER_CACHE_PATH}: unexpected payload shape; refetching`);
@@ -659,6 +749,7 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
             console.error("openrouter: no enrichment data extracted; not caching");
           } else {
             orData = built;
+            designElo = parsed.designElo;
             cacheData = parsed.data;
             cacheCount = parsed.find.models.length;
           }
@@ -676,6 +767,7 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
       const staleParsed = stale ? parseFindData(stale) : null;
       if (staleParsed) {
         orData = buildOpenRouterEnrichment(staleParsed.find);
+        designElo = staleParsed.designElo;
         console.error(`using stale cache ${OPENROUTER_CACHE_PATH} (fetched ${stale?.fetchedAt})`);
       }
     }
@@ -683,6 +775,11 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
   if (orData) {
     ({ matched: orMatched, priced: orPriced } = applyOpenRouterData(models, orData));
     console.error(`openrouter: matched ${orMatched}/${models.length} models (throughput), ${orPriced} priced`);
+  }
+
+  const design = applyDesignPercentiles(models, designElo);
+  if (design.covered > 0) {
+    console.error(`design arena: ${design.covered} models with a models-website Elo, ${design.imputed} imputed`);
   }
 
   return { models, fetchedAt, source, orMatched, orPriced };

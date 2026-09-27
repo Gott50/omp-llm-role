@@ -11,6 +11,10 @@ blend scales by the level's factor (thinking tokens bill as output); models
 without thinking support are not adjusted.
 Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context
 sea=search vis=vision tput=throughput (code, mrcr as-is).
+web=website: Design Arena `models-website` Elo as a percentile within the
+design-covered field (OpenRouter benchmarks[permaslug].da). Models without
+Design Arena data get the covered median (0.5) and are marked ~ in the model
+column — a neutral fill, not a capability-derived guess.
 ★ = Pareto-frontier: no eligible model is both cheaper and better (q).
 Throughput + price: OpenRouter (p50 tok/s, last 30m routed traffic; standard-route $/M 3:1 in:out), throughput 147/395, priced 146; models without OpenRouter throughput or a billed route are not ranked.
 
@@ -161,18 +165,18 @@ eligible: 138 — λ 0.00435 $/quality-point
 ## @designer — Design work: visual/UX judgement on image-capable models
 eligible: 82 — λ 0.00882 $/quality-point (thinking ×2.714)
 
-|  # | value |     q | model                        | org                       |   $/M | tok/s |  ctx | gen 35.3% | code 23.5% | vis 23.5% | tput 17.6% |
-| -: | ----: | ----: | ---------------------------- | ------------------------- | ----: | ----: | ---: | --------: | ---------: | --------: | ---------: |
-|  1 | 0.741 | 0.777 | ★ Gemini 3.8 Flash           | Google                    | $4.07 |   141 | 1.0M |     0.309 |      0.171 |     0.159 |      0.137 |
-|  2 | 0.730 | 0.778 | ★ Muse Spark 1.1             | Meta                      | $5.43 |   181 | 1.0M |     0.306 |      0.160 |     0.161 |      0.150 |
-|  3 | 0.715 | 0.751 | Gemini 3.7 Flash             | Google                    | $4.07 |   131 | 1.0M |     0.301 |      0.161 |     0.155 |      0.133 |
-|  4 | 0.714 | 0.761 | Muse Spark 1.3               | Meta                      | $5.43 |    89 | 1.0M |     0.327 |      0.181 |     0.140 |      0.113 |
-|  5 | 0.709 | 0.715 | ★ Qwen3.8 Flash              | Alibaba Cloud / Qwen Team | $0.62 |    54 | 1.0M |     0.304 |      0.164 |     0.159 |      0.087 |
-|  6 | 0.688 | 0.696 | DeepSeek-V4-Flash-Vision-Exp | DeepSeek                  | $0.88 |   105 | 1.0M |     0.289 |      0.161 |     0.124 |      0.122 |
-|  7 | 0.680 | 0.776 | GPT-5.6 Sol                  | OpenAI                    | $10.9 |    51 | 1.1M |     0.331 |      0.195 |     0.166 |      0.085 |
-|  8 | 0.669 | 0.682 | MiMo-V2.6-Pro                | Xiaomi                    | $1.48 |    28 | 1.0M |     0.308 |      0.182 |     0.139 |      0.053 |
-|  9 | 0.661 | 0.733 | Kimi K3                      | Moonshot AI               | $8.14 |    33 | 1.0M |     0.321 |      0.185 |     0.165 |      0.062 |
-| 10 | 0.661 | 0.666 | ★ Qwen3.8-27B                | Alibaba Cloud / Qwen Team | $0.60 |    40 | 262k |     0.287 |      0.151 |     0.156 |      0.072 |
+|  # | value |     q | model                          | org                       |   $/M | tok/s |  ctx | gen 30.6% | code 21.2% | vis 21.2% | tput 15.3% | web 11.8% |
+| -: | ----: | ----: | ------------------------------ | ------------------------- | ----: | ----: | ---: | --------: | ---------: | --------: | ---------: | --------: |
+|  1 | 0.754 | 0.790 | ★ Gemini 3.8 Flash             | Google                    | $4.07 |   141 | 1.0M |     0.268 |      0.154 |     0.143 |      0.119 |     0.106 |
+|  2 | 0.740 | 0.787 | Muse Spark 1.3                 | Meta                      | $5.43 |    89 | 1.0M |     0.283 |      0.163 |     0.126 |      0.098 |     0.117 |
+|  3 | 0.734 | 0.770 | Gemini 3.7 Flash               | Google                    | $4.07 |   131 | 1.0M |     0.261 |      0.145 |     0.140 |      0.116 |     0.109 |
+|  4 | 0.724 | 0.771 | Muse Spark 1.1                 | Meta                      | $5.43 |   181 | 1.0M |     0.266 |      0.144 |     0.145 |      0.130 |     0.086 |
+|  5 | 0.702 | 0.715 | ★ MiMo-V2.6-Pro                | Xiaomi                    | $1.48 |    28 | 1.0M |     0.267 |      0.164 |     0.125 |      0.046 |     0.114 |
+|  6 | 0.690 | 0.762 | Kimi K3                        | Moonshot AI               | $8.14 |    33 | 1.0M |     0.278 |      0.166 |     0.149 |      0.054 |     0.115 |
+|  7 | 0.684 | 0.689 | ★ ~ Qwen3.8 Flash              | Alibaba Cloud / Qwen Team | $0.62 |    54 | 1.0M |     0.264 |      0.148 |     0.143 |      0.076 |     0.059 |
+|  8 | 0.663 | 0.671 | ~ DeepSeek-V4-Flash-Vision-Exp | DeepSeek                  | $0.88 |   105 | 1.0M |     0.251 |      0.145 |     0.111 |      0.106 |     0.059 |
+|  9 | 0.648 | 0.649 | ★ GLM-5.3-Flash                | Zhipu AI                  | $0.19 |    13 | 1.0M |     0.267 |      0.143 |     0.137 |      0.012 |     0.091 |
+| 10 | 0.648 | 0.743 | ~ GPT-5.6 Sol                  | OpenAI                    | $10.9 |    51 | 1.1M |     0.286 |      0.175 |     0.150 |      0.073 |     0.059 |
 
 # Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).
 # Selectors are openrouter/<id>; the omp-llm-role plugin writes this block daily.

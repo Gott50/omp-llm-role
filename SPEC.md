@@ -84,7 +84,8 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
 - `loadRankData(deps?)` — existing fetch/cache chain (fresh cache → live fetch → stale
   cache → none), returns models + match counts. Unchanged behavior.
 - `computeRankings(models, roles)` — cardinal fixed-anchor transforms (index_* affine
-  `(v+20)/80`, benchmarks chance-anchored, throughput log-anchored) + quality composite
+  `(v+20)/80`, benchmarks chance-anchored, throughput log-anchored, `website` identity
+  over an already-0-1 percentile) + quality composite
   `q` + value `q − λ·$/M` + eligibility (`required` non-null, billed price). `roles`
   comes from resolved settings (§7), not the hardcoded `ROLES`.
 - `llm-role-rank.ts` keeps its CLI, flags, report format, and suggested-YAML output; its
@@ -295,11 +296,18 @@ a power-user escape hatch for whole-object overrides.
 
 Validation (fail the run, notify, no write): weights > 0, each role's weights sum to
 1.0 ± 0.01, `required` entries ∈ {general, reasoning, math, code, agents, search,
-vision, tool_calling, long_context, mrcr, price, throughput} (the eligibility gate,
+vision, tool_calling, long_context, mrcr, website, price, throughput} (the eligibility gate,
 independent of weights), weightable metric names ∈ the same set, `roles.<role>.thinking` ∈
 {off, minimal, low, medium, high, xhigh, max, auto}. A role entry with `weights: null`
 explicitly opts that role out. Legacy `suffixes.*` keys are rejected with a migration
 hint (moved into `roles.<role>.thinking`).
+
+`website` is the one derived metric: Design Arena's `models-website` Elo as a
+percentile within the design-covered population, with models lacking Design Arena
+data filled at the covered median (0.5). It is computed once per run in
+`applyDesignPercentiles` (role-independent), so it is never null for a model with
+a general index and never a `required` gate — the newest frontier models carry no
+Design Arena data. Shipped weight: `designer` 0.10 only.
 
 ## 8. State, history, and the write
 

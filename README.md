@@ -190,6 +190,20 @@ tiers included (they carry real routed traffic). Price is the standard
 (non-`:free`) route's blended $/M at 3:1 input:output, cheapest billed route
 as fallback — a $0 free tier never sets the price.
 
+**Design quality — OpenRouter's Design Arena Elo.** The same `find` payload
+carries `data.benchmarks[permaslug].da.elo_by_category`: Design Arena's
+human-preference Elo per category (`models-website`, `models-uicomponent`,
+`models-svg`, `models-dataviz`, `models-graphicdesign`, `models-logo`, …).
+Only `models-website` is read — the deepest design category that overlaps the
+ranked pool (116/131 entries, and the same set as the category union among
+eligible models), where `graphicdesign`/`logo` cover image generators only and
+`uicomponent` (r = 0.98 with website) is redundant. The benchmark keys are
+dated permaslugs (`anthropic/claude-opus-5-20260723`) while `models[].slug` is
+bare, so the join goes permaslug → slug → the bare llm-stats id. llm-stats has
+no comparable design metric: its design/UI benchmark pages (`design2code`,
+`artifacts-bench`, `webdev-arena`, `svg-bench`, …) carry 1–5 rows each, all
+self-reported with zero verified results.
+
 ## Scoring
 
 Per role, each metric is cardinal-normalized with **fixed anchors** (no ranks —
@@ -212,6 +226,17 @@ Pareto frontier (no eligible model is both cheaper and better on `q`). Cardinal
 scoring kills two percentile artifacts: rank compression (real magnitude gaps
 now count — e.g. @default flipped DeepSeek-V4.1-Flash → GPT-6 Astra) and
 field-dependent scales (adding a model no longer reshuffles everyone).
+
+`website` is the one **derived** metric: Design Arena's `models-website` Elo
+converted to a percentile within the design-covered population (73 of 395
+models), so it is role-independent and identical for every role that weights
+it. Models without Design Arena data get the covered median (0.5) — a neutral
+fill, not a capability-derived guess. The covered set is self-selected (arena
+participation picks stronger, cheaper models), so a least-squares fill
+saturates at 0 for ~19% of the uncovered eligible pool and a nearest-neighbour
+fill is discontinuous (0.49 jumps between models 0.06 index points apart);
+either would also double-count capability that `general`/`code`/`vision`
+already carry. The report marks a neutral-filled value `~` in the model column.
 
 Roles with a `thinking` level rank on the **thinking-adjusted price**: the
 billed blend scales by the level's factor `(3ρ+1+T)/(3ρ+1)` (ρ = input:output
@@ -243,7 +268,10 @@ Weight design rules (2026-09-27 review):
   `math` 83%, `tool_calling` 78%, `agents` 76%, `long_context` 39%, `search`
   34%, `mrcr` 13%. The shipped defaults weight the 100%-coverage backbone plus
   the partial-coverage trio at reduced share; `mrcr` and `search` are not
-  weighted at all and `long_context` is capped at 0.14.
+  weighted at all and `long_context` is capped at 0.14. `website` is the
+  exception to the rule: it covers 50% of the designer pool (41/82) but is
+  neutral-filled rather than 0-filled, so a missing value is not a penalty —
+  it is weighted at 0.10 in `designer` only.
 - **Non-collinear differentiation.** The capability indices are one latent
   factor (Pearson r over the pool: general↔reasoning 0.99, code↔agents 0.95,
   general↔code 0.94), so re-weighting them barely separates roles. Roles are
@@ -355,13 +383,26 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 
 ## Current state (2026-09-27)
 
+- Design Arena Elo wired into `designer` (2026-09-27): OpenRouter's
+  `benchmarks[permaslug].da.elo_by_category["models-website"]` is ingested as
+  the `website` metric (percentile within the 73 design-covered models;
+  uncovered models get the neutral covered median 0.5) and weighted 0.10 in
+  `designer` (its other weights rescaled to keep Σ = 1). The design term
+  reorders the designer top-5 — `Muse Spark 1.3` (measured 0.99) rises to #2,
+  `MiMo-V2.6-Pro` (measured 0.97 at $0.54/M) to #5 — and the leader is
+  unchanged (`Gemini 3.8 Flash`, 0.754). It also flips the shipped selector:
+  the dry run now switches `modelRoles.designer`
+  `deepseek-v4-flash-vision-exp:high` → `xiaomi/mimo-v2.6-pro:high` (0.702 vs
+  0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
+  Arena data and takes the neutral fill while MiMo carries a measured 0.97.
+  The other nine roles are untouched (only `designer` weights `website`).
 - 395 llm-stats models; OpenRouter matched 147/395 (throughput), 146 priced.
 - Eligible per role: 138 (vision 70, designer 82, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices): `default`
   GPT-6 Astra (0.836), `smol` Muse Spark 1.1 (0.750), `slow` GLM-5.3 (0.813),
   `vision` GPT-5.6 Sol (0.773), `plan` GPT-5.6 Sol (0.766), `commit` Muse
   Spark 1.1 (0.779), `tiny` Muse Spark 1.1 (0.792), `task` GLM-5.3 (0.752),
-  `advisor` GPT-5.6 Sol (0.828), `designer` Gemini 3.8 Flash (0.741).
+  `advisor` GPT-5.6 Sol (0.828), `designer` Gemini 3.8 Flash (0.754).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
@@ -465,3 +506,12 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   models, and a missing weighted metric scores 0 rather than being excluded.
   Weighting them makes `q` a coverage score — the shipped defaults avoid
   `mrcr`/`search` and cap `long_context` for that reason.
+- Design Arena coverage is self-selected and lags the frontier: 73 of 395
+  models carry a `models-website` Elo, and the covered set is systematically
+  stronger and cheaper than the uncovered one (designer pool: mean general
+  index 0.58 vs 0.47, $2.19 vs $3.19/M). The newest flagships (`gpt-6-astra`,
+  `gpt-5.6-sol`, `qwen3.8-flash`, `deepseek-v4.1-flash`) have no Design Arena
+  data, so `website` must never be a `required` gate — it would disqualify the
+  models the capability roles actually pick. The metric is also partly
+  collinear with the capability block (r = 0.70 with the designer non-price
+  composite), which is why it reorders ranks 5+ but never the leader.

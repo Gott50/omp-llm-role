@@ -49,6 +49,7 @@ const METRIC_ABBR: Record<string, string> = {
   tool_calling: "tool",
   long_context: "lc",
   mrcr: "mrcr",
+  website: "web",
   price: "price",
   throughput: "tput",
 };
@@ -76,6 +77,10 @@ function formatRankings(
     "without thinking support are not adjusted.",
     "Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context",
     "sea=search vis=vision tput=throughput (code, mrcr as-is).",
+    "web=website: Design Arena `models-website` Elo as a percentile within the",
+    "design-covered field (OpenRouter benchmarks[permaslug].da). Models without",
+    "Design Arena data get the covered median (0.5) and are marked ~ in the model",
+    "column — a neutral fill, not a capability-derived guess.",
     "★ = Pareto-frontier: no eligible model is both cheaper and better (q).",
   ];
   lines.push(
@@ -96,6 +101,7 @@ function formatRankings(
     lines.push(`eligible: ${ranked.length} — λ ${roleLambda(def).toFixed(5)} $/quality-point` + (tf > 1 ? ` (thinking ×${tf.toFixed(3)})` : ""), "");
     const frontier = paretoFrontier(ranked);
     const metricKeys = Object.keys(def.weights).filter((k) => k !== "price");
+    const weightsWebsite = def.weights.website !== undefined;
     const qW = 1 - (def.weights.price ?? 0);
     const rows: string[][] = [
       [
@@ -125,7 +131,7 @@ function formatRankings(
         String(i + 1),
         r.value.toFixed(3),
         r.q.toFixed(3),
-        frontier.has(m.id) ? `★ ${m.name}` : m.name,
+        `${frontier.has(m.id) ? "★ " : ""}${weightsWebsite && m.designElo == null ? "~ " : ""}${m.name}`,
         m.org,
         price,
         tokS,

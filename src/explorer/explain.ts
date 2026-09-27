@@ -18,7 +18,7 @@ import { KNOWN_METRICS, deepMergeInto, resolveSettings } from "../settings.ts";
 
 export type MetricMeta = {
   label: string;
-  kind: "index" | "benchmark" | "throughput" | "price";
+  kind: "index" | "benchmark" | "throughput" | "price" | "percentile";
   unit: string;
   formula: string;
   anchors: string;
@@ -39,6 +39,7 @@ export const METRIC_META: Record<string, MetricMeta> = {
   tool_calling: { label: "Tool-calling index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   long_context: { label: "Long-context index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   mrcr: { label: "MRCR v2", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
+  website: { label: "Design Arena (website)", kind: "percentile", unit: "percentile", formula: "identity (already 0-1)", anchors: "percentile within the design-covered field; models without Design Arena data get the covered median (0.5)" },
   price: { label: "Price", kind: "price", unit: "$/M", formula: "billed blend 3:1 in:out, ×(3ρ+1+T)/(3ρ+1) at the role's thinking level", anchors: "OpenRouter standard route" },
   throughput: { label: "Throughput", kind: "throughput", unit: "tok/s", formula: "ln(v/10)/ln(30)", anchors: "10 tok/s→0, 300 tok/s→1, clamped" },
 };
@@ -115,7 +116,7 @@ export function inverseCardinal(metric: string, t: number): number | null {
     if (t < 0 || t > 1) return null; // forward clamps to [0,1]; outside is unreachable
     return 10 * 30 ** t;
   }
-  return t; // benchmark (mrcr) and price: identity
+  return t; // benchmark (mrcr), percentile (website) and price: identity
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +131,9 @@ export type Contribution = {
   renormWeight: number;
   contribution: number;
   shareOfQ: number;
+  /** the value is a neutral fill rather than a measurement (Design Arena
+   * `website` for a model with no Design Arena data) */
+  imputed: boolean;
 };
 
 export type Closing = {
@@ -200,6 +204,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
       renormWeight,
       contribution,
       shareOfQ: self.q > 0 ? contribution / self.q : 0,
+      imputed: metric === "website" && model.designElo == null,
     });
   }
   contributions.sort((a, b) => {
@@ -222,6 +227,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
       if (targetRaw == null) note = "unreachable — throughput clamps at 300 tok/s";
       else if (METRIC_META[c.metric]?.kind === "index" && targetRaw > 60) note = "extrapolates past the +60 anchor";
       else if (METRIC_META[c.metric]?.kind === "benchmark" && targetRaw > 1) note = "unreachable — pass rate cannot exceed 1";
+      else if (METRIC_META[c.metric]?.kind === "percentile" && targetRaw > 1) note = "unreachable — percentile cannot exceed 1";
       closing.push(note ? { metric: c.metric, raw: c.raw, targetT, targetRaw, deltaRaw, note } : { metric: c.metric, raw: c.raw, targetT, targetRaw, deltaRaw });
     }
     if (lambda > 0) {
