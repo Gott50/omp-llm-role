@@ -390,11 +390,26 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 - `designer` wired live (2026-09-27): the forced run switched
   `modelRoles.designer` `z-ai/glm-5.3-flash` →
   `"openrouter/deepseek/deepseek-v4-flash-vision-exp:high"` and filled its chain
-  (`mimo-v2.6-pro:high`, `kimi-k3:high`), while every hand-added role key
-  (`scout`, `security-reviewer`, `librarian`, `research`, `sonic`, `reviewer`)
-  and the hand-written `~deepseek/deepseek-v4-flash-latest` chain stayed
-  byte-identical. A headless design prompt then routed through the `designer`
-  agent onto that selector (see omp wiring).
+  (`mimo-v2.6-pro:high`, `kimi-k3:high`) — the nine other managed roles were
+  kept and every non-managed key in the block was left byte-identical (the
+  plugin rewrites only lines it selects). A headless design prompt then routed
+  through the `designer` agent onto that selector (see omp wiring).
+- Inert agent-named role keys removed (2026-09-27): `modelRoles.scout`,
+  `security-reviewer`, `librarian`, `research`, `sonic` and `reviewer` deleted
+  from the live config. Nothing referenced `@<name>` for them, so they selected
+  no model: the bundled `scout`/`sonic` pin `@smol` and `reviewer` pins `@slow`
+  (`security-reviewer` has no pin at all), and the agents that carry those names
+  route through built-in roles. Re-verified live after the deletion (parent
+  pinned to `deepseek-v4.1-flash`, `--mode json` spawn records):
+  `{"agent":"scout","agentSource":"bundled","modelRole":"smol"}` →
+  `glm-5.3:off`, `{"agent":"reviewer","agentSource":"bundled","modelRole":"slow"}`
+  → `glm-5.3:max`. `modelRoles` now holds exactly the ten roles the plugin
+  manages, and a forced refresh afterwards reported `no changes` — the plugin
+  cannot re-add keys outside `settings.roles` `patchModelRoles` selects. The
+  owner-written `retry.fallbackChains` key
+  `openrouter/~deepseek/deepseek-v4-flash-latest` is now unreferenced by any
+  role; it is left in place deliberately (SPEC §6.4: unwritten, unreferenced
+  keys are never pruned), so removing it is a manual call.
 - Plugin verified live (2026-09-23) with the provider-allowlist probe: the
   account's allowed-providers whitelist excludes first-party openai/azure/
   anthropic endpoints, so the probe gate rewrote `slow` → GLM-5.3 (`:max`),
