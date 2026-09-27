@@ -274,8 +274,8 @@ a power-user escape hatch for whole-object overrides.
   "roles": {
     "slow": {
       "description": "…",
-      "weights": { "general": 0.25, "reasoning": 0.25, "code": 0.2, "agents": 0.15,
-                   "math": 0.1, "price": 0.03, "throughput": 0.02 },
+      "weights": { "general": 0.26, "reasoning": 0.26, "code": 0.18, "agents": 0.13,
+                   "math": 0.08, "throughput": 0.04, "price": 0.05 },
       "required": ["general", "price", "throughput"],
       "filters": { "image": false }
     }

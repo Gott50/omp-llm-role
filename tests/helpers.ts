@@ -8,7 +8,8 @@ import type { Model, RankData } from "../src/engine.ts";
 import type { Deps } from "../src/updater.ts";
 
 /** Model with uniform quality metrics (general = code = agents = tool = reasoning) so
- * q reduces to the cardinal transform (v+20)/80 of `general`; value = q − λ·price. */
+ * q reduces to the cardinal transform (v+20)/80 of `general` for roles that weight only
+ * the uniform index metrics; value = q − λ·price. */
 export function makeModel(id: string, general: number, price: number, tput: number): Model {
   return {
     id,

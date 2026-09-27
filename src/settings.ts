@@ -18,33 +18,33 @@ import { isRecord } from "./guards.ts";
 export const DEFAULT_ROLES: Record<string, RoleDef> = {
   default: {
     description: "Main workhorse: strong general coding-agent quality, sane cost",
-    weights: { general: 0.3, code: 0.25, agents: 0.2, tool_calling: 0.1, reasoning: 0.1, price: 0.05 },
+    weights: { general: 0.34, reasoning: 0.18, code: 0.18, agents: 0.12, tool_calling: 0.1, throughput: 0.03, price: 0.05 },
     required: ["general", "price", "throughput"],
   },
   smol: {
     description: "Fast lightweight model: cheap and quick, still competent",
-    weights: { price: 0.3, throughput: 0.25, general: 0.2, code: 0.15, tool_calling: 0.1 },
+    weights: { price: 0.3, throughput: 0.28, general: 0.2, code: 0.12, tool_calling: 0.1 },
     required: ["general", "price", "throughput"],
   },
   slow: {
     description: "Most capable model for hard problems; cost and speed as tiebreakers",
-    weights: { general: 0.25, reasoning: 0.25, code: 0.2, agents: 0.15, math: 0.1, price: 0.03, throughput: 0.02 },
+    weights: { general: 0.26, reasoning: 0.26, code: 0.18, agents: 0.13, math: 0.08, throughput: 0.04, price: 0.05 },
     required: ["general", "price", "throughput"],
   },
   vision: {
     description: "Image understanding: vision index dominates",
-    weights: { vision: 0.5, general: 0.2, reasoning: 0.15, code: 0.1, price: 0.03, throughput: 0.02 },
+    weights: { vision: 0.52, general: 0.2, reasoning: 0.15, code: 0.06, throughput: 0.03, price: 0.04 },
     required: ["vision", "general", "price", "throughput"],
     filters: { image: true },
   },
   plan: {
     description: "Planning: reasoning, math, long-context coherence",
-    weights: { reasoning: 0.3, math: 0.15, long_context: 0.2, general: 0.2, mrcr: 0.1, price: 0.03, throughput: 0.02 },
+    weights: { reasoning: 0.32, general: 0.26, long_context: 0.14, math: 0.14, throughput: 0.04, price: 0.1 },
     required: ["reasoning", "general", "price", "throughput"],
   },
   commit: {
     description: "Commit messages: cheap and fast with decent general quality",
-    weights: { price: 0.35, throughput: 0.25, general: 0.25, code: 0.15 },
+    weights: { price: 0.35, throughput: 0.27, general: 0.28, code: 0.1 },
     required: ["general", "price", "throughput"],
   },
   tiny: {
@@ -54,12 +54,12 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
   },
   task: {
     description: "Subagents: agentic + tool calling, moderate cost sensitivity",
-    weights: { agents: 0.3, tool_calling: 0.2, code: 0.2, general: 0.15, price: 0.1, throughput: 0.05 },
+    weights: { agents: 0.26, tool_calling: 0.18, code: 0.16, general: 0.22, throughput: 0.05, price: 0.13 },
     required: ["general", "price", "throughput"],
   },
   advisor: {
     description: "Advisor/watchdog: deep reasoning over long context",
-    weights: { reasoning: 0.35, general: 0.25, long_context: 0.2, math: 0.1, search: 0.05, price: 0.03, throughput: 0.02 },
+    weights: { reasoning: 0.36, general: 0.3, long_context: 0.12, math: 0.1, throughput: 0.04, price: 0.08 },
     required: ["reasoning", "general", "price", "throughput"],
   },
 };

@@ -151,6 +151,29 @@ plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
 (reasoning/long-context), `commit`, `tiny` (price+throughput dominated),
 `task` (agentic), `advisor` (deep reasoning).
 
+Weight design rules (2026-09-27 review):
+
+- **Coverage-aware.** A missing weighted metric contributes 0 while still
+  occupying its share of the `(1 − w_price)` denominator, so weight on a sparse
+  metric is a data-coverage lottery, not a quality signal. Coverage over the
+  eligible pool: `general`/`reasoning`/`price`/`throughput` 100%, `code` 84%,
+  `math` 83%, `tool_calling` 78%, `agents` 76%, `long_context` 39%, `search`
+  34%, `mrcr` 13%. The shipped defaults weight the 100%-coverage backbone plus
+  the partial-coverage trio at reduced share; `mrcr` and `search` are not
+  weighted at all and `long_context` is capped at 0.14.
+- **Non-collinear differentiation.** The capability indices are one latent
+  factor (Pearson r over the pool: general↔reasoning 0.99, code↔agents 0.95,
+  general↔code 0.94), so re-weighting them barely separates roles. Roles are
+  differentiated on the independent axes instead — throughput (r 0.13 with
+  general), price (r ≈ 0), and the specialist metrics.
+- **Price and throughput in every role.** Every role weights both; `default`
+  was the exception until this review (throughput was required but unweighted).
+- **λ from the intended posture.** `λ = (w_price/(1−w_price))/$20` is the
+  quality-per-dollar exchange rate, so a price weight whose leader-flip
+  threshold is 10–30× away is decoration. `plan`/`advisor` now carry price
+  0.10/0.08 (λ 0.00556/0.00435) so cost is a real tiebreaker; `tiny` stays at
+  0.40 because it already returns a cheap top-5 on the actionable pool.
+
 ## Usage
 
 ```
@@ -245,15 +268,24 @@ no enrichment (affected models unranked). An empty/unusable OpenRouter payload
 is never cached, so the next run retries. llm-stats fetch failure is fatal
 (no data at all); OpenRouter failure is non-fatal.
 
-## Current state (2026-09-26)
+## Current state (2026-09-27)
 
-- 398 llm-stats models; OpenRouter matched 152/398 (throughput), 151 priced.
-- Eligible per role: 143 (vision 74, image-input filter).
-- Value-ranking leaders (committed 2026-09-24 report; today's 09-26 cache shifts
-  `smol`/`commit` → Gemini 3.8 Flash and `tiny` → Ling 3.0 Flash Fin):
-  `default` GPT-6 Astra (0.835), `smol`/`commit`/`tiny` Muse Spark 1.1, `slow`
-  GPT-6 Astra (0.857), `vision` GPT-6 Astra (0.809), `plan`/`advisor` GPT-5.6
-  Sol, `task` Muse Spark 1.3.
+- 395 llm-stats models; OpenRouter matched 147/395 (throughput), 146 priced.
+- Eligible per role: 138 (vision 70, image-input filter).
+- Value-ranking leaders (this report): `default` GPT-6 Astra (0.836), `smol`
+  Muse Spark 1.1 (0.750), `slow` GPT-5.6 Sol (0.838), `vision` GPT-6 Astra
+  (0.800), `plan` GPT-5.6 Sol (0.804), `commit` Muse Spark 1.1 (0.779), `tiny`
+  Muse Spark 1.1 (0.792), `task` GLM-5.3 (0.752), `advisor` GPT-5.6 Sol (0.828).
+- Weights reviewed and rebalanced (2026-09-27): coverage-aware backbone,
+  throughput weighted in every role, `mrcr`/`search` dropped, `plan`/`advisor`
+  price raised, `tiny` left alone. Rules in Scoring; the per-role deltas are in
+  the commit that landed them.
+- Reachability probed per candidate (2026-09-27, `probeModel`, one 1-token
+  completion each): 76 ok / 61 blocked / 1 unknown of the 138 eligible, so the
+  actionable pool is 77 (vision 34). Actionable leaders under the shipped
+  weights: `default`/`smol`/`slow`/`task` GLM-5.3, `vision` Kimi K3,
+  `plan`/`advisor` Hy4 preview, `commit` DeepSeek-V4-Flash-Vision-Exp, `tiny`
+  Ling 3.0 Flash Fin.
 - Plugin verified live (2026-09-23) with the provider-allowlist probe: the
   account's allowed-providers whitelist excludes first-party openai/azure/
   anthropic endpoints, so the probe gate rewrote `slow` → GLM-5.3 (`:max`),
@@ -290,14 +322,22 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   (`{mode, efforts[], …}`) which `extDeps` normalizes to the CLI's string
   array. In print/headless mode `ctx.ui.notify` is a no-op, so the extension
   mirrors decisions and aborts to stderr.
-- `required` is the eligibility gate, not a weight: the shipped defaults
-  require `throughput` without weighting it, so settings validation checks
-  `required` against the known-metric set, not against `weights`.
-- The OpenRouter account's allowed-providers privacy whitelist excludes
-  first-party `openai`/`azure`/`anthropic` endpoints on this account, so
-  first-party-hosted models rank well but fail at request time with a 404
-  naming the permitted providers. The probe gate (§5.5) filters them before
-  writing; without it, fallback chains silently mask three of four affected
-  roles and `vision` hard-fails. Org prefixes are not a valid filter —
-  `deepseek/*`, `z-ai/*`, `inclusionai/*` work via whitelisted third-party
-  endpoints.
+- `required` is the eligibility gate, not a weight: validation checks
+  `required` against the known-metric set, not against `weights`, so a role may
+  require a metric it does not weight (and vice versa).
+- The OpenRouter account's allowed-providers privacy whitelist blocks more
+  than first-party `openai`/`azure`/`anthropic`: probed per candidate
+  (2026-09-27, one 1-token completion each) 61 of 138 eligible models are
+  blocked, including `google/*` and `qwen/*` frontier endpoints, while
+  `deepseek/*`, `z-ai/*`, `moonshotai/*`, `tencent/*`, `inclusionai/*` and the
+  open-weight families inside blocked orgs (GPT OSS, Gemma, Llama/Muse
+  Glimmer, Qwen3.5/3.6) pass. Blocked is a per-selector property, never an org
+  class — OpenAI has 2 ok rows and 21 blocked, Qwen 19 ok and 12 blocked — so
+  reachability must be probed per candidate. The probe gate (§5.5) filters
+  them before writing; without it, fallback chains silently mask the affected
+  roles and `vision` hard-fails.
+- Metric coverage is uneven and shifts between fetches: `mrcr` (13% of the
+  eligible pool), `search` (34%) and `long_context` (39%) are absent for most
+  models, and a missing weighted metric scores 0 rather than being excluded.
+  Weighting them makes `q` a coverage score — the shipped defaults avoid
+  `mrcr`/`search` and cap `long_context` for that reason.

@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { rankRole } from "../src/engine.ts";
+import { DEFAULT_ROLES } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
-// Uniform quality metrics -> q = (v+20)/80: A 1.375, B 1.25, C 1.125.
-// value = q − λ·price with λ = 0.05/0.95/20; margin(A,B) = 0.125 + 4λ ≈ 0.1355.
+// Uniform quality metrics -> q = Σ (w/qW)·(v+20)/80 over the weighted index metrics,
+// plus the log-anchored throughput term when the role weights throughput.
+// value = q − λ·price; margin(A,B) = value(A) − value(B).
 const MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
 
 async function run(configText: string | null, settings: Record<string, unknown> = {}) {
@@ -36,7 +39,13 @@ test("best not better by margin -> keep current (kept-margin)", async () => {
   assert.equal(result.decisions[0].reason, "kept-margin");
   assert.equal(result.decisions[0].to, "openrouter/org/model-b");
   const margin = result.decisions[0].bestValue - (result.decisions[0].currentValue ?? 0);
-  assert.ok(Math.abs(margin - (0.125 + 4 * (0.05 / 0.95 / 20))) < 1e-9);
+  // The hysteresis step compares the role's ranked values, so the expected margin is the
+  // engine's own value gap between the two models — not a formula duplicated here.
+  const ranked = rankRole(DEFAULT_ROLES.default, MODELS);
+  const a = ranked.find((r) => r.model.id === "model-a");
+  const b = ranked.find((r) => r.model.id === "model-b");
+  assert.ok(a && b);
+  assert.ok(Math.abs(margin - (a.value - b.value)) < 1e-9);
 });
 
 test("best beats current by margin -> switch (switched)", async () => {

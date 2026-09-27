@@ -105,8 +105,9 @@ test("export writes the lock file with a backup and stays valid", async () => {
   const port = (server.address() as { port: number }).port;
 
   try {
-    // Same key set as the shipped slow role, two values swapped: sum stays 1.0.
-    const edited = { ...DEFAULT_ROLES.slow, weights: { ...DEFAULT_ROLES.slow.weights, general: 0.3, reasoning: 0.2 } };
+    // Sum-preserving edit of the shipped slow role: shift 0.02 from code to general.
+    const base = DEFAULT_ROLES.slow.weights;
+    const edited = { ...DEFAULT_ROLES.slow, weights: { ...base, general: base.general + 0.02, code: base.code - 0.02 } };
     const res = await fetch(`http://127.0.0.1:${port}/api/export`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -121,8 +122,8 @@ test("export writes the lock file with a backup and stays valid", async () => {
       settings: { "omp-llm-role": { roles: { slow: { weights: Record<string, number> } } } };
     };
     assert.deepEqual(written.plugins, seed.plugins);
-    assert.equal(written.settings["omp-llm-role"].roles.slow.weights.general, 0.3);
-    assert.equal(written.settings["omp-llm-role"].roles.slow.weights.reasoning, 0.2);
+    assert.equal(written.settings["omp-llm-role"].roles.slow.weights.general, base.general + 0.02);
+    assert.equal(written.settings["omp-llm-role"].roles.slow.weights.code, base.code - 0.02);
 
     const backups = readdirSync(dir).filter((f) => f.includes(".bak-"));
     assert.equal(backups.length, 1);
