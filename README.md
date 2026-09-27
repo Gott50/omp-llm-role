@@ -95,6 +95,69 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
 block resolves through the same catalog/variant logic the plugin uses
 (`openrouter/<id>` selectors).
 
+## omp wiring: a role only runs when an agent names it
+
+`modelRoles` is a plain key→selector map and omp has **no task classifier**:
+automatic selection iterates the built-in ids (`default, smol, slow, vision,
+plan, commit, tiny, task, advisor`) only, so a ranked role — `designer`
+included — is **inert until an explicit reference names it**. "The designer
+model handles design tasks" is therefore two pieces:
+
+| Piece | Where | Role |
+|---|---|---|
+| `modelRoles.designer` | `~/.omp/agent/config.yml` | the plugin's daily pick (`openrouter/deepseek/deepseek-v4-flash-vision-exp:high` — suffix from `roles.designer.thinking`) |
+| `modelTags.designer` | same file | hub cosmetics only (`name: Designer`, `color: accent`) |
+| `designer` agent | `~/.omp/agent/agents/designer.md` (global) or `<project>/.omp/agents/designer.md` (repo-scoped) | `model: "@designer"` is the routing; its `description` is the delegation hint the main session reads |
+
+```md
+---
+name: designer
+description: Design specialist for UI/UX work. Use for layout, spacing, typography, color, visual hierarchy, icons, accessibility, and for reviewing how an interface actually looks.
+tools: [read, grep, glob, edit, write]
+model: "@designer"
+---
+```
+
+Verified end-to-end (2026-09-27, headless `-p --mode json` with the parent
+pinned to `openrouter/deepseek/deepseek-v4.1-flash`, agent at the global path):
+a design prompt spawned
+`{"agent":"designer","agentSource":"user","modelRole":"designer"}` and the
+child ran on `openrouter/deepseek/deepseek-v4-flash-vision-exp:high` — the
+role's selector, not the parent's model (`agentSource` reads `project` when the
+agent file came from the repo's own `.omp/agents/`). The agent should not pin
+`thinkingLevel`: the role's `:suffix` already sets the effort.
+
+Adding another task specialist:
+
+1. Define the role in plugin settings — one full weight set, `required` ⊆
+   weights, `thinking` for the effort level (the legacy `suffixes.<role>` knob
+   is rejected by validation):
+   ```sh
+   omp plugin config omp-llm-role \
+     --set=roles.review.weights.general=0.35 --set=roles.review.weights.agents=0.25 \
+     --set=roles.review.weights.code=0.2 --set=roles.review.weights.price=0.12 \
+     --set=roles.review.weights.throughput=0.08 \
+     --set='roles.review.required=["general","price","throughput"]' \
+     --set=roles.review.thinking=high \
+     --set='roles.review.description=Code review: agentic depth with cost awareness'
+   ```
+   From then on the plugin ranks, prices, probes, hysteresis-checks, chain-fills
+   and writes `modelRoles.review` daily (it touches only roles it has weights
+   for, so hand-added keys stay untouched). Settings live in
+   `~/.omp/plugins/omp-plugins.lock.json` → `settings["omp-llm-role"]`, not in
+   `config.yml`.
+2. Author the agent that pins `model: "@review"` (the routing), or pin an
+   existing agent through `task: { agentModelOverrides: { <agent>: "@review" } }`.
+3. Non-agent entry points for a one-off run: `omp --model @review`, or add the
+   role to `cycleOrder` for `Ctrl+P`.
+
+Caveats: `@<name>` is a role alias only when `<name>` is a built-in id or a key
+in `modelRoles` — otherwise omp treats it as a literal model pattern and fails
+hard (`Model "@x" not found`), and a role merely *named* after an agent routes
+nothing. Agent discovery is first-wins: nearest project `.omp/agents/` →
+`~/.omp/agent/agents/` → extension roots → Claude marketplace plugins →
+bundled (18.1.3 removed the bundled `designer` agent, so this one is ours).
+
 ## Data sources
 
 **Quality — llm-stats.com.** The leaderboard page server-renders its
@@ -309,6 +372,14 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   roles kept their probe-clean selectors with suffixes now read from
   `roles.<role>.thinking`; the new `designer` role got managed
   (DeepSeek-V4-Flash-Vision-Exp `:high`). 64/64 unit tests green.
+- `designer` wired live (2026-09-27): the forced run switched
+  `modelRoles.designer` `z-ai/glm-5.3-flash` →
+  `"openrouter/deepseek/deepseek-v4-flash-vision-exp:high"` and filled its chain
+  (`mimo-v2.6-pro:high`, `kimi-k3:high`), while every hand-added role key
+  (`scout`, `security-reviewer`, `librarian`, `research`, `sonic`, `reviewer`)
+  and the hand-written `~deepseek/deepseek-v4-flash-latest` chain stayed
+  byte-identical. A headless design prompt then routed through the `designer`
+  agent onto that selector (see omp wiring).
 - Plugin verified live (2026-09-23) with the provider-allowlist probe: the
   account's allowed-providers whitelist excludes first-party openai/azure/
   anthropic endpoints, so the probe gate rewrote `slow` → GLM-5.3 (`:max`),
