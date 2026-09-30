@@ -30,6 +30,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `designarena-fetched-data.json` | Daily cache of the Design Arena leaderboard boards — `models/website` + `agents/agon_webapps` (gitignored) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
 | `SPEC.md` | Normative spec for the plugin |
+| `agents-guide.md` | How to author omp agent `.md` files: frontmatter contract, bundled-agent body conventions, md-file adjustments (verified against omp 18.4.4, links pinned to that tag) |
 
 ## Plugin: daily model-role updater
 
