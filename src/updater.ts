@@ -34,6 +34,8 @@ export type Decision = {
 export type RunResult = {
   decisions: Decision[];
   wrote: boolean;
+  /** Final selector the run chose for the `default` role, when that role was decided. */
+  defaultSelector?: string;
   aborted?: string;
 };
 
@@ -52,6 +54,13 @@ export type Deps = {
   getSettings?(): Promise<Record<string, unknown>>;
   getKeyMeta?(token: string): Promise<KeyMeta>;
   probeModel?(token: string, catalogId: string): Promise<ProbeVerdict>;
+  /**
+   * Host coupling (extension only): apply a concrete selector to the live
+   * session model. Receives the final `default` selector (with thinking
+   * suffix) plus the previously written `default` selector (null when the
+   * role was unset); the host decides whether the session still qualifies.
+   */
+  applySessionModel?(selector: string, previous: string | null): Promise<void>;
 };
 
 const CONFLICT_RETRIES = 3;
@@ -235,6 +244,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
     const roleSelectors: Record<string, string> = {};
     for (const d of decisions) roleSelectors[d.role] = d.to;
+    const defaultSelector = roleSelectors["default"];
     const chainUpserts: Record<string, string[]> = {};
     const referenced = new Set<string>();
     if (settings.writeFallbackChains) {
@@ -307,6 +317,27 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       });
     }
 
+    // Live-session coupling: after a real write, hand the new default selector
+    // to the host so an empty conversation starts on the freshly ranked pick.
+    // Only a real change applies (kept/default roles would append a pointless
+    // model_change every run); the hook decides host-side qualification. Hook
+    // failures never fail the run — the config write already succeeded.
+    const defaultDecision = decisions.find((d) => d.role === "default");
+    if (
+      defaultSelector !== undefined &&
+      defaultDecision !== undefined &&
+      defaultDecision.from !== defaultDecision.to &&
+      wrote &&
+      settings.activateDefaultOnEmptySession &&
+      deps.applySessionModel
+    ) {
+      try {
+        await deps.applySessionModel(defaultSelector, defaultDecision.from);
+      } catch (err) {
+        deps.notify([`omp-llm-role: could not update the session model: ${err instanceof Error ? err.message : String(err)}`]);
+      }
+    }
+
     const lines: string[] = [];
     if (notifyAll) {
       lines.push(...notes);
@@ -319,7 +350,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       }
       if (lines.length > 0 || notes.length > 0) deps.notify([...notes, ...lines]);
     }
-    return { decisions, wrote };
+    return { decisions, wrote, defaultSelector };
   } catch (err) {
     const message = err instanceof ConfigEditError ? `config edit refused: ${err.message}` : err instanceof Error ? err.message : String(err);
     deps.notify([`omp-llm-role: aborted, no write: ${message}`]);

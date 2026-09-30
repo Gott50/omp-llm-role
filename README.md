@@ -36,6 +36,19 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
 - **Trigger**: the first omp session of each UTC day rewrites `modelRoles`
   (and `retry.fallbackChains`) to that day's best key-eligible models;
   later same-day sessions no-op. `/refresh-roles` forces a run anytime.
+  The session-start run is awaited before the session's first prompt is
+  dispatched (a deferred timer would be cleared when a short-lived session —
+  `omp -p`, subagents — exits before it fires).
+- **Session model activation**: when the day's run switches `default` and the
+  session that triggered it still has an empty conversation, the plugin also
+  switches the live session model to the new selector (via
+  `pi.setModel` + `pi.setThinkingLevel`) — the first prompt then runs on the
+  freshly ranked pick instead of the pre-write one. Guards: main-session
+  only (`ctx.agent.kind === "main"`), conversation empty (no `message`
+  entries in the branch), the session actually booted on the previous
+  `default` selector (an explicit `omp --model X` is never clobbered), and
+  only on a real change (kept roles don't re-apply). Disable with
+  `activateDefaultOnEmptySession=false`.
   Headless: `node update-roles.ts` (forces), `--dry-run` computes without
   writing, `--json` emits the decisions payload.
 - **Availability**: keeps only models the OpenRouter key can run — tier/budget
@@ -83,7 +96,8 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
 - **Settings**: `omp plugin config omp-llm-role --set=<dotted.key>=<value>`
   (flat dotted keys are deep-merged by the plugin; `config=<json>` is a
   whole-object escape hatch). Knobs: `switchMargin`, `writeFallbackChains`,
-  `fallbackChainDepth`, `roles.<name>.{description,weights,required,filters,
+  `fallbackChainDepth`, `activateDefaultOnEmptySession`,
+  `roles.<name>.{description,weights,required,filters,
   thinking,lambda}`. `weights: null` opts a role out; a new role with a full
   weight set gets managed too. Invalid settings abort the run with the
   offending role/key and no write.
@@ -338,8 +352,11 @@ the CLI.
   (`~/.omp/plugins/omp-plugins.lock.json` → `settings["omp-llm-role"].roles`),
   atomically and with a `.bak-<timestamp>` sibling, touching only the roles you
   edited (the `plugins` block and sibling settings keys are preserved). The
-  change takes effect on the next `/refresh-roles` in a **freshly started** omp
-  session — a session started before the write already loaded the old settings.
+  change takes effect on the next `/refresh-roles` **in any running session** —
+  the lock file is re-read from disk on every run (`readPluginSettingsMap` does
+  a fresh `readFileSync` per call), so a session started before the write picks
+  the new settings up too. Day-gated session-start runs read it the same way
+  on the day they fire.
   `Copy JSON` / `Download JSON` emit the same dirty-roles payload for manual use.
 - **Hover explanations** — every column header, metric name, role tab, and
   control carries a tooltip: the rank table's `#`/`Δ`/`★`/`value`/`q`/`$/M`/
@@ -381,8 +398,21 @@ no enrichment (affected models unranked). An empty/unusable OpenRouter payload
 is never cached, so the next run retries. llm-stats fetch failure is fatal
 (no data at all); OpenRouter failure is non-fatal.
 
-## Current state (2026-09-27)
+## Current state (2026-09-30)
 
+- Session model activation shipped (2026-09-30): when the day's session-start
+  run switches `default` and the triggering session's conversation is still
+  empty, the plugin now also switches the live session model to the new
+  selector (main sessions only; never over an explicit `omp --model`; disabled
+  with `activateDefaultOnEmptySession=false`). Verified E2E in a sandbox agent
+  dir: transcript shows the session boot on `deepseek-v4.1-flash`, the plugin
+  `model_change` to `z-ai/glm-5.3` before the user message, and the assistant
+  reply served by `z-ai/glm-5.3`. This required the session-start run to be
+  awaited (previously fire-and-forget via `ctx.setTimeout`, which a
+  short-lived session could exit under — the deferred run silently never
+  finished). Explorer-export stale claim fixed: the lock file is re-read on
+  every run, so exported weights reach the next `/refresh-roles` in any
+  running session, not only a freshly started one.
 - Design Arena Elo wired into `designer` (2026-09-27): OpenRouter's
   `benchmarks[permaslug].da.elo_by_category["models-website"]` is ingested as
   the `website` metric (percentile within the 73 design-covered models;

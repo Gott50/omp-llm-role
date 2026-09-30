@@ -94,11 +94,21 @@ export const KNOWN_METRICS: Record<string, true> = {
   throughput: true,
 };
 
+/**
+ * Live-session coupling (SPEC §6 session-start semantics): after the day-gated
+ * session-start write, a freshly started session whose conversation is still
+ * empty had its active model resolved from the pre-write config. Reapply the
+ * new `default` selector to the session's active model so the user's first
+ * prompt runs on the freshly ranked pick.
+ */
+export const ACTIVATE_DEFAULT_KEY = "activateDefaultOnEmptySession";
+
 export type ResolvedSettings = {
   switchMargin: number;
   writeFallbackChains: boolean;
   fallbackChainDepth: number;
   roles: Record<string, RoleDef>;
+  activateDefaultOnEmptySession: boolean;
 };
 
 export const DEFAULT_SETTINGS: ResolvedSettings = {
@@ -106,6 +116,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   writeFallbackChains: true,
   fallbackChainDepth: 2,
   roles: DEFAULT_ROLES,
+  activateDefaultOnEmptySession: true,
 };
 
 
@@ -217,6 +228,11 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   }
   if (!Number.isInteger(merged.fallbackChainDepth) || merged.fallbackChainDepth < 0) {
     errors.push(`fallbackChainDepth: must be an integer >= 0, got ${JSON.stringify(merged.fallbackChainDepth)}`);
+  }
+  if (typeof merged.activateDefaultOnEmptySession !== "boolean") {
+    errors.push(
+      `${ACTIVATE_DEFAULT_KEY}: must be a boolean, got ${JSON.stringify(merged.activateDefaultOnEmptySession)}`,
+    );
   }
 
   for (const [name, rdef] of Object.entries(merged.roles)) {

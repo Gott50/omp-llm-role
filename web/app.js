@@ -136,7 +136,7 @@ const TIPS = {
   resetDefaults: "Restore the shipped default definition from src/settings.ts.",
   dropInherited: "set to ~0 — the plugin deep-merges weights over the shipped defaults, so an inherited metric cannot be removed",
   dropAdded: "remove — this metric is not in the shipped default, so the key is deleted outright",
-  exportBtn: "Write the edited roles into the plugin lock file (a .bak-<timestamp> sibling is written first); takes effect on the next /refresh-roles in a freshly started session.",
+  exportBtn: "Write the edited roles into the plugin lock file (a .bak-<timestamp> sibling is written first); takes effect on the next /refresh-roles in any running session — the lock file is re-read from disk on every run.",
   copy: "Copy the dirty-roles payload (the shape the lock file stores) to the clipboard.",
   download: "Download the dirty-roles payload as JSON.",
 };
