@@ -13,9 +13,10 @@
  *   server-renders its dataset into the Next.js RSC flight payload
  *   (`self.__next_f.push([1,"..."])` chunks ending in an `initialData: [...]`
  *   array). There is no public JSON API, so we extract that array.
- *   Throughput + price: OpenRouter per-endpoint p50 (last 30m routed traffic)
- *   and per-endpoint pricing — the sole sources; models without OpenRouter
- *   data are not ranked.
+ *   Throughput + price: OpenRouter per-provider routes (model pages + the find
+ *   table), blended by the default price-based routing — weight 1/price² over
+ *   the stable standard-tier providers — the sole sources; models without
+ *   OpenRouter data are not ranked.
  *
  * Usage: node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]
  *
@@ -89,7 +90,8 @@ function formatRankings(
     "★ = Pareto-frontier: no eligible model is both cheaper and better (q).",
   ];
   lines.push(
-    `Throughput + price: OpenRouter (p50 tok/s, last 30m routed traffic; standard-route` +
+    `Throughput + price: OpenRouter per-provider routes under the default price-based routing` +
+      ` (weight 1/price² over stable standard-tier providers; p50 tok/s of routed traffic;` +
       ` $/M 3:1 in:out), throughput ${orMatched}/${models.length}, priced ${orPriced}; models` +
       " without OpenRouter throughput or a billed route are not ranked.",
   );

@@ -25,7 +25,7 @@ After your work is done — every time, no exceptions:
 
 ## Never commit
 
-- `llm-stats-fetched-rankings.json`, `openrouter-fetched-data.json` and
-  `designarena-fetched-data.json` (daily caches, gitignored — regenerated
-  on every run).
+- `llm-stats-fetched-rankings.json`, `openrouter-fetched-data.json`,
+  `openrouter-endpoints-fetched-data.json` and `designarena-fetched-data.json`
+  (daily caches, gitignored — regenerated on every run).
 - `.DS_Store`.

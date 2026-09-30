@@ -26,6 +26,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, thinking-price |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
+| `openrouter-endpoints-fetched-data.json` | Daily cache of the OpenRouter model pages' per-provider routes (gitignored) |
 | `designarena-fetched-data.json` | Daily cache of the Design Arena leaderboard boards — `models/website` + `agents/agon_webapps` (gitignored) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
 | `SPEC.md` | Normative spec for the plugin |
@@ -186,24 +187,43 @@ so the script extracts that array. Provides: index scores (general, reasoning,
 math, code, agents, search, vision, tool_calling, long_context), benchmark
 scores, context length, multimodality.
 
-**Throughput + price — OpenRouter only.** `GET
-https://openrouter.ai/api/frontend/v1/models/find?active=true&fmt=cards&order=top-weekly`
-(public, no auth) returns `data.endpoint_perf[endpointId]` with `p50_throughput`
-(output tok/s) and `p50_latency` (ms) over the last 30 minutes of routed
-traffic, plus `data.models[]` rows linking slugs to endpoint ids — each
-endpoint carrying `pricing.prompt`/`pricing.completion` (USD/token strings,
-discounts already applied). llm-stats throughput and prices are **not used**:
-OpenRouter reflects real routed traffic across providers (llm-stats measures
-a single provider; the two disagree wildly), and its per-endpoint pricing is
-what a caller actually pays on the router. Models without OpenRouter
-throughput or a billed route are not ranked — every role requires both.
+**Throughput + price — OpenRouter only.** Two payloads, joined to llm-stats by
+slug suffix (llm-stats `model_id` (bare) == OpenRouter slug suffix,
+`slug.split("/")[1]`):
 
-The join is by slug suffix: llm-stats `model_id` (bare) == OpenRouter slug
-suffix (`slug.split("/")[1]`). `:batch` variants are skipped (no perf data,
-half-price async tier). Throughput takes the highest-p50 variant, `:free`
-tiers included (they carry real routed traffic). Price is the standard
-(non-`:free`) route's blended $/M at 3:1 input:output, cheapest billed route
-as fallback — a $0 free tier never sets the price.
+- `GET https://openrouter.ai/api/frontend/v1/models/find?active=true&fmt=cards&order=top-weekly`
+  (public, no auth): `data.endpoint_perf[endpointId]` with `p50_throughput`
+  (output tok/s) and `p50_latency` (ms) over the last 30 minutes of routed
+  traffic, plus `data.models[]` rows linking slugs to endpoint ids — ONE
+  endpoint per model, the route currently getting the traffic, each carrying
+  `pricing.prompt`/`pricing.completion` (USD/token strings, discounts already
+  applied).
+- The model pages (`https://openrouter.ai/<slug>`, RSC flight payload; ~150
+  fetched daily, only for slugs matching a leaderboard model): EVERY provider
+  route of a model — pricing, service tier, status and routed-traffic p50
+  stats — dehydrated as React-Query state (sometimes twice, one copy without
+  stats; records merge by endpoint id, stats-carrying copy winning).
+
+OpenRouter's default routing is price-based load balancing: a request goes to
+ONE provider, picked among the stable standard-tier routes with probability
+proportional to 1/price² (docs: "select one weighted by inverse square of the
+price"). The ranking uses the expected values under that distribution:
+`price = Σ(1/p²)·p / Σ(1/p²)` and `throughput = Σ(1/p²)·t / Σ(1/p²)` over the
+stable (status 0) standard-tier billed routes, throughput renormalized over
+the routes that have data. flex/priority service tiers are excluded (only the
+`:floor`/`:nitro` variants make them eligible), as are degraded routes
+(status ≠ 0 — they are fallbacks), `:batch` variants and $0 `:free` tiers
+(1/p² blows up at 0, and a `:free` slug is never requested by default routing).
+Without page data the pool is the find route alone; only when no eligible
+route carries throughput does the pre-blend behavior apply (highest-p50
+variant, `:free` included — it rescues otherwise-unranked models; cheapest
+billed price — a $0 free tier never sets the price).
+
+llm-stats throughput and prices are **not used**: OpenRouter reflects real
+routed traffic across providers (llm-stats measures a single provider; the
+two disagree wildly), and OpenRouter pricing is what a caller actually pays
+on the router. Models without OpenRouter throughput or a billed route are
+not ranked — every role requires both.
 
 **Design quality — OpenRouter's Design Arena Elo.** The same `find` payload
 carries `data.benchmarks[permaslug].da.elo_by_category`: Design Arena's
@@ -424,7 +444,7 @@ level cannot be returned to bare by omitting the key, so the editor disables
 
 ## Caching
 
-Both caches are fresh while their `fetchedAt` is the current UTC day, and
+All four caches are fresh while their `fetchedAt` is the current UTC day, and
 resolve against the repo root (never the process cwd — the plugin runs with
 arbitrary cwd inside omp).
 
@@ -434,17 +454,40 @@ arbitrary cwd inside omp).
   analytics, benchmarks, benchmark_ranges, categories, modality_counts). The
   throughput and price maps are re-derived from it on every run — the file is
   the single source of truth for anything OpenRouter returned.
+- OpenRouter endpoints cache: `{fetchedAt, source, slugCount, slugs}` where
+  `slugs` maps each fetched model slug to its narrowed per-provider route
+  records (id, provider, tier, status, price, p50s). ~150 pages of 1–2 MB are
+  fetched with an 8-worker pool on first run of the day (~5 s on a fast line);
+  a page that fails is absent and that model keeps the single-route fallback.
 - Design Arena cache: `{fetchedAt, source, categories}` where `categories`
   maps the two board keys (`models/website`, `agents/agon_webapps`) to their
   rows — same fresh → fetch → stale chain; an empty board is never cached.
 
-Fallback chain: fresh cache → live fetch (writes cache) → stale cache →
-no enrichment (affected models unranked). An empty/unusable OpenRouter payload
-is never cached, so the next run retries. llm-stats fetch failure is fatal
-(no data at all); OpenRouter failure is non-fatal.
+Fallback chain (every cache): fresh cache → live fetch (writes cache) → stale
+cache → no enrichment (affected models unranked, or single-route for the
+pages). An empty/unusable OpenRouter payload is never cached, so the next run
+retries. llm-stats fetch failure is fatal (no data at all); OpenRouter and
+Design Arena failures are non-fatal.
 
 ## Current state (2026-09-30)
 
+- Provider-route blend (2026-09-30): price and throughput are now the
+  1/price²-weighted means over every stable standard-tier provider route —
+  the expected values under OpenRouter's default price-based load balancing —
+  instead of the single traffic-getting route the `find` table exposes (which
+  paired one provider's price with that provider's 30-minute p50 and could be
+  either optimistic or pessimistic). Per-provider routes come from the
+  OpenRouter model pages (new daily cache, 149/151 pages fetched today).
+  Measured shifts: `deepseek-v4.1-flash` throughput 5 → 62 tok/s (its find
+  route was a congested instant) → now #1 @slow/@task/@designer and top-5
+  @default/@smol/@commit; `kimi-k3` price $2.56 → $4.15 (22 routes, the cheap
+  ones don't get all the traffic); `qwen3.8-27b` $1.11 → $0.76 (16 routes,
+  cheaper than its traffic-getter); `glm-5.3` throughput 112 → 73 tok/s (39
+  routes, cheapest `baidu/fp8` gets 18% of default-routing weight at 88
+  tok/s). Matched models 146 → 151/399 (page stats recover models whose find
+  route had no 30-minute traffic), 150 priced. The designer #1 changes
+  `gemini-3.8-flash` → `deepseek-v4.1-flash`; @default keeps `gpt-6-astra`
+  (now priced at the $20.90 blend instead of the $20 find route).
 - Explorer thinking control (2026-09-30): the weight editor gained a per-role
   `thinking` select (the eight `SUFFIX_LEVELS` + `— (bare)`) with a live price
   factor readout; the rank table's `$/M` and the explain cost line already
@@ -565,9 +608,22 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 
 ## Known quirks
 
-- OpenRouter p50 values are a rolling 30-minute window: tok/s numbers and close
-  score orderings shift between runs. A captured payload is not ground truth —
-  re-fetch before debugging join logic.
+- OpenRouter p50 values are rolling routed-traffic windows (30 minutes for the
+  find table, longer and per-provider for the model pages): tok/s numbers and
+  close score orderings shift between runs. A captured payload is not ground
+  truth — re-fetch before debugging join logic.
+- The blend renormalizes throughput over the routes that have p50 data, which
+  biases toward providers currently getting traffic; a stable route with no
+  recent requests contributes price weight but no throughput. A degraded
+  cheapest route (status ≠ 0) drops out of the blend entirely until it
+  recovers — its traffic shifts to the next-cheapest providers, exactly what
+  the router does, but the price can jump (e.g. `deepseek-v4-flash`'s
+  $0.044/M `open-inference` route sat at status −5 today, leaving the $0.13
+  blend of the remaining routes).
+- The find table's route and the page's record for the same endpoint id can
+  disagree by a few percent (price revisions, status flips, p50 windows) —
+  the page copy wins the pool merge; the find row joins only when the page
+  doesn't list its endpoint id at all.
 - llm-stats has no public API; the RSC flight extraction depends on the page's
   `initialData` key (do not include `[` in the search key).
 - `index_*` scores are interval-scale (observed −16..+60, can be negative); the
@@ -576,7 +632,8 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   `undefined` at runtime, not compile errors. Always run the script after edits
   and sanity-check stderr match counts and eligible counts.
 - The OpenRouter join is by slug suffix only; models whose llm-stats id has no
-  OpenRouter counterpart (or no routed traffic in the last 30m) are unranked.
+  OpenRouter counterpart — or no route with throughput data on the model page
+  or in the find table's 30-minute window — are unranked.
 - omp's extension registry differs from its CLI JSON in two spots (adapted in
   `src/extension.ts` only): the key comes from
   `modelRegistry.getApiKeyForProvider("openrouter")` (`getApiKey` returns

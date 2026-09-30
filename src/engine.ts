@@ -36,6 +36,9 @@ const CACHE_PATH = join(REPO_ROOT, "llm-stats-fetched-rankings.json");
 const OPENROUTER_CACHE_PATH = join(REPO_ROOT, "openrouter-fetched-data.json");
 const OPENROUTER_FIND_URL =
   "https://openrouter.ai/api/frontend/v1/models/find?active=true&fmt=cards&order=top-weekly";
+const OPENROUTER_ENDPOINTS_CACHE_PATH = join(REPO_ROOT, "openrouter-endpoints-fetched-data.json");
+/** Model pages are ~1-2 MB of RSC flight each; fetched with a small worker pool. */
+const OPENROUTER_PAGE_CONCURRENCY = 8;
 const DESIGN_ARENA_CACHE_PATH = join(REPO_ROOT, "designarena-fetched-data.json");
 const DESIGN_ARENA_URL = "https://www.designarena.ai/api/leaderboard";
 /** Minimum battles for an endpoint Elo to be trusted over the OR mirror's snapshot. */
@@ -147,39 +150,76 @@ export type RankData = {
 // ---------------------------------------------------------------------------
 // OpenRouter throughput + price (sole sources)
 //
-// Throughput: the OpenRouter models table (https://openrouter.ai/models?order=top-weekly)
-// renders a Throughput column from `endpoint_perf` in this public endpoint's payload:
-// per-endpoint p50 output tok/s and p50 latency over the last 30 minutes of routed traffic;
-// the highest-p50 non-:batch variant wins (:free tiers included — they carry real traffic).
-// Price: per-endpoint `pricing.prompt`/`pricing.completion` (USD/token strings, discounts
-// already applied), blended to $/M at 3:1 input:output; the model's standard route wins,
-// cheapest billed route as fallback — a $0 :free tier never sets the price.
-// We join both by slug suffix (llm-stats ids are bare, OpenRouter slugs are provider-prefixed).
-// They are the only sources used: throughput reflects real routed traffic across providers,
-// where llm-stats measures a single provider (the two disagree wildly on some models), and
-// OpenRouter pricing is what a caller actually pays on that router.
+// Two payloads, joined to llm-stats by slug suffix (llm-stats ids are bare):
+// - find?fmt=cards: ONE endpoint row per model — the route currently getting the
+//   traffic — with its p50 (last 30m routed traffic) and pricing.
+// - model pages (https://openrouter.ai/<slug>, RSC flight): EVERY provider route
+//   of a model — pricing, service tier, status, and routed-traffic p50 stats.
+//
+// OpenRouter's default routing is price-based load balancing: a request goes to
+// ONE provider, picked among the stable standard-tier routes with probability
+// proportional to 1/price² (docs: "select one weighted by inverse square of the
+// price"). The enrichment is therefore the expected value over that distribution:
+// price = Σ(1/p²)·p / Σ(1/p²), throughput = Σ(1/p²)·t / Σ(1/p²) over the routes
+// that have throughput data (renormalized — a provider without recent traffic
+// can't contribute). flex/priority service tiers are excluded (only the :floor /
+// :nitro variants make them eligible), as are degraded routes (status ≠ 0 — they
+// are fallbacks), :batch variants and $0 :free tiers (1/p² blows up at 0).
+// Without page data the pool is the find route(s) alone (a :free variant never
+// contributes there either — it is a separate slug default routing never requests);
+// the pre-page max-p50/min-price path remains only for pools where no eligible
+// route carries throughput.
+// These are the only sources used: throughput reflects real routed traffic across
+// providers, where llm-stats measures a single provider (the two disagree wildly),
+// and OpenRouter pricing is what a caller actually pays on that router.
 // ---------------------------------------------------------------------------
 
 type OpenRouterPerf = { p50_latency: number | null; p50_throughput: number | null };
 
 type OpenRouterFindData = {
-  models: Array<{ slug: string; supports_reasoning: boolean | null; endpoint: { id: string; model_variant_permaslug: string | null; is_free: boolean | null } | null }>;
+  models: Array<{ slug: string; supports_reasoning: boolean | null; endpoint: { id: string; model_variant_permaslug: string | null; is_free: boolean | null; status: number | null } | null }>;
   endpoint_perf: Record<string, OpenRouterPerf>;
   /** endpoint id -> blended $/M (3:1 in:out); only endpoints with usable prompt+completion pricing */
   endpoint_price: Record<string, number>;
 };
 
+/** One provider route from a model page, narrowed: pricing blended to $/M (3:1
+ * in:out), throughput/latency from the record's routed-traffic stats.
+ * `serviceTier` null = the standard tier (the only tier default routing uses). */
+export type OpenRouterEndpointRecord = {
+  id: string;
+  providerSlug: string;
+  serviceTier: string | null;
+  status: number;
+  free: boolean;
+  variant: string;
+  price: number | null;
+  tput: number | null;
+  latency: number | null;
+};
+
+/** OR slug -> its provider routes, from the model pages. */
+export type OpenRouterEndpointPages = Record<string, OpenRouterEndpointRecord[]>;
+
 export type OrEnrichment = { tput: number; latency: number | null; price: number | null; thinking: boolean };
 
 /**
- * Build llm-stats model_id -> OpenRouter enrichment (p50 throughput, latency, blended
- * price, thinking support). :batch variants are skipped (no perf data, half-price async
- * tier). Throughput is the highest-p50 variant, :free tiers included. Price is the
- * standard route's blended $/M, cheapest billed route as fallback — a $0 :free tier
- * never sets the price. Thinking is any variant row advertising `supports_reasoning`.
+ * Build llm-stats model_id -> OpenRouter enrichment (throughput, latency, blended
+ * price, thinking support). :batch variants are skipped (no perf data, half-price
+ * async tier). Price and throughput are the 1/price²-weighted means over the pool's
+ * stable standard-tier billed routes — the expected values under OpenRouter's default
+ * price-based load balancing. The pool is the page's per-provider routes plus any
+ * find-row endpoint the page doesn't list; without page data it is the find route(s)
+ * alone, so a :free variant never contributes there either (it is a separate slug
+ * default routing never requests). Only when no eligible route carries throughput
+ * does the pre-page behavior apply: throughput = highest-p50 variant (:free tiers
+ * included — they carry real traffic and rescue otherwise-unranked models), price =
+ * cheapest billed route — a $0 :free tier never sets the price. Thinking is any
+ * variant row advertising `supports_reasoning`.
  */
-export function buildOpenRouterEnrichment(data: OpenRouterFindData): Record<string, OrEnrichment> {
-  const bySuffix: Record<string, Array<{ free: boolean; think: boolean; perf: OpenRouterPerf | null; price: number | null }>> = {};
+export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: OpenRouterEndpointPages): Record<string, OrEnrichment> {
+  type Cand = { slug: string; id: string; free: boolean; think: boolean; status: number | null; variant: string; perf: OpenRouterPerf | null; price: number | null };
+  const bySuffix: Record<string, Cand[]> = {};
   for (const m of data.models) {
     const ep = m.endpoint;
     if (!ep) continue;
@@ -187,14 +227,62 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData): Record<stri
     if (variant.endsWith(":batch")) continue;
     const key = m.slug.split("/")[1] ?? m.slug;
     (bySuffix[key] ??= []).push({
+      slug: m.slug,
+      id: ep.id,
       free: variant.endsWith(":free") || ep.is_free === true,
       think: m.supports_reasoning === true,
+      status: ep.status,
+      variant,
       perf: data.endpoint_perf[ep.id] ?? null,
       price: data.endpoint_price[ep.id] ?? null,
     });
   }
   const out: Record<string, OrEnrichment> = {};
   for (const [suffix, cands] of Object.entries(bySuffix)) {
+    // Pool of default-routing candidates: the page's per-provider routes, plus any
+    // find-row endpoint the page doesn't list (the page is normally a superset).
+    const pool: Record<string, OpenRouterEndpointRecord> = {};
+    for (const c of cands) {
+      const page = pages?.[c.slug];
+      if (!page) continue;
+      for (const rec of page) if (pool[rec.id] === undefined) pool[rec.id] = rec;
+    }
+    for (const c of cands) {
+      if (pool[c.id] !== undefined) continue;
+      pool[c.id] = {
+        id: c.id,
+        providerSlug: "",
+        serviceTier: null,
+        status: c.status ?? 1, // unknown status is not a stable route
+        free: c.free,
+        variant: c.variant,
+        price: c.price,
+        tput: c.perf?.p50_throughput ?? null,
+        latency: c.perf?.p50_latency ?? null,
+      };
+    }
+    const eligible = Object.values(pool).filter(
+      (r) => r.serviceTier === null && r.status === 0 && !r.free && r.price !== null && r.price > 0 && !r.variant.endsWith(":batch"),
+    );
+    const withTput = eligible.filter((r) => r.tput !== null);
+    if (eligible.length > 0 && withTput.length > 0) {
+      // Expected price/throughput of one request under price-based load balancing:
+      // P(route i) ∝ 1/price_i². Throughput renormalizes over the routes with data.
+      const weighted = eligible.map((r) => ({ r, w: 1 / (r.price * r.price) }));
+      const wSum = weighted.reduce((a, x) => a + x.w, 0);
+      const price = weighted.reduce((a, x) => a + x.w * x.r.price, 0) / wSum;
+      const tputKnown = weighted.filter((x) => x.r.tput !== null);
+      const tputW = tputKnown.reduce((a, x) => a + x.w, 0);
+      const tput = tputKnown.reduce((a, x) => a + x.w * (x.r.tput ?? 0), 0) / tputW;
+      const latKnown = tputKnown.filter((x) => x.r.latency !== null);
+      const latW = latKnown.reduce((a, x) => a + x.w, 0);
+      const latency = latW > 0 ? latKnown.reduce((a, x) => a + x.w * (x.r.latency ?? 0), 0) / latW : null;
+      out[suffix] = { tput, latency, price, thinking: cands.some((c) => c.think) };
+      continue;
+    }
+    // Fallback: the find route alone. Throughput is the highest-p50 variant, :free
+    // tiers included (they carry real traffic); price is the cheapest billed route
+    // — a $0 free tier must never set the price (it would dominate the cost percentiles).
     let tput: number | null = null;
     let latency: number | null = null;
     for (const c of cands) {
@@ -205,8 +293,6 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData): Record<stri
       }
     }
     if (tput == null) continue;
-    // Price: the standard (non-:free) route; cheapest billed route as fallback. A $0 free
-    // tier must never set the price — it would dominate the cost percentiles.
     const billed: number[] = [];
     for (const c of cands) if (!c.free && c.price != null && c.price > 0) billed.push(c.price);
     const price = billed.length === 0 ? null : Math.min(...billed);
@@ -233,6 +319,142 @@ export function applyOpenRouterData(models: Model[], orData: Record<string, OrEn
     }
   }
   return { matched, priced };
+}
+
+// ---------------------------------------------------------------------------
+// OpenRouter model pages: every provider route of a model (per-endpoint pricing,
+// service tier, status and routed-traffic p50 stats), extracted from the RSC flight.
+// ---------------------------------------------------------------------------
+
+/** Narrow one page endpoint record; null when the row isn't the expected shape. */
+function narrowEndpointRecord(row: unknown): OpenRouterEndpointRecord | null {
+  if (typeof row !== "object" || row === null) return null;
+  if (!("id" in row) || typeof row.id !== "string") return null;
+  if (!("provider_slug" in row) || typeof row.provider_slug !== "string") return null;
+  const tier = "service_tier" in row && typeof row.service_tier === "string" ? row.service_tier : null;
+  const status = "status" in row && typeof row.status === "number" ? row.status : 1; // unknown ≠ stable
+  const free = "is_free" in row && row.is_free === true;
+  const variant = "model_variant_permaslug" in row && typeof row.model_variant_permaslug === "string" ? row.model_variant_permaslug : "";
+  let price: number | null = null;
+  if ("pricing" in row && typeof row.pricing === "object" && row.pricing !== null) {
+    const prompt = "prompt" in row.pricing ? Number(row.pricing.prompt) : Number.NaN;
+    const completion = "completion" in row.pricing ? Number(row.pricing.completion) : Number.NaN;
+    if (Number.isFinite(prompt) && Number.isFinite(completion) && prompt >= 0 && completion >= 0) {
+      price = ((3 * prompt + completion) / 4) * 1e6; // USD/token -> blended $/M, 3:1 in:out
+    }
+  }
+  let tput: number | null = null;
+  let latency: number | null = null;
+  if ("stats" in row && typeof row.stats === "object" && row.stats !== null) {
+    if ("p50_throughput" in row.stats && typeof row.stats.p50_throughput === "number") tput = row.stats.p50_throughput;
+    if ("p50_latency" in row.stats && typeof row.stats.p50_latency === "number") latency = row.stats.p50_latency;
+  }
+  return { id: row.id, providerSlug: row.provider_slug, serviceTier: tier, status, free, variant, price, tput, latency };
+}
+
+/** Extract the per-provider endpoint records from a model page's RSC flight. The
+ * page dehydrates the endpoint list as React-Query state — sometimes twice, one
+ * copy without stats — so records merge by endpoint id, the stats-carrying copy winning. */
+export function parseModelPage(html: string): OpenRouterEndpointRecord[] | null {
+  const flight = extractFlight(html);
+  const byId: Record<string, OpenRouterEndpointRecord> = {};
+  let pos = 0;
+  while (true) {
+    const at = flight.indexOf('"queries":', pos);
+    if (at === -1) break;
+    pos = at + 10;
+    let queries: unknown[];
+    try {
+      queries = extractJsonArray(flight.slice(at), '"queries":');
+    } catch {
+      continue;
+    }
+    for (const q of queries) {
+      if (typeof q !== "object" || q === null) continue;
+      const state: unknown = "state" in q ? q.state : null;
+      if (typeof state !== "object" || state === null || !("data" in state)) continue;
+      const data: unknown = state.data;
+      if (!Array.isArray(data) || data.length === 0) continue;
+      const first = data[0];
+      if (typeof first !== "object" || first === null || !("id" in first) || !("provider_slug" in first)) continue;
+      for (const row of data) {
+        const rec = narrowEndpointRecord(row);
+        if (!rec) continue;
+        const prev = byId[rec.id];
+        if (prev === undefined || (prev.tput === null && rec.tput !== null)) byId[rec.id] = rec;
+      }
+    }
+  }
+  const recs = Object.values(byId);
+  return recs.length > 0 ? recs : null;
+}
+
+/** Fetch one model page and extract its provider records; one retry on transient
+ * failure, permanent 404/410 gives up immediately. */
+async function fetchPageRecords(slug: string): Promise<OpenRouterEndpointRecord[] | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`https://openrouter.ai/${slug}`, { headers: { "user-agent": UA }, signal: AbortSignal.timeout(30_000) });
+      if (res.status === 404 || res.status === 410) return null;
+      if (res.ok) return parseModelPage(await res.text());
+    } catch {
+      // timeout/network error: fall through to the retry
+    }
+  }
+  return null;
+}
+
+/** Fetch the model pages for `slugs` with a small worker pool. A page that fails is
+ * simply absent — those models keep the single-route find enrichment. */
+async function fetchEndpointPages(slugs: string[]): Promise<OpenRouterEndpointPages> {
+  const out: OpenRouterEndpointPages = {};
+  const queue = [...slugs];
+  const workers: Array<Promise<void>> = [];
+  for (let i = 0; i < OPENROUTER_PAGE_CONCURRENCY && i < slugs.length; i++) {
+    workers.push(
+      (async () => {
+        while (true) {
+          const slug = queue.shift();
+          if (slug === undefined) return;
+          const recs = await fetchPageRecords(slug);
+          if (recs) out[slug] = recs;
+        }
+      })(),
+    );
+  }
+  await Promise.all(workers);
+  const failed = slugs.length - Object.keys(out).length;
+  console.error(
+    `openrouter endpoints: ${Object.keys(out).length}/${slugs.length} model pages` +
+      (failed > 0 ? `, ${failed} unavailable (those models keep the single-route fallback)` : ""),
+  );
+  return out;
+}
+
+/** Daily cache -> fetch -> stale-cache chain for the model pages, mirroring the find
+ * cache; non-fatal throughout (missing slugs fall back to the find route). */
+async function loadEndpointPages(slugs: string[], refresh: boolean): Promise<OpenRouterEndpointPages> {
+  if (slugs.length === 0) return {};
+  if (!refresh) {
+    const cached = readEndpointsCache(OPENROUTER_ENDPOINTS_CACHE_PATH, true);
+    if (cached) {
+      console.error(`using cache ${OPENROUTER_ENDPOINTS_CACHE_PATH} (fetched ${cached.fetchedAt})`);
+      return cached.slugs;
+    }
+  }
+  try {
+    const fetched = await fetchEndpointPages(slugs);
+    if (Object.keys(fetched).length > 0) {
+      writeEndpointsCache(OPENROUTER_ENDPOINTS_CACHE_PATH, new Date().toISOString(), fetched);
+      return fetched;
+    }
+    console.error("openrouter endpoints: no pages fetched; trying stale cache");
+  } catch (e) {
+    console.error(`openrouter endpoints: ${e instanceof Error ? e.message : String(e)}; trying stale cache`);
+  }
+  const stale = readEndpointsCache(OPENROUTER_ENDPOINTS_CACHE_PATH, false);
+  if (stale) console.error(`using stale cache ${OPENROUTER_ENDPOINTS_CACHE_PATH} (fetched ${stale.fetchedAt})`);
+  return stale?.slugs ?? {};
 }
 
 /**
@@ -290,7 +512,9 @@ export function applyDesignPercentiles(
 /** Validated find payload: `find` is narrowed for throughput/price derivation; `data` is the
  * full response.data object (every section the endpoint returned), stored verbatim in the cache;
  * `designElo` is the Design Arena `models-website` Elo keyed by llm-stats model id. */
-export function parseFindData(v: unknown): { find: OpenRouterFindData; data: object; designElo: Record<string, number> } | null {
+export type ParsedFindData = { find: OpenRouterFindData; data: object; designElo: Record<string, number> } | null;
+
+export function parseFindData(v: unknown): ParsedFindData {
   if (typeof v !== "object" || v === null || !("data" in v)) return null;
   const d: unknown = v.data;
   if (typeof d !== "object" || d === null || !("models" in d) || !("endpoint_perf" in d)) return null;
@@ -693,6 +917,33 @@ export function writeOrCache(path: string, fetchedAt: string, data: object, mode
   console.error(`wrote ${path}`);
 }
 
+type EndpointsCacheFile = { fetchedAt: string; source: string; slugCount: number; slugs: OpenRouterEndpointPages };
+
+/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
+function readEndpointsCache(path: string, requireFresh: boolean): EndpointsCacheFile | null {
+  let parsed: EndpointsCacheFile;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8")) as EndpointsCacheFile;
+  } catch {
+    return null;
+  }
+  if (typeof parsed?.slugs !== "object" || parsed.slugs === null || Object.keys(parsed.slugs).length === 0) return null;
+  if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
+  return parsed;
+}
+
+/** Pretty-printed with sorted keys for scannable diffs, mirroring the other caches. */
+function writeEndpointsCache(path: string, fetchedAt: string, slugs: OpenRouterEndpointPages): void {
+  const cache: EndpointsCacheFile = {
+    fetchedAt,
+    source: "https://openrouter.ai/<slug> model pages (RSC flight)",
+    slugCount: Object.keys(slugs).length,
+    slugs,
+  };
+  writeFileSync(path, sortedStringify(cache));
+  console.error(`wrote ${path}`);
+}
+
 /** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
 function readDesignArenaCache(path: string, requireFresh: boolean): DesignArenaCacheFile | null {
   let parsed: DesignArenaCacheFile;
@@ -839,27 +1090,28 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
 
   const models = buildModels(rows);
 
-  // OpenRouter per-endpoint p50 throughput (last 30m routed traffic) and per-endpoint
-  // pricing — the sole throughput and price sources. The full find data object is cached
-  // daily in OPENROUTER_CACHE_PATH and the enrichment map is re-derived from it; non-fatal
-  // on failure (affected models simply lack throughput/price and are not ranked; stale
-  // cache as last resort).
+  // OpenRouter per-provider routes — the sole throughput and price sources. The find
+  // payload (one traffic-getting route per model) is cached daily in
+  // OPENROUTER_CACHE_PATH, the model pages (every provider route) in
+  // OPENROUTER_ENDPOINTS_CACHE_PATH; the enrichment map is re-derived from both.
+  // Non-fatal on failure: affected models simply lack throughput/price and are not
+  // ranked; stale caches as last resort.
   let orMatched = 0;
   let orPriced = 0;
   let orData: Record<string, OrEnrichment> | null = null;
   let designElo: Record<string, number> = {};
+  let findParsed: ParsedFindData = null;
   const cachedOr = refresh ? null : readOrCache(OPENROUTER_CACHE_PATH, true);
   if (cachedOr) {
-    const parsed = parseFindData(cachedOr);
-    if (parsed) {
-      orData = buildOpenRouterEnrichment(parsed.find);
-      designElo = parsed.designElo;
+    findParsed = parseFindData(cachedOr);
+    if (findParsed) {
+      designElo = findParsed.designElo;
       console.error(`using cache ${OPENROUTER_CACHE_PATH} (fetched ${cachedOr.fetchedAt})`);
     } else {
       console.error(`${OPENROUTER_CACHE_PATH}: unexpected payload shape; refetching`);
     }
   }
-  if (!orData) {
+  if (!findParsed) {
     let cacheData: object | null = null;
     let cacheCount = 0;
     try {
@@ -871,12 +1123,11 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
         if (!parsed) {
           console.error("openrouter: unexpected payload shape; skipping enrichment");
         } else {
-          const built = buildOpenRouterEnrichment(parsed.find);
           // An empty map would poison the whole day; leave uncached so the next run retries.
-          if (Object.keys(built).length === 0) {
+          if (Object.keys(buildOpenRouterEnrichment(parsed.find)).length === 0) {
             console.error("openrouter: no enrichment data extracted; not caching");
           } else {
-            orData = built;
+            findParsed = parsed;
             designElo = parsed.designElo;
             cacheData = parsed.data;
             cacheCount = parsed.find.models.length;
@@ -886,19 +1137,31 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
     } catch {
       console.error("openrouter fetch failed");
     }
-    if (orData && cacheData) {
+    if (findParsed && cacheData) {
       writeOrCache(OPENROUTER_CACHE_PATH, new Date().toISOString(), cacheData, cacheCount);
     }
-    if (!orData) {
+    if (!findParsed) {
       // Fetch failed: a stale cache still beats losing ~100 models of coverage.
       const stale = readOrCache(OPENROUTER_CACHE_PATH, false);
       const staleParsed = stale ? parseFindData(stale) : null;
       if (staleParsed) {
-        orData = buildOpenRouterEnrichment(staleParsed.find);
+        findParsed = staleParsed;
         designElo = staleParsed.designElo;
         console.error(`using stale cache ${OPENROUTER_CACHE_PATH} (fetched ${stale?.fetchedAt})`);
       }
     }
+  }
+  if (findParsed) {
+    // Model pages are fetched only for slugs that match a leaderboard model
+    // (~150 of ~540) — the others can't be ranked either way.
+    const ids = new Set(models.map((m) => m.id));
+    const wanted = new Set<string>();
+    for (const row of findParsed.find.models) {
+      const suffix = row.slug.split("/")[1] ?? row.slug;
+      if (ids.has(suffix)) wanted.add(row.slug);
+    }
+    const pages = await loadEndpointPages([...wanted], refresh);
+    orData = buildOpenRouterEnrichment(findParsed.find, pages);
   }
   if (orData) {
     ({ matched: orMatched, priced: orPriced } = applyOpenRouterData(models, orData));

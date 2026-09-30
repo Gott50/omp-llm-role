@@ -53,6 +53,7 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 | 11 | `retry.fallbackChains` | **Auto-populate** #2/#3 per managed role; prune stale keys the plugin wrote |
 | 12 | Provider scope | **`openrouter/*` selectors only** (ranking price/throughput is OpenRouter-derived; the key is an OpenRouter key) |
 | 13 | Naming | Plugin `omp-llm-role`, slash command `/refresh-roles` |
+| 14 | Provider routing | **Price-based load balancing model**: price and throughput are the 1/price²-weighted means over the stable standard-tier billed routes (OpenRouter's default routing), per-provider data from the model pages; single find route only as fallback |
 
 ## 4. Architecture
 
@@ -81,8 +82,10 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
 
 ### 4.1 Refactor contract (`llm-role-rank.ts` → `engine.ts`)
 
-- `loadRankData(deps?)` — existing fetch/cache chain (fresh cache → live fetch → stale
-  cache → none), returns models + match counts. Unchanged behavior.
+- `loadRankData(deps?)` — fetch/cache chain per source (fresh cache → live fetch →
+  stale cache → none), returns models + match counts. Since 2026-09-30 the
+  OpenRouter step also fetches the model pages (~150/day, own cache) and blends
+  price/throughput per decision #14; the find payload alone is the fallback.
 - `computeRankings(models, roles)` — cardinal fixed-anchor transforms (index_* affine
   `(v+20)/80`, benchmarks chance-anchored, throughput log-anchored, `website` identity
   over an already-0-1 percentile) + quality composite
