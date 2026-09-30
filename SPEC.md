@@ -95,9 +95,9 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   suggested `modelRoles` block switches from `PROVIDER_BY_ORG` first-party guesses to the
   same catalog-resolved `openrouter/*` selectors the plugin emits (`PROVIDER_BY_ORG`
   retires from that path).
-- Verification after refactor (existing convention): `node llm-role-rank.ts --top 5`,
-  check stderr `openrouter: matched N/392 models (throughput + price)` and per-role
-  eligible counts unchanged.
+- Verification after any engine change (existing convention): `node llm-role-rank.ts --top 5`,
+  check stderr `openrouter: matched N/<pool> models (throughput), M priced` plus the
+  `openrouter endpoints: K/L model pages` line, and per-role eligible counts.
 
 ### 4.2 Dependency injection
 

@@ -23,7 +23,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
 | `package.json` | Plugin manifest (`omp.extensions`) + the single dependency (`yaml`) |
-| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, thinking-price |
+| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, thinking-price, openrouter-blend |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
 | `openrouter-endpoints-fetched-data.json` | Daily cache of the OpenRouter model pages' per-provider routes (gitignored) |
@@ -487,7 +487,11 @@ Design Arena failures are non-fatal.
   tok/s). Matched models 146 → 151/399 (page stats recover models whose find
   route had no 30-minute traffic), 150 priced. The designer #1 changes
   `gemini-3.8-flash` → `deepseek-v4.1-flash`; @default keeps `gpt-6-astra`
-  (now priced at the $20.90 blend instead of the $20 find route).
+  (now priced at the $20.90 blend instead of the $20 find route). Plugin
+  dry-run against the blend: only `@designer` (`kimi-k3:high` →
+  `deepseek-v4.1-flash:high`, 0.773 vs 0.690) and `@tiny` (`glm-5.3` →
+  `ling-3.0-flash-fin`, 0.774 vs 0.680) switch; the other eight roles hold
+  via hysteresis.
 - Explorer thinking control (2026-09-30): the weight editor gained a per-role
   `thinking` select (the eight `SUFFIX_LEVELS` + `— (bare)`) with a live price
   factor readout; the rank table's `$/M` and the explain cost line already
@@ -507,9 +511,10 @@ Design Arena failures are non-fatal.
   `agents/agon_webapps` Elo, context only, 22/87 covered). The designer
   top-10 now carries zero imputed rows (was 3: `qwen3.8-flash`,
   `deepseek-v4-flash-vision-exp`, `qwen3.8-27b`, all dropped out — the first
-  two still have no Design Arena data in either route). The #1 pick is
-  invariant across every measured variant: `gemini-3.8-flash` (0.768 vs 0.751
-  before), so the live selector does not change.
+  two still have no Design Arena data in either route). The #1 pick was
+  invariant across every variant measured that day (fill, weights):
+  `gemini-3.8-flash` (0.768 vs 0.751 before). The 2026-09-30 provider blend
+  later moved #1 to `deepseek-v4.1-flash` (top bullet).
 - Session model activation shipped (2026-09-30): when the day's session-start
   run switches `default` and the triggering session's conversation is still
   empty, the plugin now also switches the live session model to the new
@@ -624,6 +629,14 @@ Design Arena failures are non-fatal.
   disagree by a few percent (price revisions, status flips, p50 windows) —
   the page copy wins the pool merge; the find row joins only when the page
   doesn't list its endpoint id at all.
+- The blend weights routes by the documented default-strategy formula (1/p²),
+  not by the page's observed request counts: the counts aggregate ALL
+  OpenRouter traffic (`:nitro`/`:floor` and `sort` users included), so they
+  estimate a random request's experience, not this account's default routing.
+  The two estimators diverge where capacity binds — on a live deepseek-v4-flash
+  probe, `gmicloud/fp8` ($0.1137) carried 37% of observed requests vs 12% at
+  1/p², making the traffic-weighted blend $0.138 / 55 tok/s vs the shipped
+  $0.133 / 46. Revisit if live cost/throughput diverges from the ranking.
 - llm-stats has no public API; the RSC flight extraction depends on the page's
   `initialData` key (do not include `[` in the search key).
 - `index_*` scores are interval-scale (observed −16..+60, can be negative); the
