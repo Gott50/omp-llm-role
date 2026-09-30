@@ -18,7 +18,7 @@ import { copyFileSync, existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { writeConfigAtomic } from "../config-edit.ts";
-import { rankRole, roleLambda, type RankData, type RoleDef } from "../engine.ts";
+import { SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { isRecord } from "../guards.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 import { METRIC_META, explainModel, mergeExport, rankRows, validateRole } from "./explain.ts";
@@ -104,6 +104,14 @@ function serveStatic(webDir: string, urlPath: string, res: ServerResponse): void
   res.end(data);
 }
 
+/** Billed-blend multiplier per level, from the engine's own formula so the UI's
+ * readout cannot drift from the ranking. */
+function thinkingFactors(): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const level of Object.keys(SUFFIX_LEVELS) as SuffixLevel[]) out[level] = thinkingPriceFactor(level);
+  return out;
+}
+
 function bootstrapPayload(opts: ExplorerOpts): object {
   const snap = opts.getSnapshot();
   return {
@@ -111,6 +119,8 @@ function bootstrapPayload(opts: ExplorerOpts): object {
     defaults: snap.defaults,
     metrics: Object.keys(KNOWN_METRICS),
     metricMeta: METRIC_META,
+    levels: Object.keys(SUFFIX_LEVELS),
+    thinkingFactors: thinkingFactors(),
     fetchedAt: snap.rank.fetchedAt,
     modelCount: snap.rank.models.length,
     orMatched: snap.rank.orMatched,

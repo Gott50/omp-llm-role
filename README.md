@@ -371,10 +371,21 @@ the CLI.
   plus the per-metric target that would close it, with unreachable/extrapolated
   notes), and the models that dominate it on (price, q).
 - **Weight editor** — edit the role's weights, `required` set, `filters.image`,
-  and `λ` override live; the table re-ranks on every change (120 ms debounce).
-  Weights are edited freely (no implicit rescaling): the `Σ` readout turns red
-  until `|Σ − 1| ≤ 0.01`, and `Normalize` rescales in one click. Changing the
-  price weight visibly changes `λ`.
+  `thinking` level, and `λ` override live; the table re-ranks on every change
+  (120 ms debounce). Weights are edited freely (no implicit rescaling): the `Σ`
+  readout turns red until `|Σ − 1| ≤ 0.01`, and `Normalize` rescales in one
+  click. Changing the price weight visibly changes `λ`.
+- **Thinking level** — a per-role select over the eight `SUFFIX_LEVELS`
+  (`off`…`max`, `auto`) plus `— (bare)`. The level is the role's `thinking`
+  field: it is appended to the written selector (`:level`) and scales the price
+  axis by `(3ρ+1+T)/(3ρ+1)` for models that will actually run it (omp catalog
+  `thinking[]` membership; meta levels `off`/`auto` need only a non-empty list).
+  The readout shows the factor (`price ×N on models that run :level`); the
+  rank table's `$/M` and the explain panel's cost line are the thinking-adjusted
+  effective price. `— (bare)` is disabled when the role's shipped default or the
+  lock file already sets a level — the plugin deep-merges roles over
+  `DEFAULT_ROLES`, so an omitted `thinking` key keeps the inherited value and
+  bare is not restorable once a level is set.
 - **Export** — writes the edited roles into the plugin's settings lock file
   (`~/.omp/plugins/omp-plugins.lock.json` → `settings["omp-llm-role"].roles`),
   atomically and with a `.bak-<timestamp>` sibling, touching only the roles you
@@ -390,7 +401,8 @@ the CLI.
   `tok/s`/`ctx` columns explain what they hold, metric names show their cardinal
   transform and anchors (built from `METRIC_META`, so they cannot drift from the
   engine), role tabs show the role's description, and `λ`, `Σ`, `required`, the
-  `×` remove button, and the export buttons explain their semantics. One
+  `thinking` select (level semantics + the bare deep-merge caveat), the `×`
+  remove button, and the export buttons explain their semantics. One
   delegated listener drives a single floating `#tip` element, so re-rendered
   tables and editors need no per-node wiring.
 
@@ -405,7 +417,10 @@ metric the shipped default weights cannot be dropped from the key set (the
 default's weight survives the merge and the sum check fails). The editor's `×`
 therefore parks an inherited metric at a negligible weight (`0.001`) instead of
 deleting the key — click `Normalize` to redistribute (it rescales the ε too) and
-the export validates; metrics you added yourself are deleted outright.
+the export validates; metrics you added yourself are deleted outright. The same
+merge applies to `thinking`: a role whose shipped default (or lock file) sets a
+level cannot be returned to bare by omitting the key, so the editor disables
+`— (bare)` for those roles.
 
 ## Caching
 
@@ -430,6 +445,13 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 
 ## Current state (2026-09-30)
 
+- Explorer thinking control (2026-09-30): the weight editor gained a per-role
+  `thinking` select (the eight `SUFFIX_LEVELS` + `— (bare)`) with a live price
+  factor readout; the rank table's `$/M` and the explain cost line already
+  reflect the thinking-adjusted effective price, so changing the level re-ranks
+  immediately. `— (bare)` is disabled when the role's shipped default or the
+  lock file sets a level (deep-merge: an omitted key keeps the inherited
+  value). Bootstrap now ships `levels` + `thinkingOverhead`; no engine change.
 - Designer value rating reworked (2026-09-30): the keyless designarena.ai
   leaderboard endpoint (`POST /api/leaderboard`, an Elo trusted over the
   OpenRouter mirror only at ≥ 300 battles) raises designer-pool design

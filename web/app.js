@@ -11,6 +11,8 @@ const state = {
   defaults: {},
   metrics: [],
   metricMeta: {},
+  levels: [],
+  thinkingFactors: {},
   rows: [],
   selectedId: null,
   lambda: 0,
@@ -130,6 +132,8 @@ const TIPS = {
   sum: "Weights must sum to 1.0 (±0.01) or the plugin rejects the role.",
   required: "Eligibility gate, not a weight: a model missing this metric is not ranked at all for the role.",
   imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
+  thinking: "Thinking level appended to the role's selector (`:level`) and used to scale the price axis. The factor (3ρ+1+T)/(3ρ+1) applies only to models that will actually run the level (omp catalog `thinking[]` membership; meta levels off/auto need only a non-empty list). Bare = no suffix — the session's defaultThinkingLevel applies and the price is unadjusted.",
+  thinkingBare: "Bare (no suffix). Not restorable once the role's shipped default or the lock file sets a level: the plugin deep-merges roles over DEFAULT_ROLES, so an omitted key keeps the inherited value.",
   normalize: "Rescale every weight so the sum is 1.0 (the parked ε is rescaled too).",
   addMetric: "Add a metric at weight 0.05, then Normalize.",
   resetEffective: "Discard edits and restore the role's saved (effective) definition.",
@@ -406,7 +410,8 @@ function renderExplain() {
   panel.append(el("h3", { "data-tip": TIPS.lambda, text: "Cost" }));
   const derived = ex.role.lambda === ex.role.derivedLambda;
   panel.append(el("p", { class: "cost", "data-tip": TIPS.lambda, text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = " + LAMBDA_DERIVATION + ")" : " (override)") }));
-  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × thinking)" : "") + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
+  const thinkNote = ex.role.thinking === undefined ? "bare" : ":" + ex.role.thinking;
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × " + thinkNote + ")" : " (" + thinkNote + ")") + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
 
   panel.append(el("h3", { "data-tip": TIPS.whyNotHigher, text: "Why not higher" }));
   if (ex.gapAbove === null) {
@@ -565,6 +570,21 @@ function renderEditor() {
   });
   panel.append(el("label", { class: "check" }, [imgCb, el("span", { "data-tip": TIPS.imageFilter, text: "requires image input (filters.image)" })]));
 
+  panel.append(el("h3", { "data-tip": TIPS.thinking, text: "Thinking level" }));
+  const bareLocked = state.effective[state.role].thinking !== undefined;
+  const levelSel = el("select", { id: "thinking", "data-tip": TIPS.thinking });
+  levelSel.append(el("option", { value: "", text: "— (bare)", disabled: bareLocked ? "" : null, "data-tip": bareLocked ? TIPS.thinkingBare : null }));
+  for (const level of state.levels) levelSel.append(el("option", { value: level, text: level }));
+  levelSel.value = def.thinking === undefined ? "" : def.thinking;
+  levelSel.addEventListener("change", () => {
+    if (levelSel.value === "") delete def.thinking;
+    else def.thinking = levelSel.value;
+    renderEditor();
+    renderRoles();
+    scheduleRecompute();
+  });
+  panel.append(el("div", { class: "row-controls" }, [levelSel, el("span", { id: "thinking-readout", class: "muted", text: "" })]));
+
   panel.append(el("h3", { "data-tip": TIPS.lambda, text: "λ override" }));
   const lam = el("input", { type: "number", min: "0", step: "0.0001", class: "wnum", placeholder: "derived", "data-tip": TIPS.lambda });
   if (def.lambda !== undefined) lam.value = String(def.lambda);
@@ -593,6 +613,14 @@ function updateReadouts() {
     const sum = Object.values(def.weights).reduce((a, b) => a + b, 0);
     sumEl.textContent = "Σ = " + sum.toFixed(3);
     sumEl.className = "sum " + (Math.abs(sum - 1) > 0.01 ? "bad" : "ok");
+  }
+  const thinkEl = document.getElementById("thinking-readout");
+  if (thinkEl) {
+    if (def.thinking === undefined) thinkEl.textContent = "bare — price unadjusted";
+    else {
+      const factor = state.thinkingFactors[def.thinking] ?? 1;
+      thinkEl.textContent = "price ×" + factor.toFixed(3) + " on models that run :" + def.thinking;
+    }
   }
   const lamEl = document.getElementById("lambda-readout");
   if (lamEl) lamEl.textContent = "derived λ = " + state.derivedLambda.toFixed(5) + " · effective λ = " + state.lambda.toFixed(5);
@@ -630,6 +658,7 @@ async function onExport() {
       state.exportMessage = "wrote " + res.roles.length + " role(s)" + (res.backupPath ? " — backup: " + res.backupPath : "");
       for (const role of res.roles) state.effective[role] = structuredClone(state.defs[role]);
       renderRoles();
+      renderEditor();
     } else {
       state.exportMessage = "export failed: " + (res.error || (res.errors || []).join("; "));
     }
@@ -683,6 +712,8 @@ async function boot() {
   state.defaults = data.defaults;
   state.metrics = data.metrics;
   state.metricMeta = data.metricMeta;
+  state.levels = data.levels;
+  state.thinkingFactors = data.thinkingFactors;
   state.lockPath = data.lockPath;
   state.defs = structuredClone(data.roles);
   initTips();
