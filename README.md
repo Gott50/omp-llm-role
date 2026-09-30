@@ -542,7 +542,8 @@ Design Arena failures are non-fatal.
   `deepseek-v4.1-flash:auto` ($11.25 → $0.43) and keeps `slow` on GLM-5.3 at
   `:high` ($8.34 → $2.88); `plan`/`advisor` keep Hy4 preview (`:auto`/$2.32
   each); `tiny` keeps `ling-3.0-flash-fin` ($0.07). Sum of per-role
-  effective $/M drops $25.6 → $7.1 in the simulation. Quality given up:
+  effective $/M drops $25.6 → $9.8 in the simulation (the suffix pass
+  repriced `default`/`task`/`advisor` from bare to `:auto`). Quality given up:
   `default` −0.004 q, `vision` −0.041, `designer` −0.010; `task` gains +0.007.
 - Provider-route blend (2026-09-30): price and throughput are now the
   1/price²-weighted means over every stable standard-tier provider route —

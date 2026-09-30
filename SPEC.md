@@ -292,8 +292,9 @@ a power-user escape hatch for whole-object overrides.
       // Per-role thinking level (decision #5; moved out of the former `suffixes`
       // map). The shipped VALUES are hand-authored (design session, never
       // derived from the ranking): smol off, slow high, vision auto, plan auto,
-      // commit off, designer auto — default, task, tiny, advisor bare (absent =
-      // no suffix). The 2026-09-30 value review lowered slow max → high and
+      // commit off, designer auto, default/task/advisor auto, tiny off — no
+      // role is bare (absent = no suffix). The 2026-09-30 value review lowered
+      // slow max → high and
       // plan/designer high → auto: `medium` is not in any reachable model's
       // catalog thinking[], so a `medium` pin writes bare at a bare price while
       // the session default (`auto`) bills ~1.86×, and the level is a pure cost
