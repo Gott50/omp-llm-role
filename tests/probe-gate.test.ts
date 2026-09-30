@@ -75,7 +75,7 @@ test("blocked current selector -> adopted replacement", async () => {
 });
 
 test("hysteresis intact when everything probes clean", async () => {
-  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', blockedExcept([]), { switchMargin: 0.6 });
+  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', blockedExcept([]), { switchMargin: 0.6, priceSwitchFraction: 0 });
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "kept-margin");
@@ -112,7 +112,7 @@ const SEVEN = [...SIX, makeModel("model-g", 30, 7, 50)];
 
 test("walk fills a kept role's chain to full depth with probe-clean entries", async () => {
   const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-d"\n');
-  const deps = fakeDeps(SIX, { switchMargin: 1, fallbackChainDepth: 2 }, { probeModel: blockedExcept([]) });
+  const deps = fakeDeps(SIX, { switchMargin: 1, fallbackChainDepth: 2, priceSwitchFraction: 0 }, { probeModel: blockedExcept([]) });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const text = readFileSync(join(dir, "config.yml"), "utf8");
   assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-e"\n\s+- "openrouter\/org\/model-f"/);
@@ -120,7 +120,7 @@ test("walk fills a kept role's chain to full depth with probe-clean entries", as
 
 test("blocked candidates beyond a kept current do not count toward chain depth", async () => {
   const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-d"\n');
-  const deps = fakeDeps(SEVEN, { switchMargin: 1, fallbackChainDepth: 2 }, { probeModel: blockedExcept(["org/model-e"]) });
+  const deps = fakeDeps(SEVEN, { switchMargin: 1, fallbackChainDepth: 2, priceSwitchFraction: 0 }, { probeModel: blockedExcept(["org/model-e"]) });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const text = readFileSync(join(dir, "config.yml"), "utf8");
   assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-f"\n\s+- "openrouter\/org\/model-g"/);

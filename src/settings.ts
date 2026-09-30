@@ -18,7 +18,7 @@ import { isRecord } from "./guards.ts";
 export const DEFAULT_ROLES: Record<string, RoleDef> = {
   default: {
     description: "Main workhorse: strong general coding-agent quality, sane cost",
-    weights: { general: 0.34, reasoning: 0.18, code: 0.18, agents: 0.12, tool_calling: 0.1, throughput: 0.03, price: 0.05 },
+    weights: { general: 0.3221, reasoning: 0.1705, code: 0.1705, agents: 0.1137, tool_calling: 0.0947, throughput: 0.0285, price: 0.1 },
     required: ["general", "price", "throughput"],
   },
   smol: {
@@ -31,20 +31,23 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     description: "Most capable model for hard problems; cost and speed as tiebreakers",
     weights: { general: 0.26, reasoning: 0.26, code: 0.18, agents: 0.13, math: 0.08, throughput: 0.04, price: 0.05 },
     required: ["general", "price", "throughput"],
-    thinking: "max",
+    thinking: "high",
   },
   vision: {
     description: "Image understanding: vision index dominates",
-    weights: { vision: 0.52, general: 0.2, reasoning: 0.15, code: 0.06, throughput: 0.03, price: 0.04 },
+    weights: { vision: 0.4767, general: 0.1833, reasoning: 0.1375, code: 0.055, throughput: 0.0275, price: 0.12 },
     required: ["vision", "general", "price", "throughput"],
     thinking: "auto",
     filters: { image: true },
   },
   plan: {
     description: "Planning: reasoning, math, long-context coherence",
-    weights: { reasoning: 0.32, general: 0.26, long_context: 0.14, math: 0.14, throughput: 0.04, price: 0.1 },
+    weights: { reasoning: 0.3129, general: 0.2542, long_context: 0.1369, math: 0.1369, throughput: 0.0391, price: 0.12 },
     required: ["reasoning", "general", "price", "throughput"],
-    thinking: "high",
+    // `auto`, not `medium`: no reachable planning candidate lists `medium` in its
+    // catalog thinking[], so a `medium` pin silently writes bare (the session
+    // default) — `auto` is a meta level (always appended) at the same overhead.
+    thinking: "auto",
   },
   commit: {
     description: "Commit messages: cheap and fast with decent general quality",
@@ -64,14 +67,16 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
   },
   advisor: {
     description: "Advisor/watchdog: deep reasoning over long context",
-    weights: { reasoning: 0.36, general: 0.3, long_context: 0.12, math: 0.1, throughput: 0.04, price: 0.08 },
+    weights: { reasoning: 0.3443, general: 0.287, long_context: 0.1148, math: 0.0957, throughput: 0.0382, price: 0.12 },
     required: ["reasoning", "general", "price", "throughput"],
   },
   designer: {
     description: "Design work: visual/UX judgement on image-capable models",
     weights: { general: 0.26, code: 0.10, vision: 0.18, throughput: 0.13, price: 0.15, website: 0.18 },
     required: ["general", "price", "throughput"],
-    thinking: "high",
+    // `auto` for the same reason as `plan`: nothing in the designer pool lists
+    // `medium`, and `auto` is a meta level written as-is at the same overhead.
+    thinking: "auto",
     filters: { image: true },
   },
 };
@@ -105,6 +110,15 @@ export const ACTIVATE_DEFAULT_KEY = "activateDefaultOnEmptySession";
 
 export type ResolvedSettings = {
   switchMargin: number;
+  /**
+   * Cost-side escape hatch from `switchMargin` (SPEC §7): the margin is a flat
+   * band on `value`, so a role with a loose posture (small λ) can refuse a
+   * switch worth up to `switchMargin/λ` $/M. When a challenger sitting inside
+   * the margin undercuts the incumbent's effective price by at least this
+   * fraction (0.5 = at least twice as cheap), it is adopted anyway. 0 disables
+   * the override.
+   */
+  priceSwitchFraction: number;
   writeFallbackChains: boolean;
   fallbackChainDepth: number;
   roles: Record<string, RoleDef>;
@@ -113,6 +127,7 @@ export type ResolvedSettings = {
 
 export const DEFAULT_SETTINGS: ResolvedSettings = {
   switchMargin: 0.02,
+  priceSwitchFraction: 0.5,
   writeFallbackChains: true,
   fallbackChainDepth: 2,
   roles: DEFAULT_ROLES,
@@ -222,6 +237,9 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
 
   if (typeof merged.switchMargin !== "number" || !Number.isFinite(merged.switchMargin) || merged.switchMargin < 0 || merged.switchMargin > 1) {
     errors.push(`switchMargin: must be a number in [0, 1], got ${JSON.stringify(merged.switchMargin)}`);
+  }
+  if (typeof merged.priceSwitchFraction !== "number" || !Number.isFinite(merged.priceSwitchFraction) || merged.priceSwitchFraction < 0 || merged.priceSwitchFraction > 1) {
+    errors.push(`priceSwitchFraction: must be a number in [0, 1], got ${JSON.stringify(merged.priceSwitchFraction)}`);
   }
   if (typeof merged.writeFallbackChains !== "boolean") {
     errors.push(`writeFallbackChains: must be a boolean, got ${JSON.stringify(merged.writeFallbackChains)}`);

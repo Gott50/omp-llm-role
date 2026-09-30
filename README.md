@@ -73,8 +73,14 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   untouched.
 - **Switch policy**: hysteresis — a role switches only when its current model
   became ineligible (or left today's ranked pool) or the new best beats it by
-  `switchMargin` (default 0.02; 0 = always take the best). Kept roles still
-  get their fallback chain refreshed and their selector canonicalized.
+  `switchMargin` (default 0.02; 0 = always take the best). The margin is a flat
+  band on `value`, so it silently vetoes switches worth up to `switchMargin / λ`
+  $/M — $7.60/M at `default`'s λ 0.00263 (2026-09-30). The cost override closes
+  that: a challenger inside the band that undercuts the incumbent's *effective*
+  price by `priceSwitchFraction` (default 0.5 = at least half the $/M) is
+  adopted anyway, recorded as `switched-cost`; `priceSwitchFraction=0` restores
+  the pure margin. Kept roles still get their fallback chain refreshed and
+  their selector canonicalized.
 - **Writes**: surgical in-place edit — only managed role lines and managed
   chain keys change; comments, blank lines and unknown keys stay
   byte-identical; values are emitted double-quoted; a line whose value already
@@ -82,8 +88,8 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   writes nothing and never touches the config mtime. Atomic tmp+rename with a
   3-attempt mtime-conflict retry; the patched text must re-parse as YAML or
   nothing is written. Thinking suffixes come from each role's `thinking` field
-  in `DEFAULT_ROLES` (`smol: off, slow: max, vision: auto, plan: high,
-  commit: off, designer: high`; others bare) and are only appended when the
+  in `DEFAULT_ROLES` (`smol: off, slow: high, vision: auto, plan: auto,
+  commit: off, designer: auto`; others bare) and are only appended when the
   chosen catalog entry's `thinking[]` includes the level — meta levels
   (`off`, `auto`) need only a non-empty list, because omp clamps unsupported
   levels and an unsupported pin would run at a different effort than the role
@@ -97,7 +103,8 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   `modelRoles` block on every write (`previousModelRoles`).
 - **Settings**: `omp plugin config omp-llm-role --set=<dotted.key>=<value>`
   (flat dotted keys are deep-merged by the plugin; `config=<json>` is a
-  whole-object escape hatch). Knobs: `switchMargin`, `writeFallbackChains`,
+  whole-object escape hatch). Knobs: `switchMargin`, `priceSwitchFraction`,
+  `writeFallbackChains`,
   `fallbackChainDepth`, `activateDefaultOnEmptySession`,
   `roles.<name>.{description,weights,required,filters,
   thinking,lambda}`. `weights: null` opts a role out; a new role with a full
@@ -346,6 +353,50 @@ Weight design rules (2026-09-27 review):
   0.10/0.08 (λ 0.00556/0.00435) so cost is a real tiebreaker; `tiny` stays at
   0.40 because it already returns a cheap top-5 on the actionable pool.
 
+Value review (2026-09-30, owner stance: "the cheapest model that can do the
+task, not the overpowered one"). Three findings, each measured on that day's
+caches:
+
+- **`w_price` is the only cost knob.** `q = Σ (w_m/(1−w_price))·m` is a weighted
+  *mean* of the cardinal metrics, so raising `price` while rescaling the other
+  weights to keep Σ = 1 leaves `q` bit-identical (verified: DeepSeek-V4.1-Flash
+  q = 0.810 at every `w_price` from 0.02 to 0.40). The capability weights set
+  the shape; `w_price` alone sets the exchange rate. Raised: `default` 0.05 →
+  0.10, `vision` 0.04 → 0.12, `plan` 0.10 → 0.12, `advisor` 0.08 → 0.12 (each
+  with the rest rescaled, so every `q` and every metric *share* is unchanged).
+- **`thinking` is a second, hidden λ.** The level factor (off 1.00, low 1.43,
+  medium/auto 1.86, high 2.71, xhigh 4.43, max 7.86) multiplies the price axis
+  and never `q` — `rankRole` has no term that rewards deliberation, so a level
+  is pure cost, and it silently scales λ by the same factor (`slow` at `:max`
+  ran λ_eff 0.0207, 7.9× its nominal 0.00263 — stricter than `smol`). Lowered
+  `slow` max → high (same GLM-5.3 pick, $8.34 → $2.88/M) and `plan`/`designer`
+  high → `auto` ($3.39 → $2.32, $0.63 → $0.43). `auto`, not `medium`: no
+  reachable model lists `medium` in its catalog `thinking[]`, so a `medium` pin
+  writes **bare** at a bare price while the session default (`auto`) bills
+  1.86× — `auto` is a meta level (always written, and `META_LEVELS`) at the
+  same overhead, so the written selector and the priced selector agree.
+- **The switch margin hides dollars.** `switchMargin` is a flat band on
+  `value`, so it vetoes switches worth up to `switchMargin / λ` $/M — $7.60/M
+  at `default`'s λ, $5.18 at `vision`'s, $4.60 at `advisor`'s. Measured
+  consequence that day: `default`/`smol`/`commit` kept GLM-5.3 ($1.06) over
+  DeepSeek-V4.1-Flash ($0.23) on value gaps of 0.002–0.003, and `task` kept a
+  model that was both 4.6× pricier *and* 0.007 q worse. `priceSwitchFraction`
+  (default 0.5) closes the hole: inside the margin, a challenger at ≥ half the
+  effective $/M is adopted (`switched-cost`). Fleet effect after the pack
+  (weights + levels + override), priced on the reachable pool: `default`,
+  `smol`, `commit`, `task` → `deepseek-v4.1-flash` ($0.23), `vision` →
+  `deepseek-v4.1-flash:auto` ($0.43 vs `kimi-k3:auto` $7.70), `tiny` →
+  `ling-3.0-flash-fin` ($0.07), `designer` → `deepseek-v4.1-flash:auto`
+  ($0.43 vs `kimi-k3:high` $11.25), `slow` keeps GLM-5.3 at `:high` ($2.88),
+  `plan`/`advisor` keep Hy4 preview ($2.32 / $1.25).
+  The quality given up is real but small: `default` GLM-5.3 → DeepSeek is
+  −0.004 q for 4.6× less money (`vision` −0.041 for 18×, `designer` −0.010 for
+  26×, `task` +0.007 for 4.6×); `slow`'s max → high moves no model and no q,
+  only the billed factor. The
+  ranking is still capability-first — the price weight decides where on the
+  frontier each role stops, and concentration on one vendor is the price of
+  the cheapest pick (fallback chains mitigate it).
+
 ## Usage
 
 ```
@@ -471,6 +522,20 @@ Design Arena failures are non-fatal.
 
 ## Current state (2026-09-30)
 
+- Value review landed (2026-09-30, see Scoring): `default`/`vision`/`plan`/
+  `advisor` price weights raised to 0.10/0.12/0.12/0.12 (capability weights
+  rescaled, every `q` unchanged), `slow` max → `high` and `plan`/`designer`
+  high → `auto`, and the switch margin gained the `priceSwitchFraction`
+  cost override (default 0.5). Priced on the reachable pool with the key's
+  provider whitelist applied (70 ok / 62 blocked / 4 unknown of 136 probed
+  today), the plugin dry-run moves `default`, `smol`, `commit`, `task` to
+  `deepseek-v4.1-flash` ($1.06 → $0.23/M), `vision` to
+  `deepseek-v4.1-flash:auto` ($7.70 → $0.43), `designer` to
+  `deepseek-v4.1-flash:auto` ($11.25 → $0.43) and keeps `slow` on GLM-5.3 at
+  `:high` ($8.34 → $2.88); `plan`/`advisor` keep Hy4 preview (`:auto`/$2.32,
+  bare/$1.25); `tiny` keeps `ling-3.0-flash-fin` ($0.07). Sum of per-role
+  effective $/M drops $25.6 → $7.1 in the simulation. Quality given up:
+  `default` −0.004 q, `vision` −0.041, `designer` −0.010; `task` gains +0.007.
 - Provider-route blend (2026-09-30): price and throughput are now the
   1/price²-weighted means over every stable standard-tier provider route —
   the expected values under OpenRouter's default price-based load balancing —
@@ -543,11 +608,15 @@ Design Arena failures are non-fatal.
   The other nine roles are untouched (only `designer` weights `website`).
 - 399 llm-stats models; OpenRouter matched 151/399 (throughput), 150 priced.
 - Eligible per role: 142 (vision 74, designer 87, image-input filter).
-- Value-ranking leaders (this report, thinking-adjusted prices): `default`
-  GPT-6 Astra (0.835), `smol` Muse Spark 1.1 (0.763), `slow` GLM-5.3 (0.808),
-  `vision` Kimi K3 (0.760), `plan` GPT-5.6 Sol (0.760), `commit` Muse
-  Spark 1.1 (0.792), `tiny` Muse Spark 1.1 (0.813), `task` GLM-5.3 (0.750),
-  `advisor` GPT-5.6 Sol (0.821), `designer` Gemini 3.8 Flash (0.768).
+- Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
+  leaders, before the account's provider whitelist drops the blocked ones):
+  `default` Muse Spark 1.3 (0.810, blocked → DeepSeek), `smol` Muse Spark 1.1
+  (0.764, blocked → DeepSeek), `slow` GLM-5.3 (0.818), `vision` Qwen3.8 Flash
+  (0.732, blocked → DeepSeek), `plan` Hy4 preview (0.759), `commit` Muse
+  Spark 1.1 (0.793, blocked → DeepSeek), `tiny` Muse Spark 1.1 (0.814,
+  blocked → Ling Fin), `task` DeepSeek-V4.1-Flash (0.757), `advisor`
+  GPT-5.6 Sol (0.796, blocked → Hy4 preview), `designer` DeepSeek-V4.1-Flash
+  (0.775).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
@@ -660,7 +729,12 @@ Design Arena failures are non-fatal.
 - The OpenRouter account's allowed-providers privacy whitelist blocks more
   than first-party `openai`/`azure`/`anthropic`: probed per candidate
   (2026-09-27, one 1-token completion each) 61 of 138 eligible models are
-  blocked, including `google/*` and `qwen/*` frontier endpoints, while
+  blocked; re-probed over the ranked pool 2026-09-30 it is 62 of 136 (70 ok,
+  4 unknown), and every `openai/*`, `google/*`, `meta/*` and `qwen/*` id
+  probed is blocked — the four role leaders the report shows (Muse Spark,
+  Gemini, Qwen, GPT) are unreachable, so the report's #1 and the written
+  selector differ, and weights should be judged on the reachable pool.
+  Non-blocked families include
   `deepseek/*`, `z-ai/*`, `moonshotai/*`, `tencent/*`, `inclusionai/*` and the
   open-weight families inside blocked orgs (GPT OSS, Gemma, Llama/Muse
   Glimmer, Qwen3.5/3.6) pass. Blocked is a per-selector property, never an org
@@ -695,9 +769,18 @@ Design Arena failures are non-fatal.
   `gemini-3.8-flash` (1308) — kept deliberately: `~/.omp/agent/agents/designer.md`
   requires screenshot grounding and grants only read/grep/glob/edit/write, so
   the model must accept image input.
-- The designer ranking is insensitive to its `thinking: "high"` pin between
-  medium and high (2026-09-27 probe: only #9/#10 swap); `high` is retained
-  deliberately.
+- The designer ranking was insensitive to its `thinking` pin between medium and
+  high (2026-09-27 probe: only #9/#10 swap), so `high` was pure multiplier
+  there; the 2026-09-30 review moved it to `auto` (same overhead as medium,
+  always written).
+- **Bare roles are priced as if thinking were free.** `rankRole` charges the
+  level factor only when the model will run the role's level, so bare roles
+  (`default`, `tiny`, `task`, `advisor`) and any model whose catalog lacks the
+  pinned level are priced at the billed blend ×1 — while at run time the session
+  `defaultThinkingLevel` (here `auto`) bills ~1.86× of that. The ranking
+  therefore under-states bare-role cost by 1.86×; a role's *relative* ranking is
+  unaffected only while every candidate is priced the same way (it is not, for
+  models whose catalog supports the pinned level of a non-bare role).
 - `designarena.ai/robots.txt` disallows `/api/` for `User-Agent: *` and the
   leaderboard route is `/api/leaderboard` — the daily fetch targets a
   disallowed path by explicit owner decision (robots.txt read as advisory

@@ -17,7 +17,7 @@ import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type Conf
 import { readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "./settings.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
 
-export type DecisionReason = "adopted" | "switched" | "kept-margin" | "kept-eligible" | "no-current";
+export type DecisionReason = "adopted" | "switched" | "switched-cost" | "kept-margin" | "kept-eligible" | "no-current";
 
 export type Decision = {
   role: string;
@@ -83,6 +83,20 @@ function decisionLine(d: Decision): string {
   return d.from === d.to
     ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked})`
     : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked})`;
+}
+
+/**
+ * Cost-side escape from the hysteresis margin (SPEC §7). `switchMargin` is a
+ * flat band on `value`, so it can veto a switch worth up to `switchMargin / λ`
+ * $/M while the incumbent is only marginally better — e.g. a role at λ 0.003
+ * refuses up to $7/M of savings. A challenger inside that band is adopted when
+ * it undercuts the incumbent's effective price by `priceSwitchFraction` (0.5 =
+ * at least twice as cheap). 0 disables the override.
+ */
+function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSettings): boolean {
+  if (settings.priceSwitchFraction <= 0 || current.priceEff <= 0) return false;
+  if (best.value < current.value - settings.switchMargin) return false;
+  return best.priceEff <= current.priceEff * (1 - settings.priceSwitchFraction);
 }
 
 export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: boolean; dryRun?: boolean }): Promise<RunResult> {
@@ -210,6 +224,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         chosen = currentEntry;
         reason = "kept-eligible";
       } else if (best.ranked.value - currentEntry.ranked.value >= settings.switchMargin) reason = "switched";
+      else if (cheaperInsideMargin(best.ranked, currentEntry.ranked, settings)) reason = "switched-cost";
       else {
         chosen = currentEntry;
         reason = "kept-margin";

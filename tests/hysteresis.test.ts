@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { rankRole } from "../src/engine.ts";
-import { DEFAULT_ROLES } from "../src/settings.ts";
+import { DEFAULT_ROLES, DEFAULT_SETTINGS } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
@@ -10,10 +10,10 @@ import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from ".
 // value = q − λ·price; margin(A,B) = value(A) − value(B).
 const MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
 
-async function run(configText: string | null, settings: Record<string, unknown> = {}) {
+async function run(configText: string | null, settings: Record<string, unknown> = {}, models = MODELS) {
   const dir = setupAgentDir(configText);
   const notified: string[] = [];
-  const deps = fakeDeps(MODELS, settings, { notify: (lines) => notified.push(...lines) });
+  const deps = fakeDeps(models, settings, { notify: (lines) => notified.push(...lines) });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
   return { result, notified };
 }
@@ -35,7 +35,7 @@ test("current not in today's pool -> adopt best (adopted)", async () => {
 });
 
 test("best not better by margin -> keep current (kept-margin)", async () => {
-  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.6 });
+  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.6, priceSwitchFraction: 0 });
   assert.equal(result.decisions[0].reason, "kept-margin");
   assert.equal(result.decisions[0].to, "openrouter/org/model-b");
   const margin = result.decisions[0].bestValue - (result.decisions[0].currentValue ?? 0);
@@ -46,6 +46,37 @@ test("best not better by margin -> keep current (kept-margin)", async () => {
   const b = ranked.find((r) => r.model.id === "model-b");
   assert.ok(a && b);
   assert.ok(Math.abs(margin - (a.value - b.value)) < 1e-9);
+});
+
+// Near-tie pair for the cost-side override: the cheaper model (x) leads the ranking but
+// only barely, while the incumbent (y) is 3x the price — the case a flat margin vetoes.
+const NEAR_TIE = [makeModel("model-x", 90, 1, 100), makeModel("model-y", 90.5, 3, 100)];
+
+test("challenger inside the margin but >=2x cheaper -> switch (switched-cost)", async () => {
+  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-y"\n', {}, NEAR_TIE);
+  // Premise from the engine, not restated arithmetic: x sits inside the switch margin of
+  // the incumbent and undercuts it by at least priceSwitchFraction.
+  const ranked = rankRole(DEFAULT_ROLES.default, NEAR_TIE);
+  const best = ranked[0];
+  const current = ranked.find((r) => r.model.id === "model-y");
+  assert.ok(best.model.id === "model-x" && current);
+  assert.ok(best.value - current.value < DEFAULT_SETTINGS.switchMargin);
+  assert.ok(best.priceEff <= current.priceEff * (1 - DEFAULT_SETTINGS.priceSwitchFraction));
+  assert.equal(result.decisions[0].reason, "switched-cost");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-x");
+});
+
+test("priceSwitchFraction 0 keeps the switch margin in charge", async () => {
+  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-y"\n', { priceSwitchFraction: 0 }, NEAR_TIE);
+  assert.equal(result.decisions[0].reason, "kept-margin");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-y");
+});
+
+test("inside the margin but not cheap enough -> keep current", async () => {
+  // A 0.9 fraction demands a >=10x undercut; this pair's 3x is not enough.
+  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-y"\n', { priceSwitchFraction: 0.9 }, NEAR_TIE);
+  assert.equal(result.decisions[0].reason, "kept-margin");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-y");
 });
 
 test("best beats current by margin -> switch (switched)", async () => {

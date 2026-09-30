@@ -46,7 +46,7 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 | 4 | Config write | **Surgical in-place edit** of `~/.omp/agent/config.yml` (only managed lines change; atomic tmp+rename) |
 | 5 | Thinking suffixes | **Per-role `thinking` field** on the role def, shipped as defaults, overridable in settings |
 | 6 | Trigger | **session_start, UTC-day gated** (first omp session of the day refreshes; later sessions no-op) + manual `/refresh-roles` |
-| 7 | Switch policy | **Hysteresis**: switch only if current model ineligible or new best beats current score by `switchMargin` (default `0.02`; `0` = always take today's best) |
+| 7 | Switch policy | **Hysteresis**: switch only if current model ineligible or new best beats current score by `switchMargin` (default `0.02`; `0` = always take today's best). The margin is a flat band on `value`, so it can veto up to `switchMargin / λ` $/M of savings; a challenger inside the band that undercuts the incumbent's effective price by `priceSwitchFraction` (default `0.5`) is adopted anyway (2026-09-30, `switched-cost`) |
 | 8 | Settings home | **omp plugin settings** (`omp-plugins.lock.json` via `omp plugin config omp-llm-role --set=k=v`); plugin deep-merges dotted keys itself |
 | 9 | Variant pick | **Exact dated slug**: resolution order exact id → newest dated → bare → `-latest` alias (last resort); never `:batch`; `:free` only on free-tier keys |
 | 10 | Deliverable | **This spec**; implementation in a later session on owner go |
@@ -206,6 +206,10 @@ if no current entry            → adopt best
 else if current fails tier or catalog gate
   (incl. not in today's ranked pool) → adopt best
 else if best.value - current.value >= switchMargin → adopt best
+else if best.value >= current.value - switchMargin
+     && priceSwitchFraction > 0
+     && best.priceEff <= current.priceEff * (1 - priceSwitchFraction)
+                                 → adopt best (cost override, reason `switched-cost`)
 else                             → keep current (chain still refreshed, §6.4)
 ```
 
@@ -273,6 +277,9 @@ a power-user escape hatch for whole-object overrides.
 // logical shape (defaults shown for knobs; role weights default to §6.2)
 {
   "switchMargin": 0.02,          // hysteresis margin on the 0–1 score; 0 = always switch
+  "priceSwitchFraction": 0.5,    // cost override: inside the margin, a challenger this
+                                 // much cheaper (0.5 = half the $/M) is adopted anyway;
+                                 // 0 disables it
   "writeFallbackChains": true,
   "fallbackChainDepth": 2,
   "roles": {
@@ -281,12 +288,17 @@ a power-user escape hatch for whole-object overrides.
       "weights": { "general": 0.26, "reasoning": 0.26, "code": 0.18, "agents": 0.13,
                    "math": 0.08, "throughput": 0.04, "price": 0.05 },
       "required": ["general", "price", "throughput"],
-      "thinking": "max",
+      "thinking": "high",
       // Per-role thinking level (decision #5; moved out of the former `suffixes`
       // map). The shipped VALUES are hand-authored (design session, never
-      // derived from the ranking): smol off, slow max, vision auto, plan high,
-      // commit off, designer high — default, task, tiny, advisor bare (absent =
-      // no suffix). The FIELD is ranking-active: it scales the price axis
+      // derived from the ranking): smol off, slow high, vision auto, plan auto,
+      // commit off, designer auto — default, task, tiny, advisor bare (absent =
+      // no suffix). The 2026-09-30 value review lowered slow max → high and
+      // plan/designer high → auto: `medium` is not in any reachable model's
+      // catalog thinking[], so a `medium` pin writes bare at a bare price while
+      // the session default (`auto`) bills ~1.86×, and the level is a pure cost
+      // multiplier — the ranking never rewards it. The FIELD is ranking-active:
+      // it scales the price axis
       // (§6 step 1) for models whose catalog thinking[] includes the level, so
       // editing a role's level can change its ranking and picks.
       "filters": { "image": false }
@@ -301,16 +313,19 @@ Validation (fail the run, notify, no write): weights > 0, each role's weights su
 1.0 ± 0.01, `required` entries ∈ {general, reasoning, math, code, agents, search,
 vision, tool_calling, long_context, mrcr, website, price, throughput} (the eligibility gate,
 independent of weights), weightable metric names ∈ the same set, `roles.<role>.thinking` ∈
-{off, minimal, low, medium, high, xhigh, max, auto}. A role entry with `weights: null`
+{off, minimal, low, medium, high, xhigh, max, auto}, `switchMargin` and
+`priceSwitchFraction` ∈ [0, 1]. A role entry with `weights: null`
 explicitly opts that role out. Legacy `suffixes.*` keys are rejected with a migration
 hint (moved into `roles.<role>.thinking`).
 
 `website` is the one derived metric: Design Arena's `models-website` Elo as a
 percentile within the design-covered population, with models lacking Design Arena
-data filled at the covered median (0.5). It is computed once per run in
-`applyDesignPercentiles` (role-independent), so it is never null for a model with
-a general index and never a `required` gate — the newest frontier models carry no
-Design Arena data. Shipped weight: `designer` 0.10 only.
+data filled at the capability-consistent `DESIGN_FILL_PERCENTILE` (0.195 — the
+percentile implied by the uncovered cohort's mean general index). It is computed
+once per run in `applyDesignPercentiles` (role-independent), so it is never null
+for a model with a general index and never a `required` gate — the newest frontier
+models carry no Design Arena data. Shipped weight: `designer` 0.18 only (with
+`code` trimmed to 0.10 against their r = 0.876 collinearity).
 
 ## 8. State, history, and the write
 
@@ -322,7 +337,7 @@ Files (all under `~/.omp/agent/`, next to the config they describe):
   aid; no rollback command in scope).
 - `llm-role-history.jsonl` — append-only per run: `{ts, trigger, keyMeta{isFreeTier,
   limitRemaining, creditsRemaining}, decisions[{role, from, to, reason: adopted|switched|
-  kept-margin|kept-eligible|no-current, scores}]}`.
+  switched-cost|kept-margin|kept-eligible|no-current, scores}]}`.
 
 ### 8.1 Surgical edit algorithm (decision #4)
 
@@ -377,7 +392,10 @@ a concurrent second starter loses the lock and finds the day already stamped →
    chain-key replace-in-place (no duplicate YAML keys), unchanged file → zero-byte diff
    and no mtime change.
 5. **Hysteresis fixtures** — no-current adopt; ineligible current switch; margin-below
-   keep; margin-above switch; `switchMargin: 0` always takes best.
+   keep; margin-above switch; `switchMargin: 0` always takes best; cost override —
+   challenger inside the margin at ≥ `priceSwitchFraction` cheaper switches
+   (`switched-cost`), `priceSwitchFraction: 0` keeps the margin in charge, and an
+   inside-margin challenger short of the fraction stays kept.
 6. **Chain pruning fixtures** — plugin-written stale keys removed; owner-written keys
    preserved.
 7. **Live E2E** — `omp plugin link .` → new omp session → observe day-gated run;
