@@ -25,19 +25,19 @@ test("no current entry -> adopt best (no-current)", async () => {
   assert.ok(d);
   assert.equal(d.reason, "no-current");
   assert.equal(d.from, null);
-  assert.equal(d.to, "openrouter/org/model-a");
+  assert.equal(d.to, "openrouter/org/model-a:auto");
 });
 
 test("current not in today's pool -> adopt best (adopted)", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-z"\n');
   assert.equal(result.decisions[0].reason, "adopted");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-a");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a:auto");
 });
 
 test("best not better by margin -> keep current (kept-margin)", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.6, priceSwitchFraction: 0 });
   assert.equal(result.decisions[0].reason, "kept-margin");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-b");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-b:auto");
   const margin = result.decisions[0].bestValue - (result.decisions[0].currentValue ?? 0);
   // The hysteresis step compares the role's ranked values, so the expected margin is the
   // engine's own value gap between the two models — not a formula duplicated here.
@@ -63,42 +63,46 @@ test("challenger inside the margin but >=2x cheaper -> switch (switched-cost)", 
   assert.ok(best.value - current.value < DEFAULT_SETTINGS.switchMargin);
   assert.ok(best.priceEff <= current.priceEff * (1 - DEFAULT_SETTINGS.priceSwitchFraction));
   assert.equal(result.decisions[0].reason, "switched-cost");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-x");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-x:auto");
 });
 
 test("priceSwitchFraction 0 keeps the switch margin in charge", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-y"\n', { priceSwitchFraction: 0 }, NEAR_TIE);
   assert.equal(result.decisions[0].reason, "kept-margin");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-y");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-y:auto");
 });
 
 test("inside the margin but not cheap enough -> keep current", async () => {
   // A 0.9 fraction demands a >=10x undercut; this pair's 3x is not enough.
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-y"\n', { priceSwitchFraction: 0.9 }, NEAR_TIE);
   assert.equal(result.decisions[0].reason, "kept-margin");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-y");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-y:auto");
 });
 
 test("best beats current by margin -> switch (switched)", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.1 });
   assert.equal(result.decisions[0].reason, "switched");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-a");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a:auto");
 });
 
 test("switchMargin 0 always takes today's best", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0 });
   assert.equal(result.decisions[0].reason, "switched");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-a");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a:auto");
 });
 
 test("current already best -> kept-eligible with identical selector", async () => {
-  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-a"\n');
+  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-a:auto"\n');
   assert.equal(result.decisions[0].reason, "kept-eligible");
   assert.equal(result.decisions[0].from, result.decisions[0].to);
 });
 
 test("suffix appended from settings when the catalog entry thinks", async () => {
-  const { result } = await run("other: 1\n", { roles: { default: { thinking: "high" } } });
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(MODELS, { roles: { default: { thinking: "high" } } }, {
+    getCatalog: async () => makeCatalog(MODELS.map((m) => m.id), ["high"]),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
   assert.equal(result.decisions[0].to, "openrouter/org/model-a:high");
 });
 

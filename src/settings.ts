@@ -20,6 +20,10 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     description: "Main workhorse: strong general coding-agent quality, sane cost",
     weights: { general: 0.3221, reasoning: 0.1705, code: 0.1705, agents: 0.1137, tool_calling: 0.0947, throughput: 0.0285, price: 0.1 },
     required: ["general", "price", "throughput"],
+    // `auto`, not bare: the session default is `auto` (config.yml
+    // `defaultThinkingLevel`), so a bare selector runs at auto effort while
+    // being priced at 1× — pinning `auto` makes the ranking price what runs.
+    thinking: "auto",
   },
   smol: {
     description: "Fast lightweight model: cheap and quick, still competent",
@@ -59,16 +63,25 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     description: "Background tasks (titles, memory): cheapest and fastest wins",
     weights: { price: 0.4, throughput: 0.35, general: 0.25 },
     required: ["general", "price", "throughput"],
+    // `off`, like `commit`: titles/memory need no deliberation, and bare would
+    // run at the session default (`auto`, ×1.857) while priced at 1×.
+    thinking: "off",
   },
   task: {
     description: "Subagents: agentic + tool calling, moderate cost sensitivity",
     weights: { agents: 0.26, tool_calling: 0.18, code: 0.16, general: 0.22, throughput: 0.05, price: 0.13 },
     required: ["general", "price", "throughput"],
+    // `auto` for the same reason as `default`: honest pricing of the effort
+    // the session default already applies.
+    thinking: "auto",
   },
   advisor: {
     description: "Advisor/watchdog: deep reasoning over long context",
     weights: { reasoning: 0.3443, general: 0.287, long_context: 0.1148, math: 0.0957, throughput: 0.0382, price: 0.12 },
     required: ["reasoning", "general", "price", "throughput"],
+    // `auto`, matching `plan`: the same model (Hy4 preview) runs both roles, so
+    // pricing advisor bare while plan is `auto` understated advisor by 1.857×.
+    thinking: "auto",
   },
   designer: {
     description: "Design work: visual/UX judgement on image-capable models",

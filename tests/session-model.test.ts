@@ -46,7 +46,7 @@ test("applySessionModel is called after a real write with the new selector and t
 });
 
 test("applySessionModel is skipped when the default role is kept (from === to), even though the run wrote", async () => {
-  const current = "openrouter/org/model-a";
+  const current = "openrouter/org/model-a:auto";
   const dir = setupAgentDir(`modelRoles:\n  default: ${current}\n`);
   const state = {
     lastRunDay: "2026-09-21",

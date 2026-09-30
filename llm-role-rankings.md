@@ -24,20 +24,20 @@ bar at which a metric earns weight).
 Throughput + price: OpenRouter per-provider routes under the default price-based routing (weight 1/price² over stable standard-tier providers; p50 tok/s of routed traffic; $/M 3:1 in:out), throughput 151/399, priced 150; models without OpenRouter throughput or a billed route are not ranked.
 
 ## @default — Main workhorse: strong general coding-agent quality, sane cost
-eligible: 142 — λ 0.00556 $/quality-point
+eligible: 142 — λ 0.00556 $/quality-point (thinking ×1.857)
 
-|  # | value |     q | model                 | org         |   $/M | tok/s |  ctx | gen 35.8% | rea 18.9% | code 18.9% | ag 12.6% | tool 10.5% | tput 3.2% |
-| -: | ----: | ----: | --------------------- | ----------- | ----: | ----: | ---: | --------: | --------: | ---------: | -------: | ---------: | --------: |
-|  1 | 0.810 | 0.821 | ★ Muse Spark 1.3      | Meta        | $2.00 |    58 | 1.0M |     0.331 |     0.169 |      0.145 |    0.094 |      0.066 |     0.016 |
-|  2 | 0.809 | 0.810 | ★ DeepSeek-V4.1-Flash | DeepSeek    | $0.23 |    62 | 1.0M |     0.319 |     0.163 |      0.149 |    0.095 |      0.068 |     0.017 |
-|  3 | 0.808 | 0.814 | ★ GLM-5.3             | Zhipu AI    | $1.06 |    73 | 1.0M |     0.323 |     0.169 |      0.146 |    0.092 |      0.066 |     0.018 |
-|  4 | 0.799 | 0.833 | ★ GPT-5.6 Sol         | OpenAI      | $6.13 |    44 | 1.1M |     0.332 |     0.173 |      0.154 |    0.095 |      0.064 |     0.014 |
-|  5 | 0.789 | 0.812 | Kimi K3               | Moonshot AI | $4.15 |    43 | 1.0M |     0.324 |     0.169 |      0.147 |    0.092 |      0.067 |     0.014 |
-|  6 | 0.785 | 0.788 | DeepSeek-V4-Pro-0813  | DeepSeek    | $0.51 |    48 | 1.0M |     0.318 |     0.164 |      0.140 |    0.089 |      0.063 |     0.015 |
-|  7 | 0.778 | 0.781 | MiMo-V2.6-Pro         | Xiaomi      | $0.54 |    28 | 1.0M |     0.313 |     0.158 |      0.145 |    0.090 |      0.065 |     0.010 |
-|  8 | 0.776 | 0.782 | Hy4 preview           | Tencent     | $1.25 |    36 |    — |     0.315 |     0.166 |      0.139 |    0.088 |      0.063 |     0.012 |
-|  9 | 0.773 | 0.889 | ★ GPT-6 Astra         | OpenAI      | $20.9 |    38 | 1.1M |     0.355 |     0.183 |      0.163 |    0.104 |      0.072 |     0.012 |
-| 10 | 0.769 | 0.780 | Muse Spark 1.1        | Meta        | $2.00 |   208 | 1.0M |     0.309 |     0.165 |      0.127 |    0.085 |      0.065 |     0.028 |
+|  # | value |     q | model                 | org                       |   $/M | tok/s |  ctx | gen 35.8% | rea 18.9% | code 18.9% | ag 12.6% | tool 10.5% | tput 3.2% |
+| -: | ----: | ----: | --------------------- | ------------------------- | ----: | ----: | ---: | --------: | --------: | ---------: | -------: | ---------: | --------: |
+|  1 | 0.808 | 0.810 | ★ DeepSeek-V4.1-Flash | DeepSeek                  | $0.43 |    62 | 1.0M |     0.319 |     0.163 |      0.149 |    0.095 |      0.068 |     0.017 |
+|  2 | 0.803 | 0.814 | ★ GLM-5.3             | Zhipu AI                  | $1.97 |    73 | 1.0M |     0.323 |     0.169 |      0.146 |    0.092 |      0.066 |     0.018 |
+|  3 | 0.801 | 0.821 | ★ Muse Spark 1.3      | Meta                      | $3.71 |    58 | 1.0M |     0.331 |     0.169 |      0.145 |    0.094 |      0.066 |     0.016 |
+|  4 | 0.783 | 0.788 | DeepSeek-V4-Pro-0813  | DeepSeek                  | $0.94 |    48 | 1.0M |     0.318 |     0.164 |      0.140 |    0.089 |      0.063 |     0.015 |
+|  5 | 0.775 | 0.781 | MiMo-V2.6-Pro         | Xiaomi                    | $1.01 |    28 | 1.0M |     0.313 |     0.158 |      0.145 |    0.090 |      0.065 |     0.010 |
+|  6 | 0.770 | 0.833 | ★ GPT-5.6 Sol         | OpenAI                    | $11.4 |    44 | 1.1M |     0.332 |     0.173 |      0.154 |    0.095 |      0.064 |     0.014 |
+|  7 | 0.770 | 0.782 | Hy4 preview           | Tencent                   | $2.32 |    36 |    — |     0.315 |     0.166 |      0.139 |    0.088 |      0.063 |     0.012 |
+|  8 | 0.769 | 0.812 | Kimi K3               | Moonshot AI               | $7.70 |    43 | 1.0M |     0.324 |     0.169 |      0.147 |    0.092 |      0.067 |     0.014 |
+|  9 | 0.762 | 0.765 | ★ Qwen3.8 Flash       | Alibaba Cloud / Qwen Team | $0.43 |    51 | 1.0M |     0.307 |     0.162 |      0.130 |    0.085 |      0.064 |     0.015 |
+| 10 | 0.762 | 0.764 | ★ GLM-5.3-Flash       | Zhipu AI                  | $0.32 |    39 | 1.0M |     0.311 |     0.162 |      0.126 |    0.089 |      0.064 |     0.013 |
 
 ## @smol — Fast lightweight model: cheap and quick, still competent
 eligible: 142 — λ 0.02143 $/quality-point
@@ -136,36 +136,36 @@ eligible: 142 — λ 0.03333 $/quality-point
 | 10 | 0.676 | 0.679 | Laguna XS 2.1               | Poolside                  | $0.07 |   136 | 262k |      0.448 |     0.231 |
 
 ## @task — Subagents: agentic + tool calling, moderate cost sensitivity
-eligible: 142 — λ 0.00747 $/quality-point
+eligible: 142 — λ 0.00747 $/quality-point (thinking ×1.857)
 
-|  # | value |     q | model                 | org         |   $/M | tok/s |  ctx | ag 29.9% | tool 20.7% | code 18.4% | gen 25.3% | tput 5.7% |
-| -: | ----: | ----: | --------------------- | ----------- | ----: | ----: | ---: | -------: | ---------: | ---------: | --------: | --------: |
-|  1 | 0.757 | 0.758 | ★ DeepSeek-V4.1-Flash | DeepSeek    | $0.23 |    62 | 1.0M |    0.224 |      0.133 |      0.145 |     0.225 |     0.031 |
-|  2 | 0.743 | 0.751 | GLM-5.3               | Zhipu AI    | $1.06 |    73 | 1.0M |    0.218 |      0.130 |      0.141 |     0.228 |     0.034 |
-|  3 | 0.742 | 0.757 | Muse Spark 1.3        | Meta        | $2.00 |    58 | 1.0M |    0.223 |      0.131 |      0.141 |     0.234 |     0.030 |
-|  4 | 0.717 | 0.721 | DeepSeek-V4-Pro-0813  | DeepSeek    | $0.51 |    48 | 1.0M |    0.211 |      0.123 |      0.136 |     0.225 |     0.027 |
-|  5 | 0.717 | 0.721 | MiMo-V2.6-Pro         | Xiaomi      | $0.54 |    28 | 1.0M |    0.214 |      0.128 |      0.141 |     0.221 |     0.018 |
-|  6 | 0.716 | 0.762 | ★ GPT-5.6 Sol         | OpenAI      | $6.13 |    44 | 1.1M |    0.226 |      0.126 |      0.150 |     0.235 |     0.025 |
-|  7 | 0.713 | 0.744 | Kimi K3               | Moonshot AI | $4.15 |    43 | 1.0M |    0.217 |      0.131 |      0.143 |     0.229 |     0.025 |
-|  8 | 0.707 | 0.722 | Muse Spark 1.1        | Meta        | $2.00 |   208 | 1.0M |    0.201 |      0.127 |      0.124 |     0.219 |     0.051 |
-|  9 | 0.701 | 0.710 | Hy4 preview           | Tencent     | $1.25 |    36 |    — |    0.209 |      0.123 |      0.135 |     0.222 |     0.022 |
-| 10 | 0.700 | 0.701 | ★ GLM-5.3-Flash       | Zhipu AI    | $0.17 |    39 | 1.0M |    0.210 |      0.126 |      0.122 |     0.220 |     0.023 |
+|  # | value |     q | model                 | org                       |   $/M | tok/s |  ctx | ag 29.9% | tool 20.7% | code 18.4% | gen 25.3% | tput 5.7% |
+| -: | ----: | ----: | --------------------- | ------------------------- | ----: | ----: | ---: | -------: | ---------: | ---------: | --------: | --------: |
+|  1 | 0.755 | 0.758 | ★ DeepSeek-V4.1-Flash | DeepSeek                  | $0.43 |    62 | 1.0M |    0.224 |      0.133 |      0.145 |     0.225 |     0.031 |
+|  2 | 0.736 | 0.751 | GLM-5.3               | Zhipu AI                  | $1.97 |    73 | 1.0M |    0.218 |      0.130 |      0.141 |     0.228 |     0.034 |
+|  3 | 0.729 | 0.757 | Muse Spark 1.3        | Meta                      | $3.71 |    58 | 1.0M |    0.223 |      0.131 |      0.141 |     0.234 |     0.030 |
+|  4 | 0.714 | 0.721 | DeepSeek-V4-Pro-0813  | DeepSeek                  | $0.94 |    48 | 1.0M |    0.211 |      0.123 |      0.136 |     0.225 |     0.027 |
+|  5 | 0.714 | 0.721 | MiMo-V2.6-Pro         | Xiaomi                    | $1.01 |    28 | 1.0M |    0.214 |      0.128 |      0.141 |     0.221 |     0.018 |
+|  6 | 0.698 | 0.701 | ★ GLM-5.3-Flash       | Zhipu AI                  | $0.32 |    39 | 1.0M |    0.210 |      0.126 |      0.122 |     0.220 |     0.023 |
+|  7 | 0.696 | 0.700 | Qwen3.8 Flash         | Alibaba Cloud / Qwen Team | $0.43 |    51 | 1.0M |    0.202 |      0.126 |      0.127 |     0.217 |     0.027 |
+|  8 | 0.695 | 0.722 | Muse Spark 1.1        | Meta                      | $3.71 |   208 | 1.0M |    0.201 |      0.127 |      0.124 |     0.219 |     0.051 |
+|  9 | 0.693 | 0.710 | Hy4 preview           | Tencent                   | $2.32 |    36 |    — |    0.209 |      0.123 |      0.135 |     0.222 |     0.022 |
+| 10 | 0.687 | 0.744 | Kimi K3               | Moonshot AI               | $7.70 |    43 | 1.0M |    0.217 |      0.131 |      0.143 |     0.229 |     0.025 |
 
 ## @advisor — Advisor/watchdog: deep reasoning over long context
-eligible: 142 — λ 0.00682 $/quality-point
+eligible: 142 — λ 0.00682 $/quality-point (thinking ×1.857)
 
 |  # | value |     q | model                | org                       |   $/M | tok/s |  ctx | rea 39.1% | gen 32.6% | lc 13% | math 10.9% | tput 4.3% |
 | -: | ----: | ----: | -------------------- | ------------------------- | ----: | ----: | ---: | --------: | --------: | -----: | ---------: | --------: |
-|  1 | 0.796 | 0.837 | ★ GPT-5.6 Sol        | OpenAI                    | $6.13 |    44 | 1.1M |     0.357 |     0.303 |  0.083 |      0.075 |     0.019 |
-|  2 | 0.783 | 0.791 | ★ Hy4 preview        | Tencent                   | $1.25 |    36 |    — |     0.343 |     0.287 |  0.063 |      0.081 |     0.016 |
-|  3 | 0.772 | 0.774 | ★ Qwen3.8 Flash      | Alibaba Cloud / Qwen Team | $0.23 |    51 | 1.0M |     0.335 |     0.280 |  0.067 |      0.071 |     0.021 |
-|  4 | 0.756 | 0.788 | GPT-5.6 Terra        | OpenAI                    | $4.75 |    55 | 1.1M |     0.334 |     0.286 |  0.075 |      0.071 |     0.022 |
-|  5 | 0.744 | 0.751 | GLM-5.3              | Zhipu AI                  | $1.06 |    73 | 1.0M |     0.349 |     0.294 |      — |      0.083 |     0.025 |
-|  6 | 0.743 | 0.757 | Muse Spark 1.3       | Meta                      | $2.00 |    58 | 1.0M |     0.349 |     0.301 |  0.085 |          — |     0.022 |
-|  7 | 0.732 | 0.733 | Hy3                  | Tencent                   | $0.25 |    49 | 262k |     0.307 |     0.256 |  0.074 |      0.076 |     0.020 |
-|  8 | 0.730 | 0.744 | Muse Spark 1.1       | Meta                      | $2.00 |   208 | 1.0M |     0.341 |     0.282 |      — |      0.082 |     0.039 |
-|  9 | 0.727 | 0.730 | GPT-5.6 Luna         | OpenAI                    | $0.47 |    58 | 1.1M |     0.310 |     0.264 |  0.067 |      0.066 |     0.023 |
-| 10 | 0.725 | 0.728 | DeepSeek-V4-Pro-0813 | DeepSeek                  | $0.51 |    48 | 1.0M |     0.338 |     0.290 |      — |      0.081 |     0.020 |
+|  1 | 0.775 | 0.791 | ★ Hy4 preview        | Tencent                   | $2.32 |    36 |    — |     0.343 |     0.287 |  0.063 |      0.081 |     0.016 |
+|  2 | 0.771 | 0.774 | ★ Qwen3.8 Flash      | Alibaba Cloud / Qwen Team | $0.43 |    51 | 1.0M |     0.335 |     0.280 |  0.067 |      0.071 |     0.021 |
+|  3 | 0.760 | 0.837 | ★ GPT-5.6 Sol        | OpenAI                    | $11.4 |    44 | 1.1M |     0.357 |     0.303 |  0.083 |      0.075 |     0.019 |
+|  4 | 0.738 | 0.751 | GLM-5.3              | Zhipu AI                  | $1.97 |    73 | 1.0M |     0.349 |     0.294 |      — |      0.083 |     0.025 |
+|  5 | 0.732 | 0.757 | Muse Spark 1.3       | Meta                      | $3.71 |    58 | 1.0M |     0.349 |     0.301 |  0.085 |          — |     0.022 |
+|  6 | 0.730 | 0.733 | Hy3                  | Tencent                   | $0.47 |    49 | 262k |     0.307 |     0.256 |  0.074 |      0.076 |     0.020 |
+|  7 | 0.728 | 0.788 | GPT-5.6 Terra        | OpenAI                    | $8.82 |    55 | 1.1M |     0.334 |     0.286 |  0.075 |      0.071 |     0.022 |
+|  8 | 0.724 | 0.730 | GPT-5.6 Luna         | OpenAI                    | $0.88 |    58 | 1.1M |     0.310 |     0.264 |  0.067 |      0.066 |     0.023 |
+|  9 | 0.722 | 0.728 | DeepSeek-V4-Pro-0813 | DeepSeek                  | $0.94 |    48 | 1.0M |     0.338 |     0.290 |      — |      0.081 |     0.020 |
+| 10 | 0.722 | 0.725 | DeepSeek-V4.1-Flash  | DeepSeek                  | $0.43 |    62 | 1.0M |     0.336 |     0.291 |      — |      0.075 |     0.023 |
 
 ## @designer — Design work: visual/UX judgement on image-capable models
 eligible: 87 — λ 0.00882 $/quality-point (thinking ×1.857)
@@ -186,7 +186,7 @@ eligible: 87 — λ 0.00882 $/quality-point (thinking ×1.857)
 # Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).
 # Selectors are openrouter/<id>; the omp-llm-role plugin writes this block daily.
 modelRoles:
-  default: "openrouter/meta/muse-spark-1.3"
+  default: "openrouter/deepseek/deepseek-v4.1-flash"
   smol: "openrouter/meta/muse-spark-1.1"
   slow: "openrouter/z-ai/glm-5.3"
   vision: "openrouter/qwen/qwen3.8-flash"
@@ -194,5 +194,5 @@ modelRoles:
   commit: "openrouter/meta/muse-spark-1.1"
   tiny: "openrouter/meta/muse-spark-1.1"
   task: "openrouter/deepseek/deepseek-v4.1-flash"
-  advisor: "openrouter/openai/gpt-5.6-sol"
+  advisor: "openrouter/tencent/hy4-preview"
   designer: "openrouter/deepseek/deepseek-v4.1-flash"

@@ -33,7 +33,10 @@ export function makeModel(id: string, general: number, price: number, tput: numb
   };
 }
 
-export function makeCatalog(ids: string[], thinking: string[] = ["high"]): CatalogEntry[] {
+/** Catalog entries for `ids`. `thinking` defaults to empty (no thinking support) so
+ * updater tests exercise bare selectors regardless of the shipped role suffixes;
+ * suffix behavior is covered by the tests that pass a level explicitly. */
+export function makeCatalog(ids: string[], thinking: string[] = []): CatalogEntry[] {
   return ids.map((id) => ({
     provider: "openrouter",
     id: `org/${id}`,

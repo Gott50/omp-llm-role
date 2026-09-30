@@ -61,7 +61,7 @@ test("blocked best candidate -> next ranked adopted, decision records the block"
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "no-current");
-  assert.equal(d.to, "openrouter/org/model-b");
+  assert.equal(d.to, "openrouter/org/model-b:auto");
   assert.deepEqual(d.blocked, ["org/model-a"]);
 });
 
@@ -70,7 +70,7 @@ test("blocked current selector -> adopted replacement", async () => {
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "adopted");
-  assert.equal(d.to, "openrouter/org/model-a");
+  assert.equal(d.to, "openrouter/org/model-a:auto");
   assert.deepEqual(d.blocked, ["org/model-b"]);
 });
 
@@ -79,7 +79,7 @@ test("hysteresis intact when everything probes clean", async () => {
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "kept-margin");
-  assert.equal(d.to, "openrouter/org/model-b");
+  assert.equal(d.to, "openrouter/org/model-b:auto");
   assert.deepEqual(d.blocked, []);
 });
 
@@ -115,7 +115,7 @@ test("walk fills a kept role's chain to full depth with probe-clean entries", as
   const deps = fakeDeps(SIX, { switchMargin: 1, fallbackChainDepth: 2, priceSwitchFraction: 0 }, { probeModel: blockedExcept([]) });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const text = readFileSync(join(dir, "config.yml"), "utf8");
-  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-e"\n\s+- "openrouter\/org\/model-f"/);
+  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-e:auto"\n\s+- "openrouter\/org\/model-f:auto"/);
 });
 
 test("blocked candidates beyond a kept current do not count toward chain depth", async () => {
@@ -123,6 +123,6 @@ test("blocked candidates beyond a kept current do not count toward chain depth",
   const deps = fakeDeps(SEVEN, { switchMargin: 1, fallbackChainDepth: 2, priceSwitchFraction: 0 }, { probeModel: blockedExcept(["org/model-e"]) });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const text = readFileSync(join(dir, "config.yml"), "utf8");
-  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-f"\n\s+- "openrouter\/org\/model-g"/);
+  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-f:auto"\n\s+- "openrouter\/org\/model-g:auto"/);
   assert.doesNotMatch(text, /model-e/);
 });

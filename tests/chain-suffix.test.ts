@@ -43,7 +43,7 @@ test("a chain entry without thinking support gets no suffix", async () => {
 });
 
 test("two roles on the same model share one level-free chain", async () => {
-  // `default` (no suffix) and `smol` (`:max`) both rank model-a first, so the chain
+  // `default` (`:auto`) and `smol` (`:max`) both rank model-a first, so the chain
   // key `openrouter/org/model-a` serves both and must not carry either role's level.
   const optOut = Object.fromEntries(
     ["slow", "vision", "plan", "commit", "tiny", "task", "advisor", "designer"].map((r) => [r, { weights: null }]),
@@ -54,7 +54,7 @@ test("two roles on the same model share one level-free chain", async () => {
   });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const doc = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as ConfigDoc;
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:auto");
   assert.equal(doc.modelRoles.smol, "openrouter/org/model-a:max");
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b", "openrouter/org/model-c"]);
 });

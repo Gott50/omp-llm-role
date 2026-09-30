@@ -38,7 +38,7 @@ test("chain maintenance: prune stale plugin keys, preserve owner keys, replace m
   const text = readFileSync(join(dir, "config.yml"), "utf8");
   const parsed = parseConfig(text);
   // default switched to model-a (margin 0.5 > default 0.02)
-  assert.equal(parsed.modelRoles.default, "openrouter/org/model-a");
+  assert.equal(parsed.modelRoles.default, "openrouter/org/model-a:auto");
 
   // Stale plugin-written key removed; owner-written unreferenced key preserved;
   // the key the plugin must write exists exactly once (replaced, not duplicated).
@@ -67,7 +67,7 @@ test("chain maintenance: prune stale plugin keys, preserve owner keys, replace m
 });
 test("zero-change run writes nothing and leaves no mtime trace", async () => {
   // Config already matches today's best (model-a, bare selector for the suffix-less role).
-  const config = "modelRoles:\n  default: openrouter/org/model-a\nretry:\n  fallbackChains:\n    openrouter/org/model-a:\n      - openrouter/org/model-b\n      - openrouter/org/model-c\n";
+  const config = "modelRoles:\n  default: openrouter/org/model-a:auto\nretry:\n  fallbackChains:\n    openrouter/org/model-a:\n      - openrouter/org/model-b:auto\n      - openrouter/org/model-c:auto\n";
   const dir = setupAgentDir(config, {
     lastRunDay: null,
     managedRoles: [],
