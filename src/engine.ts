@@ -43,9 +43,13 @@ const DESIGN_ARENA_CACHE_PATH = join(REPO_ROOT, "designarena-fetched-data.json")
 const DESIGN_ARENA_URL = "https://www.designarena.ai/api/leaderboard";
 /** Minimum battles for an endpoint Elo to be trusted over the OR mirror's snapshot. */
 const DESIGN_MIN_BATTLES = 300;
-/** Percentile assigned to models with no Design Arena data: the percentile implied by
- * the uncovered cohort's mean general index (29.8 vs covered 38.2). */
-const DESIGN_FILL_PERCENTILE = 0.195;
+/** Below-median fill for sparse capability metrics, keyed by metric name. A model
+ * missing one of these metrics is scored at the fill instead of 0, so absence is
+ * not a coverage penalty. The scalar is the percentile implied by the uncovered
+ * cohort's mean general index (29.8 vs covered 38.2) — a property of the fill
+ * policy, not the metric, so `website` and `long_context` share it. Metrics not
+ * listed here keep the 0-fill (a missing value contributes nothing). */
+export const CAPABILITY_FILL: Record<string, number> = { website: 0.195, long_context: 0.195 };
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
@@ -461,7 +465,7 @@ async function loadEndpointPages(slugs: string[], refresh: boolean): Promise<Ope
  * Design Arena `models-website` Elo -> the `website` metric: a percentile within
  * the design-covered population (the merged OR-mirror + endpoint field, see
  * `mergeDesignElo`). Models without Design Arena data get
- * DESIGN_FILL_PERCENTILE — the percentile implied by the uncovered cohort's
+ * `CAPABILITY_FILL.website` — the percentile implied by the uncovered cohort's
  * mean general index (29.8 vs the covered 38.2).
  *
  * Why capability-derived, not the covered median. The covered set is
@@ -503,7 +507,7 @@ export function applyDesignPercentiles(
       m.metrics.website = p;
       continue;
     }
-    m.metrics.website = DESIGN_FILL_PERCENTILE; // capability-consistent: uncovered cohort mean general 29.8 vs covered 38.2
+    m.metrics.website = CAPABILITY_FILL.website; // capability-consistent: uncovered cohort mean general 29.8 vs covered 38.2
     imputed++;
   }
   return { covered: covered.length, imputed };
@@ -806,7 +810,17 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     for (const [metric, w] of Object.entries(def.weights)) {
       if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
       const raw = m.metrics[metric];
-      if (raw == null) continue; // missing optional metric contributes nothing
+      if (raw == null) {
+        // Sparse capability metrics are capability-filled (below-median, not 0)
+        // so absence is not a coverage penalty; every other metric contributes
+        // nothing when missing.
+        const fill = CAPABILITY_FILL[metric];
+        if (fill === undefined) continue;
+        const contrib = (w / qW) * fill;
+        parts[metric] = contrib;
+        q += contrib;
+        continue;
+      }
       const contrib = (w / qW) * cardinalMetric(metric, raw);
       parts[metric] = contrib;
       q += contrib;

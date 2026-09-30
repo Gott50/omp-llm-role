@@ -324,7 +324,7 @@ Roles and weights (see `DEFAULT_ROLES` in `src/settings.ts`, overridable via
 plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
 `slow` (capability-heavy), `vision` (requires image input), `plan`
 (reasoning/long-context), `commit`, `tiny` (price+throughput dominated),
-`task` (agentic), `advisor` (deep reasoning), `designer` (visual/UX, image input).
+`task` (agentic), `advisor` (deep reasoning, cost-aware), `designer` (visual/UX, image input).
 
 Weight design rules (2026-09-27 review):
 
@@ -335,13 +335,13 @@ Weight design rules (2026-09-27 review):
   `math` 83%, `tool_calling` 78%, `agents` 76%, `long_context` 39%, `search`
   34%, `mrcr` 13%. The shipped defaults weight the 100%-coverage backbone plus
   the partial-coverage trio at reduced share; `mrcr` and `search` are not
-  weighted at all and `long_context` is capped at 0.14. `website` is the
-  exception to the rule: after the designarena.ai endpoint union it covers
-  58.6% of the designer pool (51/87) and is capability-filled (0.195) rather
-  than 0-filled, so a missing value is not a penalty — it is weighted at 0.18
-  in `designer` only (raised from 0.10 at introduction, with `code` cut
-  0.18 → 0.10: the two correlate at r = 0.876, so the old pair double-counted
-  one capability axis).
+  weighted at all and `long_context` is capped at 0.14. Two sparse metrics are
+  capability-filled (0.195) rather than 0-filled, so a missing value is not a
+  penalty: `website` (58.6% of the designer pool after the designarena.ai
+  endpoint union) and, since the 2026-09-30 advisor rebalance, `long_context`
+  (44.7% of the advisor pool). `website` is weighted at 0.18 in `designer` only
+  (raised from 0.10 at introduction, with `code` cut 0.18 → 0.10: the two
+  correlate at r = 0.876, so the old pair double-counted one capability axis).
 - **Non-collinear differentiation.** The capability indices are one latent
   factor (Pearson r over the pool: general↔reasoning 0.99, code↔agents 0.95,
   general↔code 0.94), so re-weighting them barely separates roles. Roles are
@@ -352,7 +352,8 @@ Weight design rules (2026-09-27 review):
 - **λ from the intended posture.** `λ = (w_price/(1−w_price))/$20` is the
   quality-per-dollar exchange rate, so a price weight whose leader-flip
   threshold is 10–30× away is decoration. `plan`/`advisor` now carry price
-  0.10/0.08 (λ 0.00556/0.00435) so cost is a real tiebreaker; `tiny` stays at
+  0.12/0.20 (λ 0.00682/0.0125) so cost is a real tiebreaker (advisor raised
+  0.08 → 0.12 → 0.20 across the 2026-09-30 reviews); `tiny` stays at
   0.40 because it already returns a cheap top-5 on the actionable pool.
 
 Value review (2026-09-30, owner stance: "the cheapest model that can do the
@@ -524,6 +525,23 @@ Design Arena failures are non-fatal.
 
 ## Current state (2026-09-30)
 
+- Advisor rebalance (2026-09-30): `advisor` weights now
+  `{reasoning 0.3498, general 0.2449, long_context 0.1004, price 0.20,
+  throughput 0.1049}` (Σ 1.0). `math` dropped (76.3% coverage, r 0.759 with
+  reasoning — collinear *and* a lottery); `long_context` kept (the most
+  independent capability axis, r 0.739/0.767 with reasoning/general) but now
+  capability-filled at 0.195 like `website` (new `CAPABILITY_FILL` in
+  `src/engine.ts`), so its 44.7% coverage no longer penalizes; `price`
+  0.12 → 0.20 (λ 0.00682 → 0.0125, so the switch margin vetoes only up to
+  $1.60/M instead of $2.93/M) and `throughput` 0.0382 → 0.1049 because the
+  advisor fires on every primary *and* `task` subagent turn
+  (`task.agentAdvisor.task: on`) and `syncBacklog: "1"` lets a slow advisor
+  stall the primary up to 30s. The ranking leader moves Hy4 preview → Muse
+  Spark 1.3 (0.775, $3.71; Hy4 falls to #8, 0.735), but the plugin dry-run
+  keeps Hy4 (`kept-margin`: Muse Spark 1.3 is blocked by the account
+  whitelist and the best eligible, GLM-5.3 at 0.7421, is inside the 0.02
+  margin of Hy4's 0.7347). Models with no `long_context` score are no longer
+  clustered at the bottom of the top-10.
 - Suffix honesty pass (2026-09-30): `default`/`task`/`advisor` pinned to
   `auto` and `tiny` to `off` (previously bare), so the ranking prices the
   effort the session `defaultThinkingLevel: auto` already applies — bare roles
@@ -624,7 +642,8 @@ Design Arena failures are non-fatal.
   → DeepSeek), `slow` GLM-5.3 (0.818), `vision` Qwen3.8 Flash (0.732, blocked
   → DeepSeek), `plan` Hy4 preview (0.759), `commit` Muse Spark 1.1 (0.793,
   blocked → DeepSeek), `tiny` Muse Spark 1.1 (0.814, blocked → Ling Fin),
-  `task` DeepSeek-V4.1-Flash (0.755), `advisor` Hy4 preview (0.775), `designer`
+  `task` DeepSeek-V4.1-Flash (0.755), `advisor` Muse Spark 1.3 (0.775,
+  blocked → Hy4), `designer`
   DeepSeek-V4.1-Flash (0.775). The suffix pass moved `default` and `advisor`
   onto their reachable leaders (Muse Spark 1.3 and GPT-5.6 Sol were blocked).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into

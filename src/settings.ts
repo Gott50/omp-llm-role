@@ -77,7 +77,22 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
   },
   advisor: {
     description: "Advisor/watchdog: deep reasoning over long context",
-    weights: { reasoning: 0.3443, general: 0.287, long_context: 0.1148, math: 0.0957, throughput: 0.0382, price: 0.12 },
+    // 2026-09-30 rebalance. Measured on the 2026-09-30 cache (advisor-eligible
+    // pool n=38): `long_context` covered 44.7% and `math` 76.3% of the pool, and
+    // a missing weighted metric used to score 0 while still occupying its share
+    // of the (1 − w_price) denominator — a coverage penalty, not a quality
+    // signal. `math` is dropped (collinear with reasoning, r 0.759, and a
+    // lottery at 76% coverage); `long_context` is kept (the most independent
+    // capability axis, r 0.739/0.767 with reasoning/general) and is now
+    // capability-filled at 0.195 like `website` (src/engine.ts CAPABILITY_FILL),
+    // so its 44.7% coverage no longer penalizes. `reasoning`↔`general` stay
+    // collinear (r 0.972) but the independent axes now carry more. `price` is
+    // raised to 0.20 (λ 0.0125) because the advisor fires on every primary turn
+    // *and* every `task` subagent turn (config.yml task.agentAdvisor.task: on),
+    // so spend is ~2× a per-turn count; `throughput` is raised to 0.1049 because
+    // `syncBacklog: "1"` lets a slow advisor stall the primary up to 30s.
+    // Non-price weights sum to 0.80 = 1 − price, as the (w/qW) blend requires.
+    weights: { reasoning: 0.3498, general: 0.2449, long_context: 0.1004, price: 0.2, throughput: 0.1049 },
     required: ["reasoning", "general", "price", "throughput"],
     // `auto`, matching `plan`: the same model (Hy4 preview) runs both roles, so
     // pricing advisor bare while plan is `auto` understated advisor by 1.857×.
