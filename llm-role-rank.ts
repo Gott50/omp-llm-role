@@ -78,9 +78,14 @@ function formatRankings(
     "Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context",
     "sea=search vis=vision tput=throughput (code, mrcr as-is).",
     "web=website: Design Arena `models-website` Elo as a percentile within the",
-    "design-covered field (OpenRouter benchmarks[permaslug].da). Models without",
-    "Design Arena data get the covered median (0.5) and are marked ~ in the model",
-    "column — a neutral fill, not a capability-derived guess.",
+    "design-covered field (the OpenRouter mirror merged with the keyless",
+    "designarena.ai board; an endpoint Elo is trusted only at >=300 battles).",
+    "Models without Design Arena data get the capability-consistent fill 0.195 —",
+    "the percentile implied by the uncovered cohort's mean general index — and are",
+    "marked ~ in the model column.",
+    "agon=Design Arena `agents/agon_webapps` Elo from the same endpoint: context",
+    "only, unweighted (22/87 of the designer pool, below the ~35–40% coverage",
+    "bar at which a metric earns weight).",
     "★ = Pareto-frontier: no eligible model is both cheaper and better (q).",
   ];
   lines.push(
@@ -114,6 +119,7 @@ function formatRankings(
         "tok/s",
         "ctx",
         ...metricKeys.map((k) => `${METRIC_ABBR[k]} ${Number(((def.weights[k] / qW) * 100).toFixed(1))}%`),
+        ...(weightsWebsite ? ["agon"] : []),
       ],
     ];
     for (let i = 0; i < Math.min(top, ranked.length); i++) {
@@ -140,6 +146,7 @@ function formatRankings(
           const p: number | undefined = r.parts[k];
           return p == null ? "—" : p.toFixed(3);
         }),
+        ...(weightsWebsite ? [m.designEloAgents?.toFixed(0) ?? "—"] : []),
       ]);
     }
     // Columns 2 (model) and 3 (org) hold text: left-align. All others: right-align.

@@ -69,7 +69,7 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
   },
   designer: {
     description: "Design work: visual/UX judgement on image-capable models",
-    weights: { general: 0.26, code: 0.18, vision: 0.18, throughput: 0.13, price: 0.15, website: 0.1 },
+    weights: { general: 0.26, code: 0.10, vision: 0.18, throughput: 0.13, price: 0.15, website: 0.18 },
     required: ["general", "price", "throughput"],
     thinking: "high",
     filters: { image: true },

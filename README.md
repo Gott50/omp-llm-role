@@ -26,6 +26,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, thinking-price |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
+| `designarena-fetched-data.json` | Daily cache of the Design Arena leaderboard boards — `models/website` + `agents/agon_webapps` (gitignored) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
 | `SPEC.md` | Normative spec for the plugin |
 
@@ -218,6 +219,26 @@ no comparable design metric: its design/UI benchmark pages (`design2code`,
 `artifacts-bench`, `webdev-arena`, `svg-bench`, …) carry 1–5 rows each, all
 self-reported with zero verified results.
 
+**Design quality — designarena.ai endpoint (second route).** The keyless
+`POST https://www.designarena.ai/api/leaderboard` (body `{arenaType, category}`,
+no Authorization header) returns the same Elo family *with* battle counts:
+`data[] = {modelId, elo, battles, winRate, btStdErr, …}`. Two boards are
+fetched daily — `models/website` feeds the metric, `agents/agon_webapps` feeds
+the report's `agon` context column — and cached in `designarena-fetched-data.json`.
+Board ids are undated and separator-inconsistent (`claude-fable-5-1` vs
+llm-stats `claude-fable-5.1`), so both sides join through `normalizeDesignId`
+(case-folded, separators stripped, trailing dated snapshot dropped): the raw
+join hits 82 of 399 llm-stats ids, the normalized join 106; the 7 collisions
+are dated-snapshot pairs (`gpt-4o-2024-08-06`/`-05-13`, `deepseek-v4-flash-0731`/
+`-0423`, …), first row kept. The two routes are never averaged (same Elo
+family, mean diff −1.0 website … −5.1 svg, maxAbs 87): an endpoint Elo
+overrides the OpenRouter mirror only at ≥ 300 battles (`DESIGN_MIN_BATTLES`),
+otherwise the mirror snapshot stands. The union raises designer-pool design
+coverage to 51/87 = 58.6% (mirror alone 42/87); the 9 endpoint-only pool
+recoveries include `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`,
+`gpt-6-sol`, `gpt-6-luna`, `deepseek-v4.1-flash`, `mistral-medium-3-5` and
+`gpt-4o-2024-08-06`.
+
 ## Scoring
 
 Per role, each metric is cardinal-normalized with **fixed anchors** (no ranks —
@@ -241,16 +262,19 @@ scoring kills two percentile artifacts: rank compression (real magnitude gaps
 now count — e.g. @default flipped DeepSeek-V4.1-Flash → GPT-6 Astra) and
 field-dependent scales (adding a model no longer reshuffles everyone).
 
-`website` is the one **derived** metric: Design Arena's `models-website` Elo
-converted to a percentile within the design-covered population (73 of 395
-models), so it is role-independent and identical for every role that weights
-it. Models without Design Arena data get the covered median (0.5) — a neutral
-fill, not a capability-derived guess. The covered set is self-selected (arena
-participation picks stronger, cheaper models), so a least-squares fill
-saturates at 0 for ~19% of the uncovered eligible pool and a nearest-neighbour
-fill is discontinuous (0.49 jumps between models 0.06 index points apart);
-either would also double-count capability that `general`/`code`/`vision`
-already carry. The report marks a neutral-filled value `~` in the model column.
+`website` is the one **derived** metric: Design Arena `models-website` Elo
+(the two routes merged, see Data sources) converted to a percentile within the
+design-covered population (121 of 399 models), so it is role-independent and
+identical for every role that weights it. Models without Design Arena data
+get the capability-consistent fill **0.195** — the percentile implied by the
+uncovered cohort's mean general index (29.8 vs covered 38.2) — not the
+covered median: the covered set is self-selected (arena participation picks
+stronger, cheaper models), so the covered median overstates an unmeasured
+model. A regression fill was rejected (a least-squares fit saturates at 0 for
+~19% of the uncovered eligible pool; a nearest-neighbour fill is
+discontinuous, 0.49 jumps between models 0.06 index points apart), and both
+would double-count capability that `general`/`code`/`vision` already carry.
+The report marks a filled value `~` in the model column.
 
 Roles with a `thinking` level rank on the **thinking-adjusted price**: the
 billed blend scales by the level's factor `(3ρ+1+T)/(3ρ+1)` (ρ = input:output
@@ -283,9 +307,12 @@ Weight design rules (2026-09-27 review):
   34%, `mrcr` 13%. The shipped defaults weight the 100%-coverage backbone plus
   the partial-coverage trio at reduced share; `mrcr` and `search` are not
   weighted at all and `long_context` is capped at 0.14. `website` is the
-  exception to the rule: it covers 50% of the designer pool (41/82) but is
-  neutral-filled rather than 0-filled, so a missing value is not a penalty —
-  it is weighted at 0.10 in `designer` only.
+  exception to the rule: after the designarena.ai endpoint union it covers
+  58.6% of the designer pool (51/87) and is capability-filled (0.195) rather
+  than 0-filled, so a missing value is not a penalty — it is weighted at 0.18
+  in `designer` only (raised from 0.10 at introduction, with `code` cut
+  0.18 → 0.10: the two correlate at r = 0.876, so the old pair double-counted
+  one capability axis).
 - **Non-collinear differentiation.** The capability indices are one latent
   factor (Pearson r over the pool: general↔reasoning 0.99, code↔agents 0.95,
   general↔code 0.94), so re-weighting them barely separates roles. Roles are
@@ -392,6 +419,9 @@ arbitrary cwd inside omp).
   analytics, benchmarks, benchmark_ranges, categories, modality_counts). The
   throughput and price maps are re-derived from it on every run — the file is
   the single source of truth for anything OpenRouter returned.
+- Design Arena cache: `{fetchedAt, source, categories}` where `categories`
+  maps the two board keys (`models/website`, `agents/agon_webapps`) to their
+  rows — same fresh → fetch → stale chain; an empty board is never cached.
 
 Fallback chain: fresh cache → live fetch (writes cache) → stale cache →
 no enrichment (affected models unranked). An empty/unusable OpenRouter payload
@@ -400,6 +430,21 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
 
 ## Current state (2026-09-30)
 
+- Designer value rating reworked (2026-09-30): the keyless designarena.ai
+  leaderboard endpoint (`POST /api/leaderboard`, an Elo trusted over the
+  OpenRouter mirror only at ≥ 300 battles) raises designer-pool design
+  coverage 42/87 → 51/87 (58.6%), recovering `gpt-5.6-sol` (elo 1318, 11.5k
+  battles), `gpt-6-astra`, `deepseek-v4.1-flash` and six more. The fill moves
+  0.5 → 0.195 (capability-consistent: uncovered-cohort mean general 29.8 vs
+  covered 38.2), cutting the covered models scoring below the fill from 14 to
+  4. Weights swap `code` 0.18 → 0.10 and `website` 0.10 → 0.18 (r = 0.876
+  collinearity). The report gains the `agon` column (Design Arena
+  `agents/agon_webapps` Elo, context only, 22/87 covered). The designer
+  top-10 now carries zero imputed rows (was 3: `qwen3.8-flash`,
+  `deepseek-v4-flash-vision-exp`, `qwen3.8-27b`, all dropped out — the first
+  two still have no Design Arena data in either route). The #1 pick is
+  invariant across every measured variant: `gemini-3.8-flash` (0.768 vs 0.751
+  before), so the live selector does not change.
 - Session model activation shipped (2026-09-30): when the day's session-start
   run switches `default` and the triggering session's conversation is still
   empty, the plugin now also switches the live session model to the new
@@ -426,13 +471,13 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 395 llm-stats models; OpenRouter matched 147/395 (throughput), 146 priced.
-- Eligible per role: 138 (vision 70, designer 82, image-input filter).
+- 399 llm-stats models; OpenRouter matched 151/399 (throughput), 150 priced.
+- Eligible per role: 142 (vision 74, designer 87, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices): `default`
-  GPT-6 Astra (0.836), `smol` Muse Spark 1.1 (0.750), `slow` GLM-5.3 (0.813),
-  `vision` GPT-5.6 Sol (0.773), `plan` GPT-5.6 Sol (0.766), `commit` Muse
-  Spark 1.1 (0.779), `tiny` Muse Spark 1.1 (0.792), `task` GLM-5.3 (0.752),
-  `advisor` GPT-5.6 Sol (0.828), `designer` Gemini 3.8 Flash (0.754).
+  GPT-6 Astra (0.835), `smol` Muse Spark 1.1 (0.763), `slow` GLM-5.3 (0.808),
+  `vision` Kimi K3 (0.760), `plan` GPT-5.6 Sol (0.760), `commit` Muse
+  Spark 1.1 (0.792), `tiny` Muse Spark 1.1 (0.813), `task` GLM-5.3 (0.750),
+  `advisor` GPT-5.6 Sol (0.821), `designer` Gemini 3.8 Flash (0.768).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
@@ -536,12 +581,35 @@ is never cached, so the next run retries. llm-stats fetch failure is fatal
   models, and a missing weighted metric scores 0 rather than being excluded.
   Weighting them makes `q` a coverage score — the shipped defaults avoid
   `mrcr`/`search` and cap `long_context` for that reason.
-- Design Arena coverage is self-selected and lags the frontier: 73 of 395
-  models carry a `models-website` Elo, and the covered set is systematically
-  stronger and cheaper than the uncovered one (designer pool: mean general
-  index 0.58 vs 0.47, $2.19 vs $3.19/M). The newest flagships (`gpt-6-astra`,
-  `gpt-5.6-sol`, `qwen3.8-flash`, `deepseek-v4.1-flash`) have no Design Arena
-  data, so `website` must never be a `required` gate — it would disqualify the
-  models the capability roles actually pick. The metric is also partly
-  collinear with the capability block (r = 0.70 with the designer non-price
-  composite), which is why it reorders ranks 5+ but never the leader.
+- Design Arena coverage is self-selected and lags the frontier: the merged
+  two-route field covers 121 of 399 models, and the covered set is
+  systematically stronger and cheaper than the uncovered one (probed
+  2026-09-27 at the 73-model mirror era: designer-pool mean general index
+  0.58 vs 0.47, $2.19 vs $3.19/M). The endpoint route recovered the newest
+  flagships (`gpt-6-astra`, `gpt-5.6-sol`, `deepseek-v4.1-flash`), but
+  `qwen3.8-flash` and `deepseek-v4-flash-vision-exp` remain uncovered, so
+  `website` must never be a `required` gate — it would disqualify models the
+  capability roles actually pick. The metric is also partly collinear with
+  the capability block (r = 0.876 with `code`), which is why `designer`
+  weights it at 0.18 with `code` trimmed to 0.10 — it reorders ranks 5+ but
+  never the leader.
+- Residual fill inversion: 4 of the 51 design-covered designer-pool models
+  still score below the 0.195 fill (`llama-4-scout` pct 0.004,
+  `gpt-4o-2024-08-06` 0.021, `llama-4-maverick` 0.037, `o4-mini` 0.095) —
+  down from 14 at the 0.5 covered-median fill, but absence still beats
+  measurement for a weak covered minority.
+- The `designer` `image: true` filter excludes `glm-5.3` (llm-stats
+  `multimodal=false`) whose website Elo 1309 outranks the shipped #1
+  `gemini-3.8-flash` (1308) — kept deliberately: `~/.omp/agent/agents/designer.md`
+  requires screenshot grounding and grants only read/grep/glob/edit/write, so
+  the model must accept image input.
+- The designer ranking is insensitive to its `thinking: "high"` pin between
+  medium and high (2026-09-27 probe: only #9/#10 swap); `high` is retained
+  deliberately.
+- `designarena.ai/robots.txt` disallows `/api/` for `User-Agent: *` and the
+  leaderboard route is `/api/leaderboard` — the daily fetch targets a
+  disallowed path by explicit owner decision (robots.txt read as advisory
+  for crawlers, not API clients). If the route starts failing
+  (401/403/404), the non-fatal fallback leaves the ranking on the OpenRouter
+  mirror alone; the coverage figures above must then be corrected back to
+  42/87.

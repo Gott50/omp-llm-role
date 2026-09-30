@@ -36,6 +36,13 @@ const CACHE_PATH = join(REPO_ROOT, "llm-stats-fetched-rankings.json");
 const OPENROUTER_CACHE_PATH = join(REPO_ROOT, "openrouter-fetched-data.json");
 const OPENROUTER_FIND_URL =
   "https://openrouter.ai/api/frontend/v1/models/find?active=true&fmt=cards&order=top-weekly";
+const DESIGN_ARENA_CACHE_PATH = join(REPO_ROOT, "designarena-fetched-data.json");
+const DESIGN_ARENA_URL = "https://www.designarena.ai/api/leaderboard";
+/** Minimum battles for an endpoint Elo to be trusted over the OR mirror's snapshot. */
+const DESIGN_MIN_BATTLES = 300;
+/** Percentile assigned to models with no Design Arena data: the percentile implied by
+ * the uncovered cohort's mean general index (29.8 vs covered 38.2). */
+const DESIGN_FILL_PERCENTILE = 0.195;
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
@@ -96,11 +103,15 @@ export type Model = {
   price: number | null;
   /** output tok/s — OpenRouter p50 only; null when OpenRouter has no data */
   throughput: number | null;
-  /** Design Arena `models-website` Elo (raw, from OpenRouter
-   * `benchmarks[permaslug].da.elo_by_category`); null when the model has no
-   * Design Arena data — `metrics.website` is then imputed, see
-   * `applyDesignPercentiles` */
+  /** Design Arena `models-website` Elo (raw; the OpenRouter `benchmarks[permaslug].da`
+   * mirror merged with the keyless designarena.ai endpoint, see `mergeDesignElo`);
+   * null when the model has no Design Arena data — `metrics.website` is then
+   * imputed, see `applyDesignPercentiles` */
   designElo: number | null;
+  /** Design Arena `agents/agon_webapps` Elo (raw, from the designarena.ai
+   * endpoint); report context only, never scored. null when the model has no
+   * board row. */
+  designEloAgents: number | null;
   metrics: Record<string, number | null>;
 };
 
@@ -226,17 +237,23 @@ export function applyOpenRouterData(models: Model[], orData: Record<string, OrEn
 
 /**
  * Design Arena `models-website` Elo -> the `website` metric: a percentile within
- * the design-covered population. Models without Design Arena data get the covered
- * median (0.5) — a neutral fill, not a capability-derived guess.
+ * the design-covered population (the merged OR-mirror + endpoint field, see
+ * `mergeDesignElo`). Models without Design Arena data get
+ * DESIGN_FILL_PERCENTILE — the percentile implied by the uncovered cohort's
+ * mean general index (29.8 vs the covered 38.2).
  *
- * Why neutral. The covered set is self-selected (arena participation picks
- * stronger, cheaper models), so any capability-derived fill extrapolates a trend
- * fitted on a biased subsample: a least-squares fit of percentile on the general
- * index saturates at 0 for ~19% of the uncovered eligible pool, and a
- * nearest-neighbour fill is discontinuous (0.49 jumps between models 0.06 index
- * points apart). It would also double-count capability, which the role's
- * general/code/vision terms already carry. A neutral fill leaves the uncovered
- * half's ordering to those terms and only shifts it relative to the measured half.
+ * Why capability-derived, not the covered median. The covered set is
+ * self-selected (arena participation picks stronger, cheaper models), so the
+ * covered median overstates an unmeasured model; the uncovered cohort's own
+ * mean general index sits at the 0.195 percentile of the covered field. A
+ * below-median covered model therefore still scores below the fill — that
+ * residual inversion is documented in README Known quirks. (A regression fill
+ * was rejected: a least-squares fit of percentile on the general index
+ * saturates at 0 for ~19% of the uncovered eligible pool, and a
+ * nearest-neighbour fill is discontinuous (0.49 jumps between models 0.06
+ * index points apart); both also double-count capability that the
+ * general/code/vision terms already carry — the fill takes one scalar, not a
+ * re-fit of the capability axis.)
  *
  * The percentile is taken over every model with Design Arena data (not the role's
  * eligible pool), so the metric is role-independent and identical for every role
@@ -264,7 +281,7 @@ export function applyDesignPercentiles(
       m.metrics.website = p;
       continue;
     }
-    m.metrics.website = 0.5; // covered median percentile: neutral fill
+    m.metrics.website = DESIGN_FILL_PERCENTILE; // capability-consistent: uncovered cohort mean general 29.8 vs covered 38.2
     imputed++;
   }
   return { covered: covered.length, imputed };
@@ -513,6 +530,7 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
     price: null,
     throughput: null,
     designElo: null,
+    designEloAgents: null,
     metrics: {
       general: r.index_general,
       reasoning: r.index_reasoning,
@@ -532,7 +550,7 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
       tau_bench: r.tau_bench_retail_score,
       price: null, // set by OpenRouter enrichment; the λ·$ penalty axis, never blended
       throughput: null,
-      website: null, // set by applyDesignPercentiles (percentile + conditional-expectation fill)
+      website: null, // set by applyDesignPercentiles (percentile + capability-consistent fill)
     },
   }));
 }
@@ -638,6 +656,9 @@ type OrCacheFile = {
   data: object;
 };
 
+type DesignArenaEntry = { modelId: string; elo: number; battles: number; btStdErr: number | null; winRate: number | null };
+type DesignArenaCacheFile = { fetchedAt: string; source: string; categories: Record<string, DesignArenaEntry[]> };
+
 /** JSON with recursively sorted object keys (arrays keep order); the root keeps its given order. */
 export function sortedStringify(value: object): string {
   return JSON.stringify(
@@ -670,6 +691,113 @@ export function writeOrCache(path: string, fetchedAt: string, data: object, mode
   const cache: OrCacheFile = { fetchedAt, source: OPENROUTER_FIND_URL, modelCount, data };
   writeFileSync(path, sortedStringify(cache));
   console.error(`wrote ${path}`);
+}
+
+/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
+function readDesignArenaCache(path: string, requireFresh: boolean): DesignArenaCacheFile | null {
+  let parsed: DesignArenaCacheFile;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8")) as DesignArenaCacheFile;
+  } catch {
+    return null;
+  }
+  if (typeof parsed?.categories !== "object" || parsed.categories === null) return null;
+  if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
+  return parsed;
+}
+
+/** Pretty-printed with sorted keys for scannable diffs, mirroring the OpenRouter cache. */
+function writeDesignArenaCache(path: string, fetchedAt: string, categories: Record<string, DesignArenaEntry[]>): void {
+  const cache: DesignArenaCacheFile = { fetchedAt, source: DESIGN_ARENA_URL, categories };
+  writeFileSync(path, sortedStringify(cache));
+  console.error(`wrote ${path}`);
+}
+
+/** Join key for Design Arena ids: case-folded, separators stripped, trailing dated
+ * snapshot removed — the endpoint's `gpt-4o` and llm-stats' `gpt-4o-2024-08-06`
+ * both normalize to `gpt4o`. */
+export function normalizeDesignId(id: string): string {
+  return id.toLowerCase().replace(/[-_.]/g, "").replace(/(20\d{6}|\d{4})$/, "");
+}
+
+/** One leaderboard board from the keyless endpoint (no Authorization header —
+ * verified 200 across categories); null on non-200, a thrown fetch, or an
+ * unusable payload shape. Only rows with a string modelId and a number elo are
+ * kept; battles coerces to 0 when absent. */
+async function fetchDesignArenaBoard(arenaType: string, category: string): Promise<DesignArenaEntry[] | null> {
+  try {
+    const res = await fetch(DESIGN_ARENA_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "user-agent": UA },
+      body: JSON.stringify({ arenaType, category }),
+    });
+    if (!res.ok) {
+      console.error(`design arena fetch failed: HTTP ${res.status} (${arenaType}/${category})`);
+      return null;
+    }
+    const parsed: unknown = await res.json();
+    if (typeof parsed !== "object" || parsed === null || !("data" in parsed)) return null;
+    const rows: unknown = parsed.data;
+    if (!Array.isArray(rows)) return null;
+    const out: DesignArenaEntry[] = [];
+    for (const row of rows) {
+      if (typeof row !== "object" || row === null) continue;
+      const modelId: unknown = "modelId" in row ? row.modelId : null;
+      const elo: unknown = "elo" in row ? row.elo : null;
+      if (typeof modelId !== "string" || typeof elo !== "number") continue;
+      const battles: unknown = "battles" in row ? row.battles : 0;
+      const btStdErr: unknown = "btStdErr" in row ? row.btStdErr : null;
+      const winRate: unknown = "winRate" in row ? row.winRate : null;
+      out.push({
+        modelId,
+        elo,
+        battles: typeof battles === "number" ? battles : 0,
+        btStdErr: typeof btStdErr === "number" ? btStdErr : null,
+        winRate: typeof winRate === "number" ? winRate : null,
+      });
+    }
+    return out;
+  } catch {
+    console.error(`design arena fetch failed (${arenaType}/${category})`);
+    return null;
+  }
+}
+
+/** Board rows -> llm-stats-id-keyed entries. Endpoint ids are undated and
+ * separator-inconsistent (`claude-fable-5-1` vs `claude-fable-5.1`), so both
+ * sides go through normalizeDesignId; duplicate llm-stats ids (dated
+ * snapshots) keep the first row in leaderboard order and warn. */
+function buildDesignArenaIndex(models: Model[], entries: DesignArenaEntry[]): Record<string, DesignArenaEntry> {
+  const idByNorm: Record<string, string> = {};
+  for (const m of models) {
+    const key = normalizeDesignId(m.id);
+    if (idByNorm[key] !== undefined) {
+      console.error(`design arena: id collision ${idByNorm[key]}/${m.id} -> ${key}; keeping ${idByNorm[key]}`);
+    } else {
+      idByNorm[key] = m.id;
+    }
+  }
+  const out: Record<string, DesignArenaEntry> = {};
+  for (const e of entries) {
+    const id = idByNorm[normalizeDesignId(e.modelId)];
+    if (id !== undefined) out[id] = e;
+  }
+  return out;
+}
+
+/** The two Design Arena routes merged: start from the OR mirror
+ * (`benchmarks[permaslug].da` — no battle counts, a snapshot of unknown sample
+ * age) and let the endpoint override where its sample clears
+ * DESIGN_MIN_BATTLES. Never average the two — same Elo family, mean diff
+ * −1.0 (website) … −5.1 (svg), maxAbs 87; the endpoint wins only on sample
+ * size, the OR mirror stays the fallback snapshot. */
+function mergeDesignElo(orElo: Record<string, number>, da: Record<string, DesignArenaEntry> | null): Record<string, number> {
+  const out: Record<string, number> = { ...orElo };
+  if (da === null) return out;
+  for (const [id, entry] of Object.entries(da)) {
+    if (entry.battles >= DESIGN_MIN_BATTLES) out[id] = entry.elo;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -777,7 +905,59 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
     console.error(`openrouter: matched ${orMatched}/${models.length} models (throughput), ${orPriced} priced`);
   }
 
-  const design = applyDesignPercentiles(models, designElo);
+  // Design Arena keyless leaderboard endpoint (POST designarena.ai/api/leaderboard):
+  // a fresher `models-website` board with battle counts — merged over the OR
+  // mirror with a battles floor — plus the `agents/agon_webapps` Elo for the
+  // report. Same cache -> fetch -> stale-cache chain as OpenRouter, non-fatal
+  // throughout: on total failure the ranking falls back to the OR mirror alone.
+  const daBoards = [
+    { key: "models/website", arenaType: "models", category: "website" },
+    { key: "agents/agon_webapps", arenaType: "agents", category: "agon_webapps" },
+  ];
+  let daWebsite: Record<string, DesignArenaEntry> | null = null;
+  let daAgon: Record<string, DesignArenaEntry> | null = null;
+  try {
+    const boards: Record<string, DesignArenaEntry[]> = {};
+    const cachedDa = refresh ? null : readDesignArenaCache(DESIGN_ARENA_CACHE_PATH, true);
+    if (cachedDa) {
+      for (const b of daBoards) {
+        const entries = cachedDa.categories[b.key];
+        if (entries && entries.length > 0) boards[b.key] = entries;
+      }
+      if (Object.keys(boards).length === daBoards.length) {
+        console.error(`using cache ${DESIGN_ARENA_CACHE_PATH} (fetched ${cachedDa.fetchedAt})`);
+      }
+    }
+    if (Object.keys(boards).length !== daBoards.length) {
+      for (const b of daBoards) {
+        const entries = await fetchDesignArenaBoard(b.arenaType, b.category);
+        // An empty board is never cached (the next run retries) — the OR rule.
+        if (entries !== null && entries.length > 0) boards[b.key] = entries;
+      }
+      if (Object.keys(boards).length > 0) {
+        writeDesignArenaCache(DESIGN_ARENA_CACHE_PATH, new Date().toISOString(), boards);
+      } else {
+        const stale = readDesignArenaCache(DESIGN_ARENA_CACHE_PATH, false);
+        for (const b of daBoards) {
+          const entries = stale?.categories[b.key];
+          if (entries && entries.length > 0) boards[b.key] = entries;
+        }
+        if (Object.keys(boards).length > 0) {
+          console.error(`using stale cache ${DESIGN_ARENA_CACHE_PATH} (fetched ${stale?.fetchedAt})`);
+        }
+      }
+    }
+    const websiteBoard = boards["models/website"];
+    const agonBoard = boards["agents/agon_webapps"];
+    if (websiteBoard) daWebsite = buildDesignArenaIndex(models, websiteBoard);
+    if (agonBoard) daAgon = buildDesignArenaIndex(models, agonBoard);
+  } catch (e) {
+    console.error(`design arena: ${e instanceof Error ? e.message : String(e)}; continuing on the OpenRouter mirror alone`);
+  }
+  const mergedElo = mergeDesignElo(designElo, daWebsite);
+  for (const m of models) m.designEloAgents = daAgon?.[m.id]?.elo ?? null;
+
+  const design = applyDesignPercentiles(models, mergedElo);
   if (design.covered > 0) {
     console.error(`design arena: ${design.covered} models with a models-website Elo, ${design.imputed} imputed`);
   }
