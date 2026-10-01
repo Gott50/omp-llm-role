@@ -22,10 +22,11 @@ source).
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains`, atomic write |
 | `src/state.ts` | State/history/lock files under the agent dir; agent-dir resolution |
 | `src/updater.ts` | Orchestration: rank → tier gate → hysteresis → chains → config write |
-| `src/extension.ts` | omp extension entry: day-gated `session_start` run + `/refresh-roles` |
+| `src/extension.ts` | omp extension entry: day-gated `session_start` run + `/refresh-roles` + `/explore-roles` (in-process explorer) |
 | `update-roles.ts` | Headless shim: `node update-roles.ts [--dry-run] [--json]` (always forces) |
 | `create-role.ts` | Add/update one role in the plugin settings lock file: `node create-role.ts --name <role> --weights m=w,... [--required ...] [--thinking ...] [--image] [--dry-run]` |
-| `explore.ts` | Interactive ranking explorer: loopback web UI for why-this-rank, live weight tuning, new-role creation, and lock-file export |
+| `explore.ts` | Explorer CLI shim (`node explore.ts`): headless/out-of-session launch of the same in-process server |
+| `src/explorer/boot.ts` | Shared explorer launcher: bind/port fallback, lock-file roles, browser open, close — used by both `explore.ts` and `/explore-roles` |
 | `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets |
 | `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) shared by the explorer's Export and `create-role.ts` |
@@ -74,6 +75,10 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   `activateDefaultOnEmptySession=false`.
   Headless: `node update-roles.ts` (forces), `--dry-run` computes without
   writing, `--json` emits the decisions payload.
+- **Explorer**: `/explore-roles` boots the interactive ranking UI in-process
+  (see Explorer) — the supported way to tune weights and export them, replacing
+  the standalone `node explore.ts` invocation (which remains as the headless
+  shim).
 - **Availability**: keeps only models the OpenRouter key can run — tier/budget
   gate (`is_free_tier`, `limit_remaining`, `/api/v1/credits`). Paid keys with
   budget get billed variants, free/exhausted keys get `:free` variants,
@@ -455,6 +460,9 @@ node create-role.ts --name <role> --weights m=w,... [--required m,...] [--thinki
 node explore.ts [--port N] [--lock PATH] [--refresh] [--no-open]
 npm run explore [-- --port N --lock PATH --refresh --no-open]
 node --test tests/
+
+/refresh-roles                       # in-session (omp)
+/explore-roles [--port N] [--no-open]  # in-session explorer (omp)
 ```
 
 - `llm-role-rank.ts` default: markdown report to stdout (per-role tables with
@@ -473,14 +481,24 @@ node --test tests/
   (validated through `resolveSettings`, backup + atomic write); `--dry-run`
   validates without writing, `--json` prints the payload. The shipped skill
   `omp-llm-role-create-agent` drives it together with agent authoring.
-- `explore.ts` boots the interactive explorer (below); `--port` (default 5177),
-  `--lock` (default `~/.omp/plugins/omp-plugins.lock.json`), `--refresh` (force
-  a refetch before serving), `--no-open` (skip the browser launch). `npm run
-  explore` is the same command (pass flags after `--`).
+- `/explore-roles` (in-session, the normal way): boots the same explorer server
+  **in-process** inside omp — no `node explore.ts` subprocess, catalog from the
+  live model registry — prints the URL, and opens the browser. `--port` picks a
+  preferred port (default 5177; a busy port falls back to a free one, so two
+  sessions never collide) and `--no-open` skips the browser. Invoking it again
+  in the same session re-notifies the running URL instead of rebinding; the
+  server is closed on session shutdown.
+- `explore.ts` is the headless/out-of-session shim over the same launcher
+  (`src/explorer/boot.ts`), for use without an omp session or in scripts;
+  `--port` (default 5177), `--lock` (default
+  `~/.omp/plugins/omp-plugins.lock.json`), `--refresh` (force a refetch before
+  serving), `--no-open` (skip the browser launch). `npm run explore` is the
+  same command (pass flags after `--`).
 
 ## Explorer (interactive ranking UI)
 
-`node explore.ts` boots a loopback-only web UI (`http://127.0.0.1:5177`) that
+`/explore-roles` in omp (or `node explore.ts` outside it) boots a loopback-only
+web UI (`http://127.0.0.1:5177`) that
 answers "why is model X at rank 7 for `@slow`?" and "what happens if I care
 more about price than agents?" without editing `src/settings.ts` and re-running
 the CLI.
@@ -541,6 +559,15 @@ All ranking math is the plugin's own (`src/engine.ts`): the UI never
 reimplements `value = q − λ·$/M`, so the numbers on screen are exactly the
 numbers the plugin would use. The server binds `127.0.0.1` only (no auth) and
 serves the SPA from `web/` with no build step and no external requests.
+
+Both launch paths share `src/explorer/boot.ts`, so the in-session command and
+the CLI cannot drift: roles come from the user-level lock file (`project: null`
+— no project-anchor merge), the omp catalog gates the thinking price factor,
+and `POST /api/refresh` refetches the dataset. Launching via `/explore-roles`
+runs the server inside the omp process (no subprocess, catalog straight from
+the live model registry); a busy preferred port falls back to a free one, and
+the handle is closed on session shutdown. The CLI shim keeps the process alive
+on the listening handle so `node explore.ts` stays up until interrupted.
 
 Because the plugin's settings are **overrides deep-merged over `DEFAULT_ROLES`**,
 a role's weight keys are additive: you can adjust values and add metrics, but a
@@ -610,6 +637,19 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 public (404 / auth error).
 
 ## Current state (2026-10-01)
+
+- Explorer in the plugin (2026-10-01): `/explore-roles` boots the ranking UI
+  **in-process** inside omp — no `node explore.ts` subprocess, catalog from
+  `ctx.modelRegistry.getAvailable()` — notifies the URL and opens the browser.
+  A busy preferred port falls back to a free one; a second invocation in the
+  same session re-notifies the running URL instead of rebinding; the handle is
+  closed on `session_shutdown`. Both launch paths share the new
+  `src/explorer/boot.ts` (plus `PLUGIN_SETTINGS_PATH` in `src/settings.ts`), and
+  the extension sets `unref` so a short-lived `omp -p` run cannot hang on the
+  server. Verified live (omp 18.4.8): `omp -p "/explore-roles --no-open --port N"`
+  boots and exits in ~0.5 s; a TUI session answered `/api/bootstrap` on the bound
+  port, refused to bind a second port on re-invocation, and released the port on
+  exit.
 
 - Agent + role creation (2026-10-01): the plugin ships the
   `omp-llm-role-create-agent` skill (discovered from the plugin's `skills/` root;

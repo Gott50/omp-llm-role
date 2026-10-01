@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { cardinalMetric, rankRole, type RankData } from "../src/engine.ts";
+import { startExplorer } from "../src/explorer/boot.ts";
 import { inverseCardinal, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer } from "../src/explorer/server.ts";
 import { isRecord } from "../src/guards.ts";
@@ -192,5 +194,82 @@ test("a role absent from the shipped defaults ranks and exports", async () => {
     assert.deepEqual(settings.roles.review.weights, review.weights);
   } finally {
     server.close();
+  }
+});
+
+// The shared launcher behind both `node explore.ts` and the omp
+// `/explore-roles` command: the roles it serves come from the lock file (not
+// the shipped defaults), a busy preferred port falls back to a free one, and
+// close() releases the port.
+test("startExplorer serves lock-file roles and releases its port on close", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-boot-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  const review = { description: "Code review", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { roles: { review } } } }, null, 2));
+
+  const rank: RankData = { models: MODELS, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await startExplorer({
+    webDir: join(process.cwd(), "web"),
+    lockPath,
+    rank,
+    catalog: [],
+    reload: async () => rank,
+    port: 0,
+    open: false,
+    onLog: () => {},
+  });
+
+  try {
+    assert.ok(handle.port > 0);
+    const res = await fetch(`${handle.url}/api/bootstrap`);
+    const body: unknown = await res.json();
+    assert.ok(isRecord(body));
+    assert.ok(isRecord(body.roles));
+    assert.ok(isRecord(body.roles.review));
+    assert.deepEqual(body.roles.review.weights, review.weights);
+    assert.deepEqual(body.roles.review.required, review.required);
+    assert.ok("slow" in body.roles);
+    assert.ok(isRecord(body.defaults));
+    assert.ok("slow" in body.defaults);
+  } finally {
+    await handle.close();
+  }
+
+  // The port is free again: binding it must succeed.
+  const reuse = createServer();
+  await new Promise<void>((resolve) => reuse.listen(handle.port, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => reuse.close(() => resolve()));
+});
+
+test("startExplorer falls back to an ephemeral port when the preferred one is busy", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-boot-busy-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: {}, settings: {} }, null, 2));
+
+  const blocker = createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const addr = blocker.address();
+  if (addr === null || typeof addr === "string") throw new Error("expected a TCP address");
+  const busy = addr.port;
+
+  const rank: RankData = { models: MODELS, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await startExplorer({
+    webDir: join(process.cwd(), "web"),
+    lockPath,
+    rank,
+    catalog: [],
+    reload: async () => rank,
+    port: busy,
+    open: false,
+    onLog: () => {},
+  });
+
+  try {
+    assert.notEqual(handle.port, busy);
+    const res = await fetch(`${handle.url}/api/bootstrap`);
+    assert.equal(res.status, 200);
+  } finally {
+    await handle.close();
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
   }
 });

@@ -52,7 +52,7 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 | 10 | Deliverable | **This spec**; implementation in a later session on owner go |
 | 11 | `retry.fallbackChains` | **Auto-populate** #2/#3 per managed role; prune stale keys the plugin wrote |
 | 12 | Provider scope | **`openrouter/*` selectors only** (ranking price/throughput is OpenRouter-derived; the key is an OpenRouter key) |
-| 13 | Naming | Plugin `omp-llm-role`, slash command `/refresh-roles` |
+| 13 | Naming | Plugin `omp-llm-role`, slash commands `/refresh-roles` (role refresh) + `/explore-roles` (in-session ranking explorer) |
 | 14 | Provider routing | **Price-based load balancing model**: price and throughput are the 1/price²-weighted means over the stable standard-tier billed routes (OpenRouter's default routing), per-provider data from the model pages; single find route only as fallback |
 
 ## 4. Architecture
@@ -69,8 +69,12 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
     config-edit.ts          # surgical YAML edit for modelRoles + retry.fallbackChains
     state.ts                # state + history files
     updater.ts              # orchestration: run(trigger, deps) → decisions
-    extension.ts            # Bun/omp entry: session_start day gate + /refresh-roles
+    extension.ts            # Bun/omp entry: session_start day gate + /refresh-roles + /explore-roles
+    explorer/boot.ts        # shared explorer launcher (in-process server: bind, port fallback, close)
+    explorer/server.ts      # explorer HTTP surface (static SPA + JSON API)
+    explorer/explain.ts     # pure explanation layer (rank rows, decomposition, targets)
     cli.ts                  # node entry: update-roles.ts shim → headless run
+  explore.ts                # `node explore.ts` — headless shim over explorer/boot.ts
   update-roles.ts           # `node update-roles.ts [--dry-run] [--json]` (thin shim)
   llm-role-rankings.md      # existing report output (value-ranking format)
   *.json caches             # unchanged (daily UTC freshness)
@@ -406,6 +410,12 @@ a concurrent second starter loses the lock and finds the day already stamped →
 - **session_start**: day-gated refresh (§9), notify only on switches/errors.
 - **`/refresh-roles`**: synchronous forced run in-session; notification summarizes every
   decision (kept lines included when verbose).
+- **`/explore-roles [--port N] [--no-open]`**: boots the interactive ranking explorer
+  **in-process** (no `node explore.ts` subprocess; catalog from the live model registry),
+  notifies the URL and opens the browser. Roles come from the user-level lock file
+  (`project: null`); a busy port falls back to an OS-assigned one; a repeat invocation
+  re-notifies the running URL; the handle is closed on `session_shutdown`. `node
+  explore.ts` is the same server via `src/explorer/boot.ts`, for use without a session.
 - **Headless**: `node update-roles.ts [--dry-run] [--json]` — always runs (no day gate;
   explicit invocation is consent), `--dry-run` prints decisions without writing, `--json`
   emits the decisions payload for scripting.
@@ -433,7 +443,9 @@ a concurrent second starter loses the lock and finds the day already stamped →
    preserved.
 7. **Live E2E** — `omp plugin link .` → new omp session → observe day-gated run;
    `/refresh-roles` → verify config.yml diff + notification; second same-day session →
-   no-op; `node update-roles.ts --dry-run` matches in-session decisions.
+   no-op; `node update-roles.ts --dry-run` matches in-session decisions;
+   `/explore-roles --no-open` → `curl` the notified port for `/api/bootstrap`, a repeat
+   invocation keeps the same port, and the port is released when the session ends.
 
 ## 12. Out of scope
 

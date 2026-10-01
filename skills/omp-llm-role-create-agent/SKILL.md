@@ -97,7 +97,8 @@ It validates through `resolveSettings`, backs up the lock file, and writes atomi
 2. **Routing**: spawn the agent headlessly and read the spawn record — it MUST carry
    `"agent":"<name>"` and `"modelRole":"<name>"`, with `resolvedModel` = the role's
    selector, not the parent's.
-3. **Explorer**: `node <plugin>/explore.ts` → the role is a tab; tune weights/required/
+3. **Explorer**: `/explore-roles` in an omp session (in-process server) — or
+   `node <plugin>/explore.ts` outside omp — → the role is a tab; tune weights/required/
    thinking/description and Export (writes the lock file, backup first). The explorer's
    numbers are the plugin's own.
 

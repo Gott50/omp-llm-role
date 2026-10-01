@@ -15,6 +15,11 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SUFFIX_LEVELS, type RoleDef } from "./engine.ts";
 import { isRecord } from "./guards.ts";
+
+/** User-level plugin settings lock file (the explorer's read/export target and
+ * the default source for `readPluginSettingsMap`). */
+export const PLUGIN_SETTINGS_PATH = join(homedir(), ".omp", "plugins", "omp-plugins.lock.json");
+
 export const DEFAULT_ROLES: Record<string, RoleDef> = {
   default: {
     description: "Main workhorse: strong general coding-agent quality, sane cost",
@@ -133,6 +138,7 @@ export const KNOWN_METRICS: Record<string, true> = {
   long_context: true,
   mrcr: true,
   website: true,
+  writing: true,
   price: true,
   throughput: true,
 };
@@ -215,7 +221,7 @@ function findProjectAnchor(): string | null {
  * entries) yield {}; unparseable lock files warn and yield {}.
  */
 export function readPluginSettingsMap(paths?: { global?: string; project?: string }): Record<string, unknown> {
-  const globalPath = paths?.global ?? join(homedir(), ".omp", "plugins", "omp-plugins.lock.json");
+  const globalPath = paths?.global ?? PLUGIN_SETTINGS_PATH;
   const anchor = paths?.project === undefined ? findProjectAnchor() : null;
   const projectPath = paths?.project ?? (anchor ? join(anchor, ".omp", "plugins", "omp-plugins.lock.json") : null);
 

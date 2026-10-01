@@ -10,9 +10,16 @@
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
+import { loadRankData } from "./engine.ts";
+import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { isRecord } from "./guards.ts";
 import { runUpdater, type Deps } from "./updater.ts";
+
+/** SPA directory shipped beside this extension (repo `web/`). */
+const WEB_DIR = fileURLToPath(new URL("../web", import.meta.url));
 
 /** Structural slice of the extension context this plugin touches. */
 type ExtContext = {
@@ -126,7 +133,29 @@ function extDeps(pi: ExtensionAPI, ctx: ExtContext): Deps {
   };
 }
 
+/** `/explore-roles [--port N] [--no-open]` — the text typed after the command. */
+function parseExplorerArgs(args: string): { port: number | undefined; open: boolean } {
+  let port: number | undefined;
+  let open = true;
+  const parts = args.split(/\s+/);
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] === "--port") port = Number(parts[i + 1]);
+    else if (parts[i] === "--no-open") open = false;
+  }
+  const valid = port !== undefined && Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
+  return { port: valid, open };
+}
+
+/** Mirror an explorer line to the UI, and to stderr when the mode has no UI. */
+function notifyExplorer(ctx: ExtContext, line: string): void {
+  ctx.ui.notify(line, "info");
+  if (!ctx.hasUI) console.error(line);
+}
+
 export default function (pi: ExtensionAPI) {
+  /** Loopback explorer owned by this session binding (null until launched). */
+  let explorer: ExplorerHandle | null = null;
+
   pi.on("session_start", async (_event, ctx: ExtContext) => {
     // Awaited, not deferred: the day-gated write must land — and the empty-
     // conversation session model must switch — before the first prompt is
@@ -151,5 +180,44 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
       }
     },
+  });
+
+  // In-process explorer: no `node explore.ts` subprocess, catalog from the live
+  // model registry. Same server the CLI boots (src/explorer/boot.ts), so the
+  // UI's numbers are the plugin's numbers in both hosts.
+  pi.registerCommand("explore-roles", {
+    description: "Open the interactive model-role ranking explorer (loopback web UI)",
+    handler: async (args, ctx: ExtContext) => {
+      const { port, open } = parseExplorerArgs(typeof args === "string" ? args : "");
+      try {
+        if (explorer !== null) {
+          notifyExplorer(ctx, `llm-role explorer: ${explorer.url}`);
+          if (open && process.platform === "darwin") execFile("open", [explorer.url], () => {});
+          return;
+        }
+        notifyExplorer(ctx, "llm-role explorer: loading today's rankings…");
+        const rank = await loadRankData({});
+        const catalog = await extDeps(pi, ctx).getCatalog();
+        explorer = await startExplorer({
+          webDir: WEB_DIR,
+          rank,
+          catalog,
+          reload: (refresh) => loadRankData({ refresh }),
+          port,
+          open,
+          unref: true,
+          onLog: (line) => notifyExplorer(ctx, line),
+        });
+        notifyExplorer(ctx, `llm-role explorer: ${explorer.url}`);
+      } catch (err) {
+        ctx.ui.notify(`llm-role explorer: ${err instanceof Error ? err.message : err}`, "warning");
+      }
+    },
+  });
+
+  pi.on("session_shutdown", async () => {
+    const handle = explorer;
+    explorer = null;
+    await handle?.close();
   });
 }
