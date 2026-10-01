@@ -6,7 +6,9 @@ Verified against omp **18.4.4** ([can1357/oh-my-pi](https://github.com/can1357/o
 
 > Wiring an agent to a ranked model role (weights, plugin settings, explorer
 > tuning) is the `omp-llm-role-create-agent` skill shipped by the omp-llm-role
-> plugin; this guide covers the `.md` contract only.
+> plugin — or the `/create-agent` command, which generates an agent file and its
+> role together (`node create-agent.ts` outside a session). This guide covers the
+> `.md` contract only, and is what both follow.
 
 ## 1. What an agent file is
 

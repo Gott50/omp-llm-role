@@ -16,6 +16,26 @@ the plugin root is two levels up. Resolve it from the skill directory the harnes
 reports, or fall back to `~/.omp/plugins/node_modules/omp-llm-role`. `agents-guide.md`
 sits at the plugin root.
 
+**Check `/create-agent` first.** The plugin registers an omp command that does all
+three steps in one shot:
+
+```
+/create-agent --name <n> --purpose "<one sentence>"
+```
+
+It fits the weights from the archetype table (§2), writes the validated role, authors
+the agent `.md` (archetype tool allowlist, `model: "@<n>, @default"`, a scaffold body
+built from the archetype's `<criteria>`), and runs the updater in-process so
+`modelRoles.<n>` lands in `config.yml` — no second step. `--list-archetypes` prints the
+table; `--archetype`/`--weights`/`--required`/`--thinking`/`--tools`/`--scope`/
+`--body-file`/`--force` override each piece. Outside a session it is
+`node <plugin>/create-agent.ts …` (then `node <plugin>/update-roles.ts` to wire it).
+
+Use this skill instead when the artifact needs authoring the command cannot infer: a
+structured `output:` schema, a read-only `<critical>` contract with the tools to match,
+a real `<procedure>`, or weights shaped beyond the table. The command and this skill
+write through the same validated path, so the results are interchangeable.
+
 ## 0. Pin the purpose
 
 Ask (or infer) and write down:
@@ -51,10 +71,13 @@ Two invariants — the validator enforces the first, the engine's math needs the
 - `required` is the eligibility gate, not a weight: a model missing a required metric is
   not ranked at all.
 
-Start from the archetype closest to the purpose, then tune in the explorer (§4):
+Start from the archetype closest to the purpose, then tune in the explorer (§4).
+These are the same sets `/create-agent` fits automatically — the executable copy is
+`src/role-archetypes.ts` (`--list-archetypes` prints it); keep the two in step.
 
 | purpose | weights (Σ = 1) | required |
 |---|---|---|
+| general / coding (fallback) | general .3221, reasoning .1705, code .1705, agents .1137, tool_calling .0947, price .10, throughput .0285 | general, price, throughput |
 | review / audit | reasoning .30, general .24, code .20, agents .10, price .10, throughput .06 | general, price, throughput |
 | docs / writing | general .34, reasoning .20, code .10, long_context .10, price .16, throughput .10 | general, price, throughput |
 | prose / writing (WritingBench-weighted) | general .24, reasoning .16, long_context .10, writing .26, price .14, throughput .10 | general, price, throughput |
@@ -96,6 +119,8 @@ node <plugin>/create-role.ts --name <name> \
 
 It validates through `resolveSettings`, backs up the lock file, and writes atomically.
 `--dry-run` validates and prints without touching the file; `--json` prints the payload.
+(If you went through `/create-agent` or `create-agent.ts`, the role and the agent file
+are already written — go straight to §4.)
 
 ## 4. Verify
 

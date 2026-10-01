@@ -11,7 +11,9 @@
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatCreateAgentReport, parseCreateAgentArgs, tokenizeArgs } from "./agent-create.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
 import { loadRankData } from "./engine.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
@@ -147,7 +149,7 @@ function parseExplorerArgs(args: string): { port: number | undefined; open: bool
 }
 
 /** Mirror an explorer line to the UI, and to stderr when the mode has no UI. */
-function notifyExplorer(ctx: ExtContext, line: string): void {
+function notifyLines(ctx: ExtContext, line: string): void {
   ctx.ui.notify(line, "info");
   if (!ctx.hasUI) console.error(line);
 }
@@ -191,11 +193,11 @@ export default function (pi: ExtensionAPI) {
       const { port, open } = parseExplorerArgs(typeof args === "string" ? args : "");
       try {
         if (explorer !== null) {
-          notifyExplorer(ctx, `llm-role explorer: ${explorer.url}`);
+          notifyLines(ctx, `llm-role explorer: ${explorer.url}`);
           if (open && process.platform === "darwin") execFile("open", [explorer.url], () => {});
           return;
         }
-        notifyExplorer(ctx, "llm-role explorer: loading today's rankings…");
+        notifyLines(ctx, "llm-role explorer: loading today's rankings…");
         const rank = await loadRankData({});
         const catalog = await extDeps(pi, ctx).getCatalog();
         explorer = await startExplorer({
@@ -206,11 +208,54 @@ export default function (pi: ExtensionAPI) {
           port,
           open,
           unref: true,
-          onLog: (line) => notifyExplorer(ctx, line),
+          onLog: (line) => notifyLines(ctx, line),
         });
-        notifyExplorer(ctx, `llm-role explorer: ${explorer.url}`);
+        notifyLines(ctx, `llm-role explorer: ${explorer.url}`);
       } catch (err) {
         ctx.ui.notify(`llm-role explorer: ${err instanceof Error ? err.message : err}`, "warning");
+      }
+    },
+  });
+
+  // One command -> agent .md + validated role + wired `modelRoles.<name>`.
+  // Weights come from the archetype table fitted to --purpose (or --weights);
+  // the updater run at the end is the same path `/refresh-roles` takes, so the
+  // new role is ranked and written into config.yml without a second step.
+  pi.registerCommand("create-agent", {
+    description: "Create an omp subagent plus its model role, weights fitted to its purpose",
+    handler: async (args, ctx: ExtContext) => {
+      const parsed = parseCreateAgentArgs(tokenizeArgs(typeof args === "string" ? args : ""));
+      if (!parsed.ok) {
+        notifyLines(ctx, parsed.error);
+        return;
+      }
+      if (parsed.help) {
+        notifyLines(ctx, CREATE_AGENT_USAGE);
+        return;
+      }
+      if (parsed.listArchetypes) {
+        notifyLines(ctx, formatArchetypes());
+        return;
+      }
+      if (parsed.bodyFile !== undefined) {
+        try {
+          parsed.request.body = readFileSync(parsed.bodyFile, "utf8");
+        } catch (err) {
+          notifyLines(ctx, `create-agent: --body-file ${parsed.bodyFile}: ${err instanceof Error ? err.message : err}`);
+          return;
+        }
+      }
+      const result = createAgent(parsed.request);
+      if (!result.ok) {
+        notifyLines(ctx, `create-agent: ${result.errors.join("\n")}`);
+        return;
+      }
+      notifyLines(ctx, formatCreateAgentReport(result, "ranking the new role…"));
+      if (result.dryRun) return;
+      try {
+        await runUpdater("manual", extDeps(pi, ctx), { force: true });
+      } catch (err) {
+        ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
       }
     },
   });

@@ -47,12 +47,12 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 | 5 | Thinking suffixes | **Per-role `thinking` field** on the role def, shipped as defaults, overridable in settings |
 | 6 | Trigger | **session_start, UTC-day gated** (first omp session of the day refreshes; later sessions no-op) + manual `/refresh-roles` |
 | 7 | Switch policy | **Hysteresis**: switch only if current model ineligible or new best beats current score by `switchMargin` (default `0.02`; `0` = always take today's best). The margin is a flat band on `value`, so it can veto up to `switchMargin / λ` $/M of savings; a challenger inside the band that undercuts the incumbent's effective price by `priceSwitchFraction` (default `0.5`) is adopted anyway (2026-09-30, `switched-cost`) |
-| 8 | Settings home | **omp plugin settings** (`omp-plugins.lock.json` → `settings["omp-llm-role"]`); plugin deep-merges flat dotted keys and nested objects itself. `omp plugin config set` stores values as strings, so typed role defs are written by `create-role.ts` / the explorer's Export (both validate through `resolveSettings`) |
+| 8 | Settings home | **omp plugin settings** (`omp-plugins.lock.json` → `settings["omp-llm-role"]`); plugin deep-merges flat dotted keys and nested objects itself. `omp plugin config set` stores values as strings, so typed role defs are written by `create-role.ts` / `/create-agent` / the explorer's Export (all validate through `resolveSettings`) |
 | 9 | Variant pick | **Exact dated slug**: resolution order exact id → newest dated → bare → `-latest` alias (last resort); never `:batch`; `:free` only on free-tier keys |
 | 10 | Deliverable | **This spec**; implementation in a later session on owner go |
 | 11 | `retry.fallbackChains` | **Auto-populate** #2/#3 per managed role; prune stale keys the plugin wrote |
 | 12 | Provider scope | **`openrouter/*` selectors only** (ranking price/throughput is OpenRouter-derived; the key is an OpenRouter key) |
-| 13 | Naming | Plugin `omp-llm-role`, slash commands `/refresh-roles` (role refresh) + `/explore-roles` (in-session ranking explorer) |
+| 13 | Naming | Plugin `omp-llm-role`, slash commands `/refresh-roles` (role refresh) + `/explore-roles` (in-session ranking explorer) + `/create-agent` (agent + role + wiring in one command) |
 | 14 | Provider routing | **Price-based load balancing model**: price and throughput are the 1/price²-weighted means over the stable standard-tier billed routes (OpenRouter's default routing), per-provider data from the model pages; single find route only as fallback |
 
 ## 4. Architecture
@@ -69,13 +69,19 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
     config-edit.ts          # surgical YAML edit for modelRoles + retry.fallbackChains
     state.ts                # state + history files
     updater.ts              # orchestration: run(trigger, deps) → decisions
-    extension.ts            # Bun/omp entry: session_start day gate + /refresh-roles + /explore-roles
+    extension.ts            # Bun/omp entry: session_start day gate + /refresh-roles + /explore-roles + /create-agent
+    role-settings.ts        # the one validated role write path (validate → merge → backup → atomic write)
+    role-archetypes.ts      # purpose -> weight archetype table (10 sets) + keyword fitting
+    agent-file.ts           # agent .md rendering/placement per agents-guide.md
+    agent-create.ts         # /create-agent core: archetype -> role -> agent .md (+ shared arg parser/report)
     explorer/boot.ts        # shared explorer launcher (in-process server: bind, port fallback, close)
     explorer/server.ts      # explorer HTTP surface (static SPA + JSON API)
     explorer/explain.ts     # pure explanation layer (rank rows, decomposition, targets)
     cli.ts                  # node entry: update-roles.ts shim → headless run
   explore.ts                # `node explore.ts` — headless shim over explorer/boot.ts
   update-roles.ts           # `node update-roles.ts [--dry-run] [--json]` (thin shim)
+  create-role.ts            # `node create-role.ts --name <role> --weights m=w,...` (thin shim)
+  create-agent.ts           # `node create-agent.ts --name <n> --purpose <text>` (thin shim)
   llm-role-rankings.md      # existing report output (value-ranking format)
   *.json caches             # unchanged (daily UTC freshness)
 ```
@@ -436,12 +442,25 @@ a concurrent second starter loses the lock and finds the day already stamped →
   (`project: null`); a busy port falls back to an OS-assigned one; a repeat invocation
   re-notifies the running URL; the handle is closed on `session_shutdown`. `node
   explore.ts` is the same server via `src/explorer/boot.ts`, for use without a session.
+- **`/create-agent --name <n> --purpose "<text>" [flags]`**: creates the agent
+  **and** its role in one command. Fits the weights to the purpose from
+  `src/role-archetypes.ts` (10 sets; `--archetype` forces one, `--weights`
+  overrides), writes the validated role, authors `~/.omp/agent/agents/<n>.md`
+  (`--scope project` → `<anchor>/.omp/agents/`) with
+  `model: "@<n>, @default"`, then runs the updater in-process so
+  `modelRoles.<n>` lands in `config.yml`. All-or-nothing: an existing agent file
+  without `--force`, a name outside `[A-Za-z0-9_-]+`, a reserved name, or a
+  weight set violating Σ = 1 / Σ(non-price) = 1 − w_price aborts **before** either
+  write. `--body-file` replaces the archetype body scaffold. `--list-archetypes`
+  prints the table. `node create-agent.ts` is the same code path without a session
+  (it stops after the two writes and points at `update-roles.ts`).
 - **Headless**: `node update-roles.ts [--dry-run] [--json]` — always runs (no day gate;
   explicit invocation is consent), `--dry-run` prints decisions without writing, `--json`
   emits the decisions payload for scripting.
 - **Role authoring**: `node create-role.ts --name <role> --weights m=w,...` writes a
   validated role def into the settings lock file (backup + atomic write); the shipped
-  skill `omp-llm-role-create-agent` drives agent authoring + role creation + verification.
+  skill `omp-llm-role-create-agent` drives agent authoring + role creation + verification
+  by hand (for bodies that need real authoring rather than the archetype scaffold).
 
 ## 11. Verification plan (implementation gate)
 
@@ -466,10 +485,17 @@ a concurrent second starter loses the lock and finds the day already stamped →
    no-op; `node update-roles.ts --dry-run` matches in-session decisions;
    `/explore-roles --no-open` → `curl` the notified port for `/api/bootstrap`, a repeat
    invocation keeps the same port, and the port is released when the session ends.
+8. **Agent creation** — `create-agent` fixtures: a purpose fits the expected archetype;
+   a `--weights` set violating Σ(non-price) = 1 − w_price is refused; an existing agent
+   file without `--force` is refused **and writes no role**; `--dry-run` writes neither
+   file. Live: `/create-agent` in a session (RPC mode dispatches slash commands) → the
+   updater line `@<n>: (unset) -> <selector>` + `modelRoles.<n>` in `config.yml`, then a
+   headless spawn whose record reads `{"agent":"<n>","agentSource":"user","modelRole":"<n>"}`
+   with `resolvedModel` equal to the role's selector.
 
 ## 12. Out of scope
 
 First-party provider selectors (decision #12), non-OpenRouter scoring sources, a
 `/rollback` command (state snapshot only), marketplace publishing (link/install is the
-path), and auto-tuning `switchMargin`. Weight editing is the explorer's Export or
-`create-role.ts` (both validate through `resolveSettings`).
+path), and auto-tuning `switchMargin`. Weight editing is the explorer's Export,
+`create-role.ts` or `/create-agent` (all validate through `resolveSettings`).

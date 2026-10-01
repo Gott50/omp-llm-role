@@ -25,17 +25,21 @@ create-agent skill produces).
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains`, atomic write |
 | `src/state.ts` | State/history/lock files under the agent dir; agent-dir resolution |
 | `src/updater.ts` | Orchestration: rank → tier gate → hysteresis → chains → config write |
-| `src/extension.ts` | omp extension entry: day-gated `session_start` run + `/refresh-roles` + `/explore-roles` (in-process explorer) |
+| `src/extension.ts` | omp extension entry: day-gated `session_start` run + `/refresh-roles` + `/explore-roles` (in-process explorer) + `/create-agent` (agent + role + wiring in one command) |
 | `update-roles.ts` | Headless shim: `node update-roles.ts [--dry-run] [--json]` (always forces) |
 | `create-role.ts` | Add/update one role in the plugin settings lock file: `node create-role.ts --name <role> --weights m=w,... [--required ...] [--thinking ...] [--image] [--dry-run]` |
+| `create-agent.ts` | Create an agent **and** its role together: `node create-agent.ts --name <n> --purpose "<text>" [--weights ...] [--tools ...] [--scope user\|project] [--body-file PATH] [--force] [--dry-run] [--list-archetypes]` |
+| `src/agent-create.ts` | `/create-agent` core: purpose → archetype → validated role → agent `.md`; also the shared flag parser + report formatter both hosts use |
+| `src/role-archetypes.ts` | Purpose → weight archetype table (10 sets, each Σ = 1 and Σ(non-price) = 1 − w_price) + keyword fitting |
+| `src/agent-file.ts` | Agent `.md` rendering/placement per `agents-guide.md`: frontmatter, routing description, read-only classification, atomic write |
 | `explore.ts` | Explorer CLI shim (`node explore.ts`): headless/out-of-session launch of the same in-process server |
 | `src/explorer/boot.ts` | Shared explorer launcher: bind/port fallback, lock-file roles, browser open, close — used by both `explore.ts` and `/explore-roles` |
 | `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets |
 | `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
-| `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) shared by the explorer's Export and `create-role.ts` |
+| `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) shared by the explorer's Export, `create-role.ts` and `/create-agent` |
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
 | `agents/designer.md` | The `designer` subagent, shipped by the plugin (discovered from the plugin's extension root — no install step). The `writing` agent the create-agent skill produces lives at `~/.omp/agent/agents/writing.md`, a user artifact, not a repo file |
-| `skills/omp-llm-role-create-agent/SKILL.md` | Shipped skill: create an agent + model role for a specific purpose (author the `.md` per `agents-guide.md`, fit weights, write the role, verify, tune in the explorer) |
+| `skills/omp-llm-role-create-agent/SKILL.md` | Shipped skill: the hand-driven version of `/create-agent` — author the `.md` per `agents-guide.md`, fit weights, write the role, verify, tune in the explorer |
 | `package.json` | Plugin manifest (`omp.extensions`) — no runtime dependencies (`yaml` is dev-only: tests validate patch output with the real parser) |
 | `.omp-plugin/marketplace.json` | Self-hosted omp marketplace catalog (`gott50-plugins`): `omp plugin marketplace add Gott50/omp-llm-role` + `omp plugin install omp-llm-role@gott50-plugins` |
 | `LICENSE` | MIT |
@@ -195,7 +199,26 @@ user-level copy removed): with `modelRoles.designer` present the child resolves
 `modelRole: "designer"`; with it absent the `@default` fallback resolves
 `modelRole: "default"`.
 
-Adding another task specialist:
+Adding another task specialist — one command does all of it:
+
+```sh
+/create-agent --name review --purpose "review pull requests for correctness and security"
+```
+
+It fits the weights to the purpose from the archetype table
+(`--list-archetypes` prints the ten sets), writes the validated role into
+`~/.omp/plugins/omp-plugins.lock.json` → `settings["omp-llm-role"]`, authors
+`~/.omp/agent/agents/review.md` with `model: "@review, @default"`, and then runs
+the updater **in-process** so `modelRoles.review` lands in `config.yml` — one
+command, nothing to remember. Also `--archetype <id>`, `--weights m=w,...`,
+`--required`, `--thinking`, `--tools`, `--scope user|project`, `--body-file`,
+`--force` (overwrite an existing agent file), `--dry-run`, `--json`. Outside a
+session it is `node create-agent.ts --name … --purpose …` followed by
+`node update-roles.ts`. The shipped skill `omp-llm-role-create-agent` is the
+hand-driven equivalent, for when the body needs real authoring rather than the
+archetype scaffold.
+
+By hand, the same three artifacts:
 
 1. Define the role in plugin settings — one full weight set, `required` ⊆
    weights, `thinking` for the effort level (the legacy `suffixes.<role>` knob
@@ -520,12 +543,14 @@ caches:
 node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]
 node update-roles.ts [--dry-run] [--json]
 node create-role.ts --name <role> --weights m=w,... [--required m,...] [--thinking <level>] [--description <text>] [--image] [--lambda N] [--lock PATH] [--dry-run] [--json]
+node create-agent.ts --name <name> --purpose <text> [--archetype ID] [--weights m=w,...] [--required m,...] [--thinking <level>] [--tools a,b] [--scope user|project] [--image] [--body TEXT|--body-file PATH] [--force] [--lock PATH] [--dry-run] [--json] [--list-archetypes]
 node explore.ts [--port N] [--lock PATH] [--refresh] [--no-open]
 npm run explore [-- --port N --lock PATH --refresh --no-open]
 node --test tests/
 
 /refresh-roles                       # in-session (omp)
 /explore-roles [--port N] [--no-open]  # in-session explorer (omp)
+/create-agent --name <n> --purpose <text> [--list-archetypes]  # agent + role + wiring (omp)
 ```
 
 - `llm-role-rank.ts` default: markdown report to stdout (per-role tables with
@@ -544,6 +569,21 @@ node --test tests/
   (validated through `resolveSettings`, backup + atomic write); `--dry-run`
   validates without writing, `--json` prints the payload. The shipped skill
   `omp-llm-role-create-agent` drives it together with agent authoring.
+- `/create-agent --name <n> --purpose "<one sentence>"` creates **both halves in
+  one command**: it fits the weights to the purpose from the archetype table
+  (`src/role-archetypes.ts`, printable with `--list-archetypes`), writes the
+  validated role, authors `~/.omp/agent/agents/<n>.md` with
+  `model: "@<n>, @default"` and the archetype's tool allowlist, then runs the
+  updater in-process so `modelRoles.<n>` lands in `config.yml` — no second step.
+  `--archetype` forces a set; `--weights` overrides it (both invariants are
+  enforced: Σ = 1 and Σ(non-price) = 1 − w_price); `--tools` replaces the
+  allowlist (the read-only set keeps the roster badge); `--scope project` writes
+  into `<anchor>/.omp/agents/` instead of the user dir; `--body-file` supplies a
+  hand-written body in place of the archetype scaffold; `--force` overwrites an
+  existing agent file (without it, an existing file is refused and **no role is
+  written** — the run is all-or-nothing). Outside a session the same code path is
+  `node create-agent.ts …`, which stops after the two writes and points at
+  `node update-roles.ts`.
 - `/explore-roles` (in-session, the normal way): boots the same explorer server
   **in-process** inside omp — no `node explore.ts` subprocess, catalog from the
   live model registry — prints the URL, and opens the browser. `--port` picks a
@@ -704,6 +744,24 @@ public (404 / auth error).
 
 ## Current state (2026-10-01)
 
+- `/create-agent` (2026-10-01): one omp command creates an agent **and** its role and
+  wires them. It fits the weights to `--purpose` from the archetype table
+  (`src/role-archetypes.ts`, ten sets, printable with `--list-archetypes`), writes the
+  validated role, authors `~/.omp/agent/agents/<n>.md` per `agents-guide.md`, then runs
+  the updater **in-process** so `modelRoles.<n>` lands in `config.yml` in the same
+  command. All-or-nothing: a name outside `[A-Za-z0-9_-]+`, a reserved name, an existing
+  agent file without `--force`, or weights violating Σ = 1 / Σ(non-price) = 1 − w_price
+  abort before either write. Verified live (omp 18.4.8, `--mode rpc` — print mode does
+  not dispatch slash commands): `/create-agent --name sqlanalyst --purpose "analyze data
+  and write SQL queries for the analytics warehouse"` fitted the `data` archetype
+  (matched analy, data, sql), wrote the role and the agent file, and the same command's
+  updater pass logged `@sqlanalyst: (unset) -> openrouter/z-ai/glm-5.3:high` and wrote
+  `config.yml`; a headless spawn then returned
+  `{"agent":"sqlanalyst","agentSource":"user","modelRole":"sqlanalyst"}` with
+  `resolvedModel: "openrouter/z-ai/glm-5.3:high"` against a parent on
+  `deepseek/deepseek-v4.1-flash`. `node create-agent.ts` is the same code path outside a
+  session (it stops after the two writes and points at `update-roles.ts`).
+
 - Explorer in the plugin (2026-10-01): `/explore-roles` boots the ranking UI
   **in-process** inside omp — no `node explore.ts` subprocess, catalog from
   `ctx.modelRegistry.getAvailable()` — notifies the URL and opens the browser.
@@ -720,7 +778,8 @@ public (404 / auth error).
 - Agent + role creation (2026-10-01): the plugin ships the
   `omp-llm-role-create-agent` skill (discovered from the plugin's `skills/` root;
   verified via `read skill://omp-llm-role-create-agent`), `create-role.ts` (typed,
-  validated role write into the settings lock file), and an explorer `+ new role`
+  validated role write into the settings lock file), the `/create-agent` command
+  (agent + role + wiring in one shot), and an explorer `+ new role`
   button + description editor. Roles with no shipped default are fully editable
   (no `Reset to shipped default`). `resolveSettings` now deep-merges a nested
   `roles` object with flat dotted keys in either order (previously a nested
@@ -1078,3 +1137,10 @@ public (404 / auth error).
   (401/403/404), the non-fatal fallback leaves the ranking on the OpenRouter
   mirror alone; the coverage figures above must then be corrected back to
   42/87.
+- **Testing a registered slash command needs `--mode rpc` or a TUI** — `omp -p`
+  (print mode) sends a leading `/name` as a *prompt* to the model, so the handler
+  never runs and `ctx.ui.notify` is a no-op anyway. RPC mode does dispatch them:
+  pipe `{"id":1,"type":"prompt","message":"/create-agent …"}` on stdin and the
+  handler's `console.error` output (the `!hasUI` mirror in `notifyLines`) lands on
+  stderr; `get_available_commands` confirms registration. Verified this way for
+  `/create-agent` and `/explore-roles` (omp 18.4.8).

@@ -27,12 +27,14 @@
     "update-roles.ts",
     "explore.ts",
     "create-role.ts",
+    "create-agent.ts",
     "SPEC.md",
     "agents-guide.md"
   ],
   "scripts": {
     "explore": "node explore.ts",
-    "create-role": "node create-role.ts"
+    "create-role": "node create-role.ts",
+    "create-agent": "node create-agent.ts"
   },
   "omp": {
     "extensions": ["./src/extension.ts"]
