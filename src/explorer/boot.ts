@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import type { Server } from "node:http";
 import { enrichThinkingLevels, type CatalogEntry } from "../availability.ts";
 import type { RankData } from "../engine.ts";
-import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH, readPluginSettingsMap, resolveSettings } from "../settings.ts";
+import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH, readPluginSettingsMap, resolveSettings, roleUniverse } from "../settings.ts";
 import { createExplorerServer } from "./server.ts";
 
 /** Preferred loopback port; a busy port falls back to an OS-assigned one. */
@@ -89,10 +89,14 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   const { settings, errors } = resolveSettings(raw);
   for (const e of errors) onLog(`settings warning: ${e}`);
   const roles = settings.roles;
+  // The resolved set is what the plugin does today; the universe adds the roles it
+  // knows but does not currently rank (shipped opt-ins, lock-file-only roles).
+  const universe = roleUniverse(raw, roles);
 
   const server = createExplorerServer({
     webDir: opts.webDir,
     lockPath,
+    universe,
     getSnapshot: () => ({ rank, roles, defaults: DEFAULT_ROLES }),
     refresh: async () => {
       rank = await opts.reload(true);

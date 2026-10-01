@@ -119,6 +119,7 @@ test("export writes the lock file with a backup and stays valid", async () => {
   const server = createExplorerServer({
     webDir: join(process.cwd(), "web"),
     lockPath,
+    universe: {},
     getSnapshot: () => ({ rank, roles: DEFAULT_ROLES, defaults: DEFAULT_ROLES }),
     refresh: async () => {},
   });
@@ -168,6 +169,7 @@ test("a role absent from the shipped defaults ranks and exports", async () => {
   const server = createExplorerServer({
     webDir: join(process.cwd(), "web"),
     lockPath,
+    universe: {},
     getSnapshot: () => ({ rank, roles: DEFAULT_ROLES, defaults: DEFAULT_ROLES }),
     refresh: async () => {},
   });
@@ -226,7 +228,9 @@ test("startExplorer serves lock-file roles and releases its port on close", asyn
   const review = { description: "Code review", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
   writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { roles: { review } } } }, null, 2));
 
-  const rank: RankData = { models: MODELS, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  // One image-capable model so the shipped `designer` role (filters.image) has a pool.
+  const bootModels = [...MODELS, { ...makeModel("img", 70, 2, 80), multimodal: true }];
+  const rank: RankData = { models: bootModels, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 3, orPriced: 3 };
   const handle = await startExplorer({
     webDir: join(process.cwd(), "web"),
     lockPath,
@@ -250,6 +254,41 @@ test("startExplorer serves lock-file roles and releases its port on close", asyn
     assert.ok("slow" in body.roles);
     assert.ok(isRecord(body.defaults));
     assert.ok("slow" in body.defaults);
+
+    // Universe: every known role (disabled included) with kind/enabled/locked + def.
+    assert.ok(isRecord(body.universe));
+    const universe = body.universe as Record<
+      string,
+      { kind: string; enabled: boolean; locked: boolean; def: { weights: Record<string, number> } }
+    >;
+    assert.equal(universe.designer.kind, "plugin");
+    assert.equal(universe.designer.enabled, false);
+    assert.equal(universe.designer.locked, false);
+    assert.deepEqual(universe.designer.def.weights, DEFAULT_ROLES.designer.weights);
+    assert.equal(universe.slow.kind, "default");
+    assert.equal(universe.slow.enabled, true);
+    assert.equal(universe.review.kind, "user");
+    assert.equal(universe.review.enabled, true);
+    // The resolved set stays pruned: the disabled designer is absent from it.
+    assert.equal("designer" in body.roles, false);
+
+    // A disabled role and a lock-file-only role rank with a live baseline: posting
+    // each role's own effective def yields delta 0 against a non-empty baseline.
+    for (const role of ["designer", "review"] as const) {
+      const rankRes = await fetch(`${handle.url}/api/rank`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role, def: universe[role].def }),
+      });
+      const rankBody: unknown = await rankRes.json();
+      assert.ok(isRecord(rankBody));
+      const rows = rankBody.rows as Array<{ rank: number; baselineRank: number | null; delta: number | null }>;
+      assert.ok(rows.length > 0, `${role} should have a non-empty pool`);
+      for (const row of rows) {
+        assert.equal(row.baselineRank, row.rank);
+        assert.equal(row.delta, 0);
+      }
+    }
   } finally {
     await handle.close();
   }

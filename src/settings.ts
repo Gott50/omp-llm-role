@@ -270,12 +270,13 @@ export function readPluginSettingsMap(paths?: { global?: string; project?: strin
 }
 
 /**
- * Deep-merge the raw settings map over the shipped defaults and validate the
- * result (SPEC §7). Roles whose resolved `weights` is null are dropped (explicit
- * opt-out). Never mutates the defaults. One error string per violation; an empty
- * error list means the settings are valid.
+ * The merge half of `resolveSettings`: shipped defaults + flat dotted keys +
+ * nested objects + the `config` escape hatch, with no validation and no pruning.
+ * Disabled roles (`enabled: false` / `weights: null`) survive in `roles`;
+ * `resolveSettings` prunes them after validating, while `roleUniverse` needs them
+ * to describe every role the plugin knows.
  */
-export function resolveSettings(raw: Record<string, unknown>): { settings: ResolvedSettings; errors: string[] } {
+function mergeRawSettings(raw: Record<string, unknown>): { merged: ResolvedSettings; errors: string[] } {
   const errors: string[] = [];
   const merged = structuredClone(DEFAULT_SETTINGS) as ResolvedSettings;
 
@@ -308,6 +309,17 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   if (isRecord((merged as unknown as Record<string, unknown>).suffixes)) {
     errors.push("config: suffixes moved into roles — set roles.<role>.thinking instead");
   }
+  return { merged, errors };
+}
+
+/**
+ * Deep-merge the raw settings map over the shipped defaults and validate the
+ * result (SPEC §7). Roles whose resolved `weights` is null are dropped (explicit
+ * opt-out). Never mutates the defaults. One error string per violation; an empty
+ * error list means the settings are valid.
+ */
+export function resolveSettings(raw: Record<string, unknown>): { settings: ResolvedSettings; errors: string[] } {
+  const { merged, errors } = mergeRawSettings(raw);
 
   if (typeof merged.switchMargin !== "number" || !Number.isFinite(merged.switchMargin) || merged.switchMargin < 0 || merged.switchMargin > 1) {
     errors.push(`switchMargin: must be a number in [0, 1], got ${JSON.stringify(merged.switchMargin)}`);
@@ -391,5 +403,37 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   }
 
   return { settings: merged, errors };
+}
+
+export type RoleKind = "default" | "plugin" | "user";
+
+export type UniverseEntry = { kind: RoleKind; enabled: boolean; locked: boolean; def: RoleDef };
+
+/** Every role the plugin knows: shipped DEFAULT_ROLES (disabled included) union
+ *  roles present in the raw plugin settings map. Never mutates inputs. */
+export function roleUniverse(raw: Record<string, unknown>, resolved: Record<string, RoleDef>): Record<string, UniverseEntry> {
+  const { merged } = mergeRawSettings(raw);
+  const rolesRaw = (merged as unknown as Record<string, unknown>).roles;
+  const mergedRoles = isRecord(rolesRaw) ? (rolesRaw as Record<string, unknown>) : {};
+
+  const entry = (name: string): UniverseEntry => {
+    // Effective def = shipped default merged with the raw overrides (the merge
+    // half never prunes disabled roles). A malformed override falls back to the
+    // shipped def so the UI always has a def to render.
+    const rawDef = mergedRoles[name];
+    const def = (isRecord(rawDef) ? rawDef : DEFAULT_ROLES[name] ?? { description: "", weights: {}, required: [] }) as RoleDef;
+    const enabled = name in resolved;
+    // Provenance, not state: a shipped role is `default` while enabled and
+    // `plugin` once it ships opt-in/disabled; anything else is lock-file-only.
+    const kind: RoleKind = !(name in DEFAULT_ROLES) ? "user" : enabled ? "default" : "plugin";
+    return { kind, enabled, locked: (def as RoleDef & { locked?: boolean }).locked === true, def };
+  };
+
+  // Insertion order: DEFAULT_ROLES order first, then lock-file-only names in
+  // first-seen order (merged.roles already leads with the shipped keys).
+  const out: Record<string, UniverseEntry> = {};
+  for (const name of Object.keys(DEFAULT_ROLES)) out[name] = entry(name);
+  for (const name of Object.keys(mergedRoles)) if (!(name in out)) out[name] = entry(name);
+  return out;
 }
 

@@ -6,6 +6,7 @@
 
 const state = {
   role: null,
+  universe: {},
   effective: {},
   defs: {},
   defaults: {},
@@ -140,6 +141,9 @@ const TIPS = {
   resetDefaults: "Restore the shipped default definition from src/settings.ts.",
   newRole: "Create a new role from a template (general/code/price/throughput), then tune it and Export. The plugin ranks any role in its settings; an agent must pin @<role> to route to it.",
   description: "One-line role description, shown in the report and the role tab tooltip.",
+  enabled: "Whether the plugin ranks this role at all. A disabled role is dropped from the resolved set (and the agent that pins it is disabled), but it still ranks and exports here.",
+  disabled: "Disabled — the plugin does not rank this role until Enabled is checked.",
+  locked: "Locked — the plugin still ranks this role, but never rewrites its selector or fallback chain, and never removes it.",
   dropInherited: "set to ~0 — the plugin deep-merges weights over the shipped defaults, so an inherited metric cannot be removed",
   dropAdded: "remove — this metric is not in the shipped default, so the key is deleted outright",
   exportBtn: "Write the edited roles into the plugin lock file (a .bak-<timestamp> sibling is written first); takes effect on the next /refresh-roles in any running session — the lock file is re-read from disk on every run.",
@@ -227,18 +231,34 @@ function renderMeta(data) {
 function renderRoles() {
   const nav = document.getElementById("roles");
   nav.textContent = "";
-  for (const role of Object.keys(state.defs)) {
+  for (const role of Object.keys(state.universe)) {
+    const entry = state.universe[role];
     const dirty = JSON.stringify(state.defs[role]) !== JSON.stringify(state.effective[role]);
+    const classes = ["tab", "kind-" + (entry.kind || "default")];
+    if (role === state.role) classes.push("active");
+    if (dirty) classes.push("dirty");
+    if (!entry.enabled) classes.push("disabled");
+    if (entry.locked) classes.push("locked");
+    const notes = [state.defs[role].description || ""];
+    if (!entry.enabled) notes.push(TIPS.disabled);
+    if (entry.locked) notes.push(TIPS.locked);
     nav.append(
       el("button", {
-        class: "tab" + (role === state.role ? " active" : "") + (dirty ? " dirty" : ""),
-        "data-tip": state.defs[role].description || null,
+        class: classes.join(" "),
+        "data-tip": notes.filter(Boolean).join("\n\n") || null,
         text: role,
         onclick: () => selectRole(role),
       }),
     );
   }
   nav.append(el("button", { class: "tab new", "data-tip": TIPS.newRole, text: "+ new role", onclick: onNewRole }));
+}
+
+/** Keep the tab's disabled tint in step with the edited def: `universe` is the
+ * boot-time snapshot, but the Enabled toggle and the reset buttons change what
+ * the plugin would resolve, and the tab must not lie until the next reload. */
+function syncUniverseEnabled(role) {
+  if (state.universe[role]) state.universe[role].enabled = state.defs[role].enabled !== false;
 }
 
 /** Create a role from a template so it can be tuned and exported. The plugin
@@ -259,6 +279,7 @@ function onNewRole() {
     weights: { general: 0.35, code: 0.2, price: 0.25, throughput: 0.2 },
     required: ["general", "price", "throughput"],
   };
+  state.universe[name] = { kind: "user", enabled: true, locked: false, def: state.defs[name] };
   state.exportMessage = "";
   selectRole(name);
 }
@@ -519,6 +540,23 @@ function renderEditor() {
   });
   panel.append(el("div", { class: "row-controls" }, [desc]));
 
+  const enabled = el("input", { type: "checkbox" });
+  enabled.checked = def.enabled !== false;
+  enabled.addEventListener("change", () => {
+    // A role whose shipped default is enabled (or that has no shipped default)
+    // needs no explicit flag: dropping the key lets the deep-merge leave it
+    // enabled, so re-enabling does not leave a redundant `enabled: true` behind.
+    const shippedEnabled = !(state.defaults[state.role] && state.defaults[state.role].enabled === false);
+    if (enabled.checked && shippedEnabled) delete def.enabled;
+    else def.enabled = enabled.checked;
+    syncUniverseEnabled(state.role);
+    renderRoles();
+    renderExportState();
+  });
+  panel.append(el("div", { class: "row-controls" }, [
+    el("label", { class: "check" }, [enabled, el("span", { "data-tip": TIPS.enabled, text: "Enabled — ranked by the plugin" })]),
+  ]));
+
   panel.append(el("h3", { text: "Weights" }));
   const weights = el("table", { class: "weights" });
   const wbody = el("tbody");
@@ -630,9 +668,9 @@ function renderEditor() {
 
   panel.append(
     el("div", { class: "row-controls" }, [
-      el("button", { id: "reset-effective", "data-tip": TIPS.resetEffective, text: "Reset to effective", onclick: () => { state.defs[state.role] = structuredClone(state.effective[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } }),
+      el("button", { id: "reset-effective", "data-tip": TIPS.resetEffective, text: "Reset to effective", onclick: () => { state.defs[state.role] = structuredClone(state.effective[state.role]); syncUniverseEnabled(state.role); renderEditor(); renderRoles(); scheduleRecompute(); } }),
       state.defaults[state.role]
-        ? el("button", { id: "reset-defaults", "data-tip": TIPS.resetDefaults, text: "Reset to shipped default", onclick: () => { state.defs[state.role] = structuredClone(state.defaults[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } })
+        ? el("button", { id: "reset-defaults", "data-tip": TIPS.resetDefaults, text: "Reset to shipped default", onclick: () => { state.defs[state.role] = structuredClone(state.defaults[state.role]); syncUniverseEnabled(state.role); renderEditor(); renderRoles(); scheduleRecompute(); } })
         : null,
     ]),
   );
@@ -743,14 +781,16 @@ async function onRefresh() {
 
 async function boot() {
   const data = await api("/api/bootstrap");
-  state.effective = data.roles;
+  state.universe = data.universe;
+  state.effective = {};
+  for (const [name, entry] of Object.entries(state.universe)) state.effective[name] = entry.def;
+  state.defs = structuredClone(state.effective);
   state.defaults = data.defaults;
   state.metrics = data.metrics;
   state.metricMeta = data.metricMeta;
   state.levels = data.levels;
   state.thinkingFactors = data.thinkingFactors;
   state.lockPath = data.lockPath;
-  state.defs = structuredClone(data.roles);
   initTips();
   renderMeta(data);
   renderRoles();

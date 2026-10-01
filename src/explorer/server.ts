@@ -20,13 +20,15 @@ import { extname, resolve, sep } from "node:path";
 import { SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
-import { KNOWN_METRICS } from "../settings.ts";
+import { KNOWN_METRICS, type UniverseEntry } from "../settings.ts";
 import { METRIC_META, explainModel, rankRows } from "./explain.ts";
 
 export type ExplorerOpts = {
   webDir: string;
   lockPath: string;
   getSnapshot(): { rank: RankData; roles: Record<string, RoleDef>; defaults: Record<string, RoleDef> };
+  /** Every known role (disabled included) with kind/enabled/locked + effective def. */
+  universe: Record<string, UniverseEntry>;
   /** Re-runs loadRankData({ refresh: true }) and swaps the snapshot. */
   refresh(): Promise<void>;
 };
@@ -117,6 +119,7 @@ function bootstrapPayload(opts: ExplorerOpts): object {
   return {
     roles: snap.roles,
     defaults: snap.defaults,
+    universe: opts.universe,
     metrics: Object.keys(KNOWN_METRICS),
     metricMeta: METRIC_META,
     levels: Object.keys(SUFFIX_LEVELS),
@@ -137,7 +140,10 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   const role = body.role;
   const def = body.def as unknown as RoleDef;
   const snap = opts.getSnapshot();
-  const baselineDef = snap.roles[role] ?? snap.defaults[role];
+  // Enabled roles baseline against their resolved def; a disabled or lock-file-only
+  // role against its effective def (shipped defaults merged with its overrides) so
+  // selecting it still shows deltas, not an empty baseline.
+  const baselineDef = snap.roles[role] ?? opts.universe[role]?.def ?? snap.defaults[role];
   const baseline = baselineDef ? rankRole(baselineDef, snap.rank.models) : [];
   const rows = rankRows(def, snap.rank.models, baseline);
   sendJson(res, 200, {

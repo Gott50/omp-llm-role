@@ -642,6 +642,17 @@ the CLI.
   every change (120 ms debounce). Weights are edited freely (no implicit
   rescaling): the `Σ` readout turns red until `|Σ − 1| ≤ 0.01`, and `Normalize`
   rescales in one click. Changing the price weight visibly changes `λ`.
+- **Role tabs** — the tab strip lists every role the plugin knows, not just the
+  ones it ranks today: the nine omp built-in roles, the shipped opt-in
+  `designer`, and any role present only in the lock file. Each tab is tinted by
+  provenance — `default` (omp built-in), `plugin` (shipped but opt-in), `user`
+  (lock-file only) — and a disabled role is muted and dashed. Selecting a
+  disabled role still ranks its models; its `Δ` column measures against the
+  role's effective def.
+- **Enabled toggle** — the editor's `Enabled` checkbox opts a role in or out.
+  Exporting writes `enabled` into the lock file; the next updater run drops a
+  disabled role from the resolved set and deletes its `modelRoles.<role>` line,
+  and re-enabling restores it. Disabling one role never touches the others.
 - **New role** — the `+ new role` tab creates a role from a template
   (`general/code/price/throughput`, Σ 1.0) that you then tune and Export. A role
   with no shipped default is fully editable: `Reset to shipped default` is
