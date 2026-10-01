@@ -14,7 +14,8 @@ import { join } from "node:path";
 import { computeRankings, loadRankData, META_LEVELS, type Ranked, type RankData } from "./engine.ts";
 import { currentRankingId, enrichThinkingLevels, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
-import { readPluginSettingsMap, resolveSettings, SHIPPED_AGENTS, type ResolvedSettings } from "./settings.ts";
+import { readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
+import { discoverAgentPins } from "./agent-pins.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
 
 export type DecisionReason = "adopted" | "switched" | "switched-cost" | "kept-margin" | "kept-eligible" | "no-current";
@@ -105,16 +106,20 @@ const LOCK_ABORT = "omp-llm-role: could not acquire the refresh lock (concurrent
 const CONFLICT_ABORT = `omp-llm-role: config.yml kept changing underneath (${CONFLICT_RETRIES} mtime conflicts) — no write`;
 
 /**
- * `task.disabledAgents` entries the plugin manages: a shipped agent is disabled
- * unless its same-named role is in the resolved set (opt-in roles gate their
- * agent). Other entries are left alone.
+ * `task.disabledAgents` entries the plugin manages: each discovered agent is
+ * disabled exactly while the role its `model:` chain pins is disabled. An agent
+ * whose pinned role is unknown (the `@role, @default` chain falls back) or that
+ * pins no role is left alone, as are unrelated entries.
  */
-function agentDisablePatch(settings: ResolvedSettings): Pick<ConfigPatch, "agentDisableAdds" | "agentDisableRemoves"> {
+function agentDisablePatch(raw: Record<string, unknown>, settings: ResolvedSettings): Pick<ConfigPatch, "agentDisableAdds" | "agentDisableRemoves"> {
+  const universe = roleUniverse(raw, settings.roles);
   const agentDisableAdds: string[] = [];
   const agentDisableRemoves: string[] = [];
-  for (const name of SHIPPED_AGENTS) {
-    if (name in settings.roles) agentDisableRemoves.push(name);
-    else agentDisableAdds.push(name);
+  for (const pin of discoverAgentPins()) {
+    const entry = universe[pin.role];
+    if (entry === undefined) continue; // unknown role — the chain falls back, leave the agent alone
+    if (entry.enabled) agentDisableRemoves.push(pin.agent);
+    else agentDisableAdds.push(pin.agent);
   }
   return { agentDisableAdds, agentDisableRemoves };
 }
@@ -169,7 +174,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
     const dir = agentDir();
     const configPath = join(dir, "config.yml");
-    const agentDisables = agentDisablePatch(settings);
+    const agentDisables = agentDisablePatch(raw, settings);
 
     // The settings-derived agent sync is not day-gated: enabling/disabling a
     // shipped role must take effect on the next session, not the next day.
