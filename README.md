@@ -118,8 +118,10 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   thinking,lambda}`. `weights: null` opts a role out; a new role with a full
   weight set gets managed too. `enabled: false` drops a shipped role from the
   resolved set (the shipped `designer` default) — set `roles.designer.enabled=true`
-  to opt in. Invalid settings abort the run with the offending role/key and no
-  write.
+  to opt in. A role that leaves the resolved set (disabled or removed) has its
+  `modelRoles.<role>` line deleted on the next run, so a stale pin cannot keep
+  routing `@<role>`. Invalid settings abort the run with the offending role/key
+  and no write.
 - **State files** (next to the config): `llm-role-state.json` (day gate,
   managed roles, last selectors, plugin-owned chain keys, previous
   `modelRoles` snapshot), `llm-role-history.jsonl` (one row per completed
@@ -555,9 +557,11 @@ Design Arena failures are non-fatal.
   with the role disabled the unresolved first entry is skipped and the child
   runs on `@default` (a bare `@designer` would hard-fail — an unresolved `@x`
   is a literal pattern, not a parent-model fallback; verified live, spawn
-  record `modelRole: "default"` with `modelRoles.designer` absent). The CLI
-  report keeps documenting all shipped roles via `--all` (the default now ranks
-  the nine built-in roles and omits the Design Arena legend).
+  record `modelRole: "default"` with `modelRoles.designer` absent). A role that
+  leaves the managed set now has its `modelRoles.<role>` line deleted (new
+  `roleRemovals` in `ConfigPatch`), so the stale pin is cleaned up on the next
+  run. The CLI report keeps documenting all shipped roles via `--all` (the
+  default now ranks the nine built-in roles and omits the Design Arena legend).
 - Advisor rebalance (2026-09-30): `advisor` weights now
   `{reasoning 0.3498, general 0.2449, long_context 0.1004, price 0.20,
   throughput 0.1049}` (Σ 1.0). `math` dropped (76.3% coverage, r 0.759 with

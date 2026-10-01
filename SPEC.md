@@ -277,6 +277,11 @@ Maintenance rules:
   (b) are no longer referenced by any managed role's selector. Unwritten, unreferenced
   keys (e.g. the owner's hand-maintained `openrouter/~deepseek/deepseek-v4-flash-latest`
   entry) are left alone unless the plugin needs to write that exact key (then replace).
+- Delete the `modelRoles.<role>` line for a role the plugin managed on a previous run
+  (state `managedRoles`) but no longer does — disabled via `enabled: false` /
+  `weights: null`, or removed from settings. A stale pin would otherwise keep routing
+  `@<role>` (the shipped `designer` agent falls through to its `@default` chain entry
+  only when the key is gone).
 
 ## 7. Plugin settings schema
 
@@ -361,15 +366,19 @@ Files (all under `~/.omp/agent/`, next to the config they describe):
 
 1. Acquire advisory lock `~/.omp/agent/.llm-role-refresh.lock` (serializes concurrent
    session starts).
-2. Read `~/.omp/agent/config.yml`; parse (YAML); validate structure.
+2. Read `~/.omp/agent/config.yml`; parse with the line-oriented reader (no runtime YAML
+   dependency — required for marketplace installs); validate structure (block-style
+   top level, no inline/indented/duplicate blocks).
 3. Build the patched document as **text**, line-oriented: rewrite only value tokens of
    managed roles inside the top-level `modelRoles:` block (upsert missing roles at the
-   block end, two-space indent) and the managed keys inside `retry.fallbackChains:`.
-   All other bytes identical — comments, blank lines, unknown keys untouched.
+   block end, two-space indent; delete the line for a role that left the managed set,
+   §6.4) and the managed keys inside `retry.fallbackChains:`. All other bytes identical
+   — comments, blank lines, unknown keys untouched.
 4. Values always emitted YAML-quoted (`"openrouter/z-ai/glm-5.3-flash:high"`).
 5. mtime re-check before write; if config.yml changed underneath, re-read + recompute
    (max 3 attempts). Atomic: temp file + `rename`.
-6. Re-parse the patched text; on any YAML failure abort without writing. Never corrupt.
+6. Read the patched text back through the same line-oriented reader and assert it equals
+   the intended state; on any mismatch abort without writing. Never corrupt.
 
 ## 9. Error handling
 
