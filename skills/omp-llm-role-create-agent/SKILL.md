@@ -1,20 +1,21 @@
 ---
 name: omp-llm-role-create-agent
-description: "Use when a user wants a new omp subagent for a specific purpose wired to an omp-llm-role model role: author the agent .md per agents-guide.md, add the role with purpose-fit weights, verify routing, tune in the explorer."
+description: "Use when a user wants a new omp subagent for a specific purpose wired to an omp-llm-role model role: author the agent .md with omp's agent-creation feature, add the role with purpose-fit weights, verify routing, tune in the explorer."
 ---
 
 # Create an agent + model role for a specific purpose
 
 Produces three things, in order:
 
-1. an agent `.md` (the routing unit) authored per `agents-guide.md`;
+1. an agent `.md` (the routing unit) authored by **omp's agent-creation feature** —
+   the `/agents` hub's LLM architect, or `/create-agent`, which runs the same
+   architect in-process (`src/agent-architect.ts`);
 2. a `roles.<name>` entry in the plugin settings lock file, with weights fitted to the purpose;
 3. a role that is visible and tunable in the explorer.
 
 This skill ships inside the plugin at `<plugin>/skills/omp-llm-role-create-agent/SKILL.md`;
 the plugin root is two levels up. Resolve it from the skill directory the harness
-reports, or fall back to `~/.omp/plugins/node_modules/omp-llm-role`. `agents-guide.md`
-sits at the plugin root.
+reports, or fall back to `~/.omp/plugins/node_modules/omp-llm-role`.
 
 **Check `/create-agent` first.** The plugin registers an omp command that does all
 three steps in one shot:
@@ -23,13 +24,17 @@ three steps in one shot:
 /create-agent --name <n> --purpose "<one sentence>"
 ```
 
-It fits the weights from the archetype table (§2), writes the validated role, authors
-the agent `.md` (archetype tool allowlist, `model: "@<n>, @default"`, a scaffold body
-built from the archetype's `<criteria>`), and runs the updater in-process so
-`modelRoles.<n>` lands in `config.yml` — no second step. `--list-archetypes` prints the
-table; `--archetype`/`--weights`/`--required`/`--thinking`/`--tools`/`--scope`/
-`--body-file`/`--force` override each piece. Outside a session it is
-`node <plugin>/create-agent.ts …` (then `node <plugin>/update-roles.ts` to wire it).
+It runs **omp's agent-creation architect** in-process to author the routing rule and
+the body (the same architect the `/agents` hub runs), then adds the `model: "@<n>,
+@default"` and `tools:` frontmatter omp's own writer omits. It fits the weights from the
+archetype table (§2), asks for any extra benchmarks to fold in (listing every weightable
+metric so you can avoid duplicates), writes the validated role, and runs the updater
+in-process so `modelRoles.<n>` lands in `config.yml` — no second step. `--list-archetypes`
+and `--list-benchmarks` print the tables; `--archetype`/`--weights`/`--required`/
+`--thinking`/`--tools`/`--benchmarks`/`--scope`/`--body-file`/`--force` override each
+piece. Outside a session it is `node <plugin>/create-agent.ts …` (then
+`node <plugin>/update-roles.ts` to wire it); the CLI has no omp session, so it uses the
+archetype template instead of the architect.
 
 Use this skill instead when the artifact needs authoring the command cannot infer: a
 structured `output:` schema, a read-only `<critical>` contract with the tools to match,
@@ -42,15 +47,16 @@ Ask (or infer) and write down:
 
 - **name** — `[A-Za-z0-9_-]+`, not `main`/`sub`, not an existing role or agent.
 - **purpose** — one sentence; this becomes the delegation hint the main model reads.
-- **tools** — the smallest set that does the job (`agents-guide.md` §4).
+- **tools** — the smallest set that does the job (omp's builtin tool names).
 - **read-only?** — if yes, every tool must be in the read-only set.
 - **output** — a structured yield schema, or free text.
 - **thinking** — the effort level the role should run at.
 
 ## 1. Author the agent
 
-Follow `agents-guide.md` exactly (frontmatter contract §3, body conventions §5,
-YAML gotchas §9). Non-negotiables:
+Let **omp's agent-creation feature** write the routing rule and the body: run
+`/create-agent` (which runs the architect in-process), or use the `/agents` hub's
+**New agent** flow and then add the frontmatter below. Non-negotiables:
 
 - `description` is a routing rule: "MUST be used for …", what it returns, when to skip.
 - `model: "@<name>, @default"` — the chain keeps the agent spawnable while the role is

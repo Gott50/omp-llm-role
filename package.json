@@ -28,8 +28,7 @@
     "explore.ts",
     "create-role.ts",
     "create-agent.ts",
-    "SPEC.md",
-    "agents-guide.md"
+    "SPEC.md"
   ],
   "scripts": {
     "explore": "node explore.ts",

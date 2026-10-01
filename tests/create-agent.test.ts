@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { createAgent, type CreateAgentRequest } from "../src/agent-create.ts";
+import { applyExtraBenchmarks, createAgent, formatBenchmarks, type CreateAgentRequest } from "../src/agent-create.ts";
 import { isRecord } from "../src/guards.ts";
 import { fitArchetype } from "../src/role-archetypes.ts";
-import { readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
+import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 
 /** Temp home: a lock file with a plugins block, plus an agents dir the plugin
  * resolves through `OMP_LLM_ROLE_AGENT_DIR` (src/state.ts `agentDir`). */
@@ -105,6 +105,62 @@ test("createAgent --dry-run validates without touching the lock or the agents di
   assert.equal(result.dryRun, true);
   assert.equal(readFileSync(lockPath, "utf8"), before);
   assert.deepEqual(readdirSync(dir), ["omp-plugins.lock.json"]);
+});
+
+test("createAgent uses omp's architect spec for the description and body", () => {
+  const { lockPath, agentsDir } = workspace();
+  const spec = {
+    identifier: "changelog",
+    whenToUse: "Use this agent when drafting changelogs from git history.",
+    systemPrompt: "You are a release-notes writer.\n\n<critical>\nRead-only.\n</critical>",
+  };
+
+  const result = createAgent(request(lockPath, { spec }));
+  assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+
+  const text = readFileSync(join(agentsDir, "changelog.md"), "utf8");
+  const fm = frontmatter(text);
+  // The architect's routing rule and body replace the archetype template...
+  assert.equal(fm.description, spec.whenToUse);
+  assert.match(text, /You are a release-notes writer\./);
+  assert.doesNotMatch(text, /Work the prose writer role/);
+  // ...but the plugin still adds the frontmatter omp's own writer omits.
+  assert.equal(fm.model, "@changelog, @default");
+  assert.equal(fm.tools, "read, grep, glob, find, write, edit");
+});
+
+test("applyExtraBenchmarks adds new metrics, skips duplicates/unknown, and keeps the invariants", () => {
+  const base = { general: 0.4, code: 0.2, price: 0.2, throughput: 0.2 };
+
+  const applied = applyExtraBenchmarks(base, ["writing", "code", "nope"]);
+  assert.deepEqual(applied.added, ["writing"]);
+  assert.deepEqual(applied.duplicates, ["code"]);
+  assert.deepEqual(applied.unknown, ["nope"]);
+
+  const sum = Object.values(applied.weights).reduce((total, weight) => total + weight, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-9, `weights sum to ${sum}`);
+  const nonPrice = Object.entries(applied.weights)
+    .filter(([metric]) => metric !== "price")
+    .reduce((total, [, weight]) => total + weight, 0);
+  assert.ok(Math.abs(nonPrice - (1 - applied.weights.price)) < 1e-9, `non-price sum ${nonPrice}`);
+  assert.ok(applied.weights.writing > 0);
+
+  // The rebalanced set still passes the plugin's own validator.
+  const { errors } = resolveSettings({
+    roles: { x: { weights: applied.weights, required: ["general", "price", "throughput"] } },
+  });
+  assert.deepEqual(errors, []);
+
+  // An empty list is a no-op.
+  assert.deepEqual(applyExtraBenchmarks(base, []).weights, base);
+});
+
+test("formatBenchmarks lists every weightable metric and marks the role's own", () => {
+  const text = formatBenchmarks({ general: 0.5, price: 0.5 });
+  for (const metric of Object.keys(KNOWN_METRICS)) {
+    assert.match(text, new RegExp(`\\b${metric}\\b`), `missing ${metric}`);
+  }
+  assert.match(text, /general\s+General index\s+<- in this role's weights/);
 });
 
 test("fitArchetype scores by matched keyword length and falls back on no match", () => {

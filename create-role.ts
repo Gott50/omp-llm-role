@@ -155,7 +155,7 @@ function main(): void {
   }
   console.log(`create-role: wrote roles.${args.name} to ${args.lockPath}`);
   if (result.backupPath) console.log(`  backup: ${result.backupPath}`);
-  console.log(`  next: author the agent that pins model: "@${args.name}, @default" (see agents-guide.md),`);
+  console.log(`  next: author the agent that pins model: "@${args.name}, @default" — or run /create-agent,`);
   console.log(`        then tune it in the explorer: node explore.ts`);
 }
 

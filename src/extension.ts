@@ -13,7 +13,8 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatCreateAgentReport, parseCreateAgentArgs, tokenizeArgs } from "./agent-create.ts";
+import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentArgs, tokenizeArgs } from "./agent-create.ts";
+import { generateAgentSpec } from "./agent-architect.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
 import { loadRankData } from "./engine.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
@@ -26,7 +27,13 @@ const WEB_DIR = fileURLToPath(new URL("../web", import.meta.url));
 /** Structural slice of the extension context this plugin touches. */
 type ExtContext = {
   hasUI: boolean;
-  ui: { notify(message: string, level?: "info" | "warning" | "error"): void };
+  cwd: string;
+  ui: {
+    notify(message: string, level?: "info" | "warning" | "error"): void;
+    /** Interactive prompts; absent in print/RPC mode (guard on `hasUI`). */
+    input?(title: string, placeholder?: string): Promise<string | undefined>;
+    select?(title: string, options: { label: string; description?: string }[]): Promise<string | undefined>;
+  };
   modelRegistry: {
     getApiKeyForProvider(provider: string): string | undefined | Promise<string | undefined>;
     getAvailable(): unknown[];
@@ -222,7 +229,7 @@ export default function (pi: ExtensionAPI) {
   // the updater run at the end is the same path `/refresh-roles` takes, so the
   // new role is ranked and written into config.yml without a second step.
   pi.registerCommand("create-agent", {
-    description: "Create an omp subagent plus its model role, weights fitted to its purpose",
+    description: "Create an omp subagent (via omp's agent-creation architect) plus its model role",
     handler: async (args, ctx: ExtContext) => {
       const parsed = parseCreateAgentArgs(tokenizeArgs(typeof args === "string" ? args : ""));
       if (!parsed.ok) {
@@ -237,6 +244,10 @@ export default function (pi: ExtensionAPI) {
         notifyLines(ctx, formatArchetypes());
         return;
       }
+      if (parsed.listBenchmarks) {
+        notifyLines(ctx, formatBenchmarks());
+        return;
+      }
       if (parsed.bodyFile !== undefined) {
         try {
           parsed.request.body = readFileSync(parsed.bodyFile, "utf8");
@@ -245,6 +256,43 @@ export default function (pi: ExtensionAPI) {
           return;
         }
       }
+
+      // 1. omp's agent-creation architect authors the routing rule and the body
+      //    (the same architect the `/agents` hub runs). `--body`/`--body-file`
+      //    skip it; the plugin still adds the model/tools frontmatter.
+      if (parsed.request.body === undefined) {
+        notifyLines(ctx, `create-agent: running omp's agent-creation architect for "${parsed.request.purpose}"…`);
+        try {
+          parsed.request.spec = await generateAgentSpec({
+            description: parsed.request.purpose,
+            cwd: ctx.cwd,
+            model: ctx.models?.current(),
+            modelRegistry: ctx.modelRegistry,
+          });
+        } catch (err) {
+          notifyLines(ctx, `create-agent: architect failed: ${err instanceof Error ? err.message : err}`);
+          return;
+        }
+      }
+
+      // 2. Ask for extra benchmarks. The list is every weightable metric, so the
+      //    user can see what is already in use and avoid duplicates. `--benchmarks`
+      //    covers headless runs, where there is no prompt.
+      if (ctx.hasUI && ctx.ui.input && parsed.request.extraBenchmarks === undefined) {
+        notifyLines(ctx, formatBenchmarks());
+        const answer = await ctx.ui.input(
+          "Additional benchmarks",
+          "comma-separated metric names to add to the weights, or empty",
+        );
+        if (answer !== undefined) {
+          parsed.request.extraBenchmarks = answer
+            .split(",")
+            .map((token) => token.trim())
+            .filter((token) => token !== "");
+        }
+      }
+
+      // 3. Write the role + the agent file, then wire `modelRoles.<name>` in-process.
       const result = createAgent(parsed.request);
       if (!result.ok) {
         notifyLines(ctx, `create-agent: ${result.errors.join("\n")}`);

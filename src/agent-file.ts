@@ -1,8 +1,10 @@
 /**
- * Rendering and placement for omp agent `.md` files (the `agents-guide.md`
- * contract, §1–§3, §9).
+ * Rendering and placement for omp agent `.md` files.
  *
- * A file-based agent must declare what a bundled one gets from code: a routing
+ * The routing rule and the body come from omp's agent-creation architect
+ * (`src/agent-architect.ts`, the same architect the `/agents` hub runs); this
+ * module adds the `model:`/`tools:` frontmatter omp's own writer omits. A
+ * file-based agent must declare what a bundled one gets from code: a routing
  * description, a model pin, and (deliberately) a tools allowlist. Two rules the
  * generator must not get wrong:
  *
@@ -45,7 +47,7 @@ export function isReadOnlyTools(tools: readonly string[]): boolean {
   return tools.length > 0 && tools.every((tool) => tool in READ_ONLY_TOOLS);
 }
 
-/** Agent names omp reserves for session sentinels (`agents-guide.md` §2). */
+/** Agent names omp reserves for session sentinels (omp's `parseAgentFields`). */
 export const RESERVED_AGENT_NAMES: Record<string, true> = { main: true, sub: true };
 
 /** Valid agent/role name: what omp accepts, and what is safe unquoted in YAML. */
@@ -68,7 +70,7 @@ function quoteYaml(text: string): string {
 
 export type AgentFileSpec = {
   name: string;
-  /** The routing rule the main model dispatches on (agents-guide.md §1). */
+  /** The routing rule the main model dispatches on (omp's task-agent contract). */
   description: string;
   /** `@<role>, @default` — always the chain, never the bare alias. */
   model: string;

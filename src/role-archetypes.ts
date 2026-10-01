@@ -29,7 +29,7 @@ export type Archetype = {
   weights: Record<string, number>;
   required: string[];
   thinking: SuffixLevel;
-  /** The agent's default `tools:` allowlist (agents-guide.md §4). */
+  /** The agent's default `tools:` allowlist (omp's builtin tool names). */
   tools: string[];
   /** Require image input (`filters.image`). */
   image?: boolean;

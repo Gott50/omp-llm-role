@@ -18,7 +18,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatCreateAgentReport, parseCreateAgentArgs } from "./src/agent-create.ts";
+import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentArgs } from "./src/agent-create.ts";
 
 function fail(message: string): never {
   console.error(`create-agent: ${message}`);
@@ -34,6 +34,10 @@ if (parsed.help) {
 }
 if (parsed.listArchetypes) {
   console.log(formatArchetypes());
+  process.exit(0);
+}
+if (parsed.listBenchmarks) {
+  console.log(formatBenchmarks());
   process.exit(0);
 }
 

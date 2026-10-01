@@ -72,7 +72,8 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
     extension.ts            # Bun/omp entry: session_start day gate + /refresh-roles + /explore-roles + /create-agent
     role-settings.ts        # the one validated role write path (validate → merge → backup → atomic write)
     role-archetypes.ts      # purpose -> weight archetype table (10 sets) + keyword fitting
-    agent-file.ts           # agent .md rendering/placement per agents-guide.md
+    agent-file.ts           # agent .md rendering/placement (frontmatter; body from omp's architect)
+    agent-architect.ts      # omp's agent-creation architect, run in-process (extension-only)
     agent-create.ts         # /create-agent core: archetype -> role -> agent .md (+ shared arg parser/report)
     explorer/boot.ts        # shared explorer launcher (in-process server: bind, port fallback, close)
     explorer/server.ts      # explorer HTTP surface (static SPA + JSON API)
@@ -459,17 +460,24 @@ session start so enabling/disabling a shipped role takes effect on the next sess
   re-notifies the running URL; the handle is closed on `session_shutdown`. `node
   explore.ts` is the same server via `src/explorer/boot.ts`, for use without a session.
 - **`/create-agent --name <n> --purpose "<text>" [flags]`**: creates the agent
-  **and** its role in one command. Fits the weights to the purpose from
+  **and** its role in one command. Runs **omp's agent-creation architect**
+  in-process (`src/agent-architect.ts`: the `/agents` hub's prompt shipped verbatim
+  in `src/prompts/`, run through `createAgentSession` with no tools) to author the
+  routing rule and the body, then adds the `model: "@<n>, @default"` and `tools:`
+  frontmatter omp's own writer omits. Fits the weights to the purpose from
   `src/role-archetypes.ts` (10 sets; `--archetype` forces one, `--weights`
-  overrides), writes the validated role, authors `~/.omp/agent/agents/<n>.md`
-  (`--scope project` → `<anchor>/.omp/agents/`) with
-  `model: "@<n>, @default"`, then runs the updater in-process so
+  overrides), asks the user for extra benchmarks to fold in (listing every
+  weightable metric with `--list-benchmarks`; `--benchmarks m,...` covers headless
+  runs), writes the validated role, authors `~/.omp/agent/agents/<n>.md`
+  (`--scope project` → `<anchor>/.omp/agents/`), then runs the updater in-process so
   `modelRoles.<n>` lands in `config.yml`. All-or-nothing: an existing agent file
   without `--force`, a name outside `[A-Za-z0-9_-]+`, a reserved name, or a
   weight set violating Σ = 1 / Σ(non-price) = 1 − w_price aborts **before** either
-  write. `--body-file` replaces the archetype body scaffold. `--list-archetypes`
-  prints the table. `node create-agent.ts` is the same code path without a session
-  (it stops after the two writes and points at `update-roles.ts`).
+  write. `--body-file` replaces the architect body. `--list-archetypes` prints the
+  archetype table. `node create-agent.ts` is the same code path without a session,
+  except it has no omp session: it uses the archetype template instead of the
+  architect and takes `--benchmarks` instead of prompting (it stops after the two
+  writes and points at `update-roles.ts`).
 - **Headless**: `node update-roles.ts [--dry-run] [--json]` — always runs (no day gate;
   explicit invocation is consent), `--dry-run` prints decisions without writing, `--json`
   emits the decisions payload for scripting.
@@ -504,10 +512,13 @@ session start so enabling/disabling a shipped role takes effect on the next sess
 8. **Agent creation** — `create-agent` fixtures: a purpose fits the expected archetype;
    a `--weights` set violating Σ(non-price) = 1 − w_price is refused; an existing agent
    file without `--force` is refused **and writes no role**; `--dry-run` writes neither
-   file. Live: `/create-agent` in a session (RPC mode dispatches slash commands) → the
-   updater line `@<n>: (unset) -> <selector>` + `modelRoles.<n>` in `config.yml`, then a
-   headless spawn whose record reads `{"agent":"<n>","agentSource":"user","modelRole":"<n>"}`
-   with `resolvedModel` equal to the role's selector.
+   file; an architect `spec` replaces the description/body; `applyExtraBenchmarks` adds
+   new metrics, skips duplicates/unknown, and keeps both invariants. Live:
+   `/create-agent` in a session (RPC mode dispatches slash commands) → the architect
+   authors the body, the updater line `@<n>: (unset) -> <selector>` + `modelRoles.<n>`
+   land in `config.yml`, then a headless spawn whose record reads
+   `{"agent":"<n>","agentSource":"user","modelRole":"<n>"}` with `resolvedModel` equal
+   to the role's selector.
 
 ## 12. Out of scope
 

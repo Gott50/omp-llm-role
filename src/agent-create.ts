@@ -16,9 +16,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_NAME_RE, RESERVED_AGENT_NAMES, isReadOnlyTools, projectAgentsDir, renderAgentFile, userAgentsDir, writeAgentFile } from "./agent-file.ts";
 import type { RoleDef, SuffixLevel } from "./engine.ts";
+import { METRIC_META } from "./explorer/explain.ts";
 import { ARCHETYPES, archetypeById, fitArchetype, type Archetype } from "./role-archetypes.ts";
 import { writeRoleSettings } from "./role-settings.ts";
-import { PLUGIN_SETTINGS_PATH } from "./settings.ts";
+import { KNOWN_METRICS, PLUGIN_SETTINGS_PATH } from "./settings.ts";
+
+/** The architect's output (omp's `/agents` hub contract): the routing rule and
+ * the system prompt, plus the identifier omp would use for the file name. */
+export type AgentSpec = {
+  identifier: string;
+  whenToUse: string;
+  systemPrompt: string;
+};
 
 export type CreateAgentRequest = {
   name: string;
@@ -35,6 +44,17 @@ export type CreateAgentRequest = {
   image?: boolean;
   /** Override the generated body. */
   body?: string;
+  /**
+   * omp's architect output. When present, its `whenToUse` becomes the routing
+   * description and its `systemPrompt` the body — the template is not used.
+   */
+  spec?: AgentSpec;
+  /**
+   * Extra benchmarks to fold into the role's weights (the create flow asks the
+   * user for these). Names already in the weights are duplicates; names outside
+   * `KNOWN_METRICS` are unknown. Both are reported, not fatal.
+   */
+  extraBenchmarks?: string[];
   /** Overwrite an existing agent file. */
   force: boolean;
   dryRun: boolean;
@@ -55,11 +75,13 @@ export type CreateAgentResult =
       readOnly: boolean;
       backupPath: string | null;
       dryRun: boolean;
+      /** How the user-named benchmarks folded into the weights. */
+      bench: BenchmarkApplication;
     }
   | { ok: false; errors: string[] };
 
-/** The generated body's `<critical>` for a writer; read-only agents restate their
- * contract instead (agents-guide.md §5). */
+/** The template body's `<critical>` for a writer; read-only agents restate their
+ * contract instead. Used only when no architect spec is supplied. */
 const WRITER_CRITICAL =
   "Keep the change scoped to the stated purpose. You NEVER widen it — no extra validation, telemetry, retries, or unrelated refactors — and you NEVER suppress a symptom to make a check pass.";
 
@@ -140,6 +162,67 @@ function checkWeightMath(name: string, weights: Record<string, number>, required
   return errors;
 }
 
+/** The result of folding user-named benchmarks into a role's weights. */
+export type BenchmarkApplication = {
+  weights: Record<string, number>;
+  added: string[];
+  duplicates: string[];
+  unknown: string[];
+};
+
+/**
+ * Fold user-named benchmarks into a role's weights. A name already in the
+ * weights is a duplicate; a name outside `KNOWN_METRICS` is unknown (the
+ * plugin's validator would reject it). Each added metric starts at the mean
+ * non-price weight, then every non-price weight is rescaled so
+ * Σ(non-price) = 1 − price — the invariant `rankRole` needs and the validator
+ * only half-checks. Nothing is added when the list is empty.
+ */
+export function applyExtraBenchmarks(weights: Record<string, number>, metrics: readonly string[]): BenchmarkApplication {
+  const added: string[] = [];
+  const duplicates: string[] = [];
+  const unknown: string[] = [];
+  const next: Record<string, number> = { ...weights };
+  const price = next.price ?? 0;
+  const nonPriceKeys = Object.keys(next).filter((key) => key !== "price");
+  const mean = nonPriceKeys.length > 0 ? nonPriceKeys.reduce((sum, key) => sum + next[key], 0) / nonPriceKeys.length : 0.1;
+  for (const raw of metrics) {
+    const metric = raw.trim();
+    if (metric === "") continue;
+    if (metric in next) {
+      duplicates.push(metric);
+      continue;
+    }
+    if (!(metric in KNOWN_METRICS)) {
+      unknown.push(metric);
+      continue;
+    }
+    next[metric] = mean;
+    added.push(metric);
+  }
+  if (added.length > 0) {
+    const keys = Object.keys(next).filter((key) => key !== "price");
+    const sum = keys.reduce((total, key) => total + next[key], 0);
+    const target = 1 - price;
+    for (const key of keys) next[key] = (next[key] * target) / sum;
+  }
+  return { weights: next, added, duplicates, unknown };
+}
+
+/**
+ * The weightable benchmarks, for the create flow's "list all benchmarks in use,
+ * to avoid duplicates". `weights` marks the ones already in the role.
+ */
+export function formatBenchmarks(weights?: Record<string, number>): string {
+  const lines = ["Benchmarks in use (weightable metrics):"];
+  for (const metric of Object.keys(KNOWN_METRICS)) {
+    const label = METRIC_META[metric]?.label ?? "";
+    const mark = weights?.[metric] !== undefined ? "  <- in this role's weights" : "";
+    lines.push(`  ${metric.padEnd(14)} ${label}${mark}`);
+  }
+  return lines.join("\n");
+}
+
 /** Shared empty match list for an explicitly chosen archetype (no keyword hits). */
 const EMPTY_MATCHED: string[] = [];
 
@@ -175,6 +258,8 @@ export function createAgent(request: CreateAgentRequest): CreateAgentResult {
 
   const resolved = resolveRole(request);
   if ("errors" in resolved) return { ok: false, errors: [...errors, ...resolved.errors] };
+  const bench = applyExtraBenchmarks(resolved.def.weights, request.extraBenchmarks ?? []);
+  resolved.def.weights = bench.weights;
   errors.push(...checkWeightMath(name, resolved.def.weights, resolved.def.required));
 
   const tools = request.tools ?? resolved.archetype.tools;
@@ -191,19 +276,24 @@ export function createAgent(request: CreateAgentRequest): CreateAgentResult {
   const roleWrite = writeRoleSettings(request.lockPath, { [name]: resolved.def }, { dryRun: true });
   if (!roleWrite.ok) return { ok: false, errors: roleWrite.errors };
   if (request.dryRun) {
-    return { ok: true, name, archetype: resolved.archetype, matched: resolved.matched, def: resolved.def, agentPath, model, readOnly, backupPath: null, dryRun: true };
+    return { ok: true, name, archetype: resolved.archetype, matched: resolved.matched, def: resolved.def, agentPath, model, readOnly, backupPath: null, dryRun: true, bench };
   }
 
   const written = writeRoleSettings(request.lockPath, { [name]: resolved.def });
   if (!written.ok) return { ok: false, errors: written.errors };
 
-  const text = renderAgentFile({ name, description: routingDescription(request.purpose), model, tools, body: buildBody(request, resolved.archetype, readOnly) });
+  // omp's architect supplies the routing rule and the body; the plugin adds the
+  // `model:`/`tools:` frontmatter omp's own writer omits. Without a spec (the
+  // CLI, or a caller that skipped the architect) the archetype template is used.
+  const description = request.spec?.whenToUse ?? routingDescription(request.purpose);
+  const body = request.spec?.systemPrompt ?? buildBody(request, resolved.archetype, readOnly);
+  const text = renderAgentFile({ name, description, model, tools, body });
   const agent = writeAgentFile(agentPath, text, request.force);
   if (!agent.ok) {
     return { ok: false, errors: [`roles.${name} was written, but the agent file was not: ${agent.error}`] };
   }
 
-  return { ok: true, name, archetype: resolved.archetype, matched: resolved.matched, def: resolved.def, agentPath, model, readOnly, backupPath: written.backupPath, dryRun: false };
+  return { ok: true, name, archetype: resolved.archetype, matched: resolved.matched, def: resolved.def, agentPath, model, readOnly, backupPath: written.backupPath, dryRun: false, bench };
 }
 
 /** The ok branch of a create run, for the report formatters. */
@@ -226,6 +316,8 @@ export const CREATE_AGENT_USAGE = [
   "  --required <m,...>     eligibility gate (default: the archetype's)",
   "  --thinking <level>     off|minimal|low|medium|high|xhigh|max|auto",
   "  --tools <a,b,...>      builtin tool allowlist (default: the archetype's)",
+  "  --benchmarks <m,...>   extra benchmarks to fold into the weights (see --list-benchmarks)",
+  "  --list-benchmarks      print the weightable benchmarks and exit",
   "  --scope <user|project> where the agent file goes (default: user)",
   "  --image                require image input (filters.image)",
   "  --body <text>          override the generated agent body",
@@ -288,7 +380,7 @@ function parseList(spec: string): string[] {
 }
 
 export type ParsedCreateAgentArgs =
-  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; help: boolean }
+  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean }
   | { ok: false; error: string };
 
 /** Parse the flags of `/create-agent` / `create-agent.ts` into a request. */
@@ -304,6 +396,7 @@ export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
   let json = false;
   let bodyFile: string | undefined;
   let listArchetypes = false;
+  let listBenchmarks = false;
   let help = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -314,6 +407,10 @@ export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
     }
     if (flag === "--list-archetypes") {
       listArchetypes = true;
+      continue;
+    }
+    if (flag === "--list-benchmarks") {
+      listBenchmarks = true;
       continue;
     }
     if (flag === "--force") {
@@ -344,6 +441,7 @@ export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
     } else if (flag === "--required") request.required = parseList(value);
     else if (flag === "--thinking") request.thinking = value as SuffixLevel;
     else if (flag === "--tools") request.tools = parseList(value);
+    else if (flag === "--benchmarks") request.extraBenchmarks = parseList(value);
     else if (flag === "--scope") {
       if (value !== "user" && value !== "project") return { ok: false, error: `--scope must be user or project, got "${value}"` };
       request.scope = value;
@@ -353,11 +451,11 @@ export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
     else return { ok: false, error: `unknown flag "${flag}"\n\n${CREATE_AGENT_USAGE}` };
   }
 
-  if (!help && !listArchetypes) {
+  if (!help && !listArchetypes && !listBenchmarks) {
     if (request.name === "") return { ok: false, error: `--name is required\n\n${CREATE_AGENT_USAGE}` };
     if (request.purpose === "") return { ok: false, error: `--purpose is required\n\n${CREATE_AGENT_USAGE}` };
   }
-  return { ok: true, request, json, bodyFile, listArchetypes, help };
+  return { ok: true, request, json, bodyFile, listArchetypes, listBenchmarks, help };
 }
 
 /** The archetype table, for `--list-archetypes`. */
@@ -381,6 +479,9 @@ export function formatCreateAgentReport(result: CreatedAgent, updaterHint: strin
     `  agent:     ${result.agentPath}${result.readOnly ? "  (read-only)" : ""}`,
     `             model: ${result.model}`,
   ];
+  if (result.bench.added.length > 0) lines.push(`  benchmarks: added ${result.bench.added.join(", ")}`);
+  if (result.bench.duplicates.length > 0) lines.push(`  benchmarks: already weighted (skipped) ${result.bench.duplicates.join(", ")}`);
+  if (result.bench.unknown.length > 0) lines.push(`  benchmarks: unknown (skipped) ${result.bench.unknown.join(", ")}`);
   if (result.backupPath !== null) lines.push(`  backup:    ${result.backupPath}`);
   if (result.dryRun) lines.push("  nothing written (--dry-run)");
   else lines.push(`  next:      ${updaterHint}`);
