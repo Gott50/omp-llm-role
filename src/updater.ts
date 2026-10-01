@@ -12,7 +12,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { computeRankings, loadRankData, META_LEVELS, type Ranked, type RankData } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, tierGate, type CatalogEntry, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { currentRankingId, enrichThinkingLevels, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { readPluginSettingsMap, resolveSettings, SHIPPED_AGENTS, type ResolvedSettings } from "./settings.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
@@ -158,6 +158,15 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     const { settings, errors } = resolveSettings(raw);
     if (errors.length > 0) return abort([`omp-llm-role settings invalid, no write:`, ...errors.map((e) => `  ${e}`)]);
 
+    // Locked roles are ranked (they stay in the universe and their sources are
+    // fetched) but excluded from every mutation: no selector write, no chain
+    // upsert, no probe budget, no removal. They remain tracked in managedRoles.
+    const lockedRoles = new Set(
+      Object.entries(settings.roles)
+        .filter(([, d]) => d.locked === true)
+        .map(([n]) => n),
+    );
+
     const dir = agentDir();
     const configPath = join(dir, "config.yml");
     const agentDisables = agentDisablePatch(settings);
@@ -215,6 +224,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     const probe = deps.probeModel ?? probeModel;
     const probeVerdicts = new Map<string, ProbeVerdict>();
     for (const [role, def] of Object.entries(settings.roles)) {
+      // Locked: no ranking, no probe, no decision, no selector/chain write.
+      if (lockedRoles.has(role)) continue;
       const rankings = computeRankings(rank.models, { [role]: def });
       const candidates: Candidate[] = [];
       for (const ranked of rankings[role] ?? []) {
@@ -340,6 +351,15 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         ].filter((v) => v !== plan.key);
         referenced.add(plan.key);
       }
+      // Locked roles keep their current chain: the plugin neither rewrites nor
+      // prunes it, so its key must count as referenced. A chain key is the
+      // current selector minus a trailing `:level` (chain keys are level-free).
+      for (const role of lockedRoles) {
+        const sel = current.modelRoles[role];
+        if (sel === undefined) continue;
+        const colon = sel.lastIndexOf(":");
+        referenced.add(colon !== -1 && sel.slice(colon + 1) in THINKING_LEVELS ? sel.slice(0, colon) : sel);
+      }
     }
     const chainPrunes = settings.writeFallbackChains ? state.pluginWrittenChainKeys.filter((k) => !referenced.has(k)) : [];
     // Roles the plugin managed on a previous run but no longer does (disabled via
@@ -359,7 +379,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const previousRoles = res.status === "written" && res.before !== null ? parseConfig(res.before).modelRoles : null;
 
       state.lastRunDay = today;
-      state.managedRoles = decisions.map((d) => d.role);
+      state.managedRoles = [...decisions.map((d) => d.role), ...lockedRoles];
       for (const d of decisions) state.roleLastSelector[d.role] = d.to;
       if (settings.writeFallbackChains) state.pluginWrittenChainKeys = [...referenced];
       if (wrote) state.previousModelRoles = previousRoles;

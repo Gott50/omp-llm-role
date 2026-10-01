@@ -653,6 +653,12 @@ the CLI.
   Exporting writes `enabled` into the lock file; the next updater run drops a
   disabled role from the resolved set and deletes its `modelRoles.<role>` line,
   and re-enabling restores it. Disabling one role never touches the others.
+- **Locked toggle** — the editor's `Locked` checkbox (persisted as
+  `roles.<role>.locked`) tells the plugin to leave the role alone: it is still
+  ranked and shown, but the updater never rewrites its `modelRoles` selector or
+  its fallback chain and never removes it. Enable/disable still applies, so a
+  locked role can also be switched off. Unchecking restores normal daily
+  updates.
 - **New role** — the `+ new role` tab creates a role from a template
   (`general/code/price/throughput`, Σ 1.0) that you then tune and Export. A role
   with no shipped default is fully editable: `Reset to shipped default` is

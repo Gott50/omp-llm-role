@@ -68,8 +68,12 @@ body {
 .tab.kind-user { border-color: var(--up); color: var(--up); }
 /* Disabled: dimmer and dashed so it reads apart from the dashed "+ new role". */
 .tab.disabled { color: var(--muted); border-style: dashed; border-color: var(--line); background: transparent; opacity: 0.55; }
-/* Locked: the updater leaves the role's selector and chain alone (issue #3). */
+/* Locked: the updater leaves the role's selector and chain alone (issue #3).
+   A bottom stripe plus a lock glyph. The glyph uses ::before, not ::after, so
+   the dirty dot in the top-right corner survives when a role is both locked and
+   dirty; the stripe and glyph also stay legible under .disabled's dimming. */
 .tab.locked { box-shadow: inset 0 -2px 0 var(--warn); }
+.tab.locked::before { content: "🔒"; margin-right: 4px; font-size: 10px; }
 .tab:hover { border-color: var(--accent); }
 .tab.active { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
 .tab.dirty::after {

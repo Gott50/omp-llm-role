@@ -261,6 +261,12 @@ function syncUniverseEnabled(role) {
   if (state.universe[role]) state.universe[role].enabled = state.defs[role].enabled !== false;
 }
 
+/** Keep the tab's lock marker in step with the edited def, same as the enabled
+ * tint: `locked` is absent when unlocked, so the tab must not lie until reload. */
+function syncUniverseLocked(role) {
+  if (state.universe[role]) state.universe[role].locked = state.defs[role].locked === true;
+}
+
 /** Create a role from a template so it can be tuned and exported. The plugin
  * ranks any role in its settings; the name must be a valid omp role alias. */
 function onNewRole() {
@@ -553,8 +559,20 @@ function renderEditor() {
     renderRoles();
     renderExportState();
   });
+  const locked = el("input", { type: "checkbox" });
+  locked.checked = def.locked === true;
+  locked.addEventListener("change", () => {
+    // Absent means unlocked, so unchecking deletes the key rather than writing
+    // a redundant `locked: false` the plugin would have to carry forever.
+    if (locked.checked) def.locked = true;
+    else delete def.locked;
+    syncUniverseLocked(state.role);
+    renderRoles();
+    renderExportState();
+  });
   panel.append(el("div", { class: "row-controls" }, [
     el("label", { class: "check" }, [enabled, el("span", { "data-tip": TIPS.enabled, text: "Enabled — ranked by the plugin" })]),
+    el("label", { class: "check" }, [locked, el("span", { "data-tip": TIPS.locked, text: "Locked — never rewrite selector or chain" })]),
   ]));
 
   panel.append(el("h3", { text: "Weights" }));
@@ -668,9 +686,9 @@ function renderEditor() {
 
   panel.append(
     el("div", { class: "row-controls" }, [
-      el("button", { id: "reset-effective", "data-tip": TIPS.resetEffective, text: "Reset to effective", onclick: () => { state.defs[state.role] = structuredClone(state.effective[state.role]); syncUniverseEnabled(state.role); renderEditor(); renderRoles(); scheduleRecompute(); } }),
+      el("button", { id: "reset-effective", "data-tip": TIPS.resetEffective, text: "Reset to effective", onclick: () => { state.defs[state.role] = structuredClone(state.effective[state.role]); syncUniverseEnabled(state.role); syncUniverseLocked(state.role); renderEditor(); renderRoles(); scheduleRecompute(); } }),
       state.defaults[state.role]
-        ? el("button", { id: "reset-defaults", "data-tip": TIPS.resetDefaults, text: "Reset to shipped default", onclick: () => { state.defs[state.role] = structuredClone(state.defaults[state.role]); syncUniverseEnabled(state.role); renderEditor(); renderRoles(); scheduleRecompute(); } })
+        ? el("button", { id: "reset-defaults", "data-tip": TIPS.resetDefaults, text: "Reset to shipped default", onclick: () => { state.defs[state.role] = structuredClone(state.defaults[state.role]); syncUniverseEnabled(state.role); syncUniverseLocked(state.role); renderEditor(); renderRoles(); scheduleRecompute(); } })
         : null,
     ]),
   );

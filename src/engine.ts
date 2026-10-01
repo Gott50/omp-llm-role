@@ -153,6 +153,10 @@ export type RoleDef = {
    * catalog entry supports thinking; absent = bare (session default level).
    * Also scales the price axis for ranking (thinkingPriceFactor). */
   thinking?: SuffixLevel;
+  /** Locked role: the plugin still ranks it (so it stays in the universe and its
+   * sources are fetched) but never rewrites its `modelRoles` selector or fallback
+   * chain, and never removes it. Enable/disable still applies. */
+  locked?: boolean;
 };
 
 /** One role's ranking: `q` is the price-free quality composite (parts sum to it),

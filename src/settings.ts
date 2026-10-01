@@ -348,6 +348,9 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
     if (rdef.enabled !== undefined && typeof rdef.enabled !== "boolean") {
       errors.push(`role ${name}: enabled must be a boolean, got ${JSON.stringify(rdef.enabled)}`);
     }
+    if (rdef.locked !== undefined && typeof rdef.locked !== "boolean") {
+      errors.push(`role ${name}: locked must be a boolean, got ${JSON.stringify(rdef.locked)}`);
+    }
     // enabled: false opts the role out of the resolved set entirely (shipped
     // opt-in roles); a user override to true re-enables it.
     if (rdef.enabled === false) {
