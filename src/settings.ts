@@ -124,6 +124,15 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
   },
 };
 
+/**
+ * Agents shipped in `agents/` (one `.md` per name). Each is opt-in: the plugin
+ * keeps it in `task.disabledAgents` unless its same-named role is in the
+ * resolved set — the shipped `designer` role is `enabled: false`, so the
+ * `designer` agent is disabled until `roles.designer.enabled=true`. A test
+ * asserts this list matches the shipped `agents/*.md` files.
+ */
+export const SHIPPED_AGENTS: string[] = ["designer"];
+
 
 /** Metrics a role weight/required entry may name (SPEC §7). */
 export const KNOWN_METRICS: Record<string, true> = {

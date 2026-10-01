@@ -31,6 +31,11 @@ export type ConfigPatch = {
   chainUpserts: Record<string, string[]>;
   /** plugin-written chain keys to delete (key + its list items) */
   chainPrunes: string[];
+  /** `task.disabledAgents` names the plugin manages: ensure present (opt-in
+   * agents) / absent (their role is enabled). Other entries and their order are
+   * preserved. */
+  agentDisableAdds?: string[];
+  agentDisableRemoves?: string[];
 };
 
 /** Strip a trailing ` # comment`, then unquote a fully-quoted scalar; null for empty/`null`/`~` scalars. */
@@ -48,7 +53,7 @@ function scalarValue(raw: string): string | null {
  * blocks (`modelRoles: {}`), indented blocks and duplicate top-level blocks
  * are structural surprises and throw.
  */
-export function parseConfig(text: string): { modelRoles: Record<string, string>; chainKeys: string[] } {
+export function parseConfig(text: string): { modelRoles: Record<string, string>; chainKeys: string[]; disabledAgents: string[] } {
   const lines = text.split("\n");
   const modelRoles: Record<string, string> = {};
   const rolesIdx = findTopLevel(lines, "modelRoles");
@@ -69,7 +74,18 @@ export function parseConfig(text: string): { modelRoles: Record<string, string>;
       for (const key of Object.keys(chainEntries(lines, fcIdx, blockEnd(lines, fcIdx)))) chainKeys.push(key);
     }
   }
-  return { modelRoles, chainKeys };
+  const disabledAgents: string[] = [];
+  const taskIdx = findTopLevel(lines, "task");
+  if (taskIdx !== -1) {
+    const daIdx = findDisabledAgents(lines, taskIdx);
+    if (daIdx !== -1) {
+      for (const i of sequenceItemLines(lines, daIdx)) {
+        const value = scalarValue(lines[i].trim().replace(/^-\s+/, ""));
+        if (value !== null) disabledAgents.push(value);
+      }
+    }
+  }
+  return { modelRoles, chainKeys, disabledAgents };
 }
 
 function indentOf(line: string): number {
@@ -137,6 +153,7 @@ export function patchConfig(configText: string, patch: ConfigPatch): string {
   const out = [...lines];
   patchModelRoles(out, patch.roleSelectors, patch.roleRemovals);
   patchFallbackChains(out, patch.chainUpserts, patch.chainPrunes);
+  patchDisabledAgents(out, patch.agentDisableAdds ?? [], patch.agentDisableRemoves ?? []);
 
   // Self-check: the patched text must read back as exactly the intended state
   // (replaces the former yaml re-parse; the dev-only yaml dependency still
@@ -169,6 +186,14 @@ export function patchConfig(configText: string, patch: ConfigPatch): string {
   const expectedKeys = Object.keys(expectedChains);
   if (expectedKeys.length !== after.chainKeys.length || expectedKeys.some((key) => !(key in afterChains))) {
     throw new ConfigEditError("patch self-check failed: fallbackChains keys did not read back as written");
+  }
+  const afterDisabled: Record<string, true> = {};
+  for (const name of after.disabledAgents) afterDisabled[name] = true;
+  for (const name of patch.agentDisableAdds ?? []) {
+    if (!(name in afterDisabled)) throw new ConfigEditError(`patch self-check failed: task.disabledAgents did not gain ${name}`);
+  }
+  for (const name of patch.agentDisableRemoves ?? []) {
+    if (name in afterDisabled) throw new ConfigEditError(`patch self-check failed: task.disabledAgents still lists ${name}`);
   }
   return patched;
 }
@@ -330,6 +355,81 @@ function patchFallbackChains(out: string[], chainUpserts: Record<string, string[
     edits.push({ start: fcEnd, deleteCount: 0, insert: block });
   }
 
+  for (const edit of edits.sort((a, b) => b.start - a.start)) {
+    out.splice(edit.start, edit.deleteCount, ...edit.insert);
+  }
+}
+
+/** Index of the `disabledAgents:` line (indent 2) under the top-level task: block; -1 when absent. */
+function findDisabledAgents(lines: string[], taskIdx: number): number {
+  const taskEnd = blockEnd(lines, taskIdx);
+  let idx = -1;
+  for (let i = taskIdx + 1; i < taskEnd; i++) {
+    const parsed = parseMapLine(lines[i]);
+    if (parsed && parsed.key === "disabledAgents") {
+      if (parsed.indent !== 2) throw new ConfigEditError(`disabledAgents: expected 2-space indent under task:, got ${parsed.indent}`);
+      if (parsed.value.replace(/\s+#.*$/, "").trim().length > 0) throw new ConfigEditError("disabledAgents: inline value is not supported (block sequence expected)");
+      if (idx !== -1) throw new ConfigEditError("duplicate disabledAgents: block under task:");
+      idx = i;
+    }
+  }
+  return idx;
+}
+
+/** Line indexes of the `- item` entries under a sequence key, in document order. */
+function sequenceItemLines(lines: string[], keyIdx: number): number[] {
+  const items: number[] = [];
+  for (let i = keyIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
+    if (indentOf(line) <= 2) break;
+    if (line.trim().startsWith("- ")) items.push(i);
+    else throw new ConfigEditError(`unexpected line in disabledAgents sequence: ${JSON.stringify(line)}`);
+  }
+  return items;
+}
+
+/**
+ * Add/remove names in `task.disabledAgents`, preserving every other entry and
+ * its order. Creates the `task:` block (or the `disabledAgents:` key) when the
+ * names to add have no home yet; a removal with no block is a no-op.
+ */
+function patchDisabledAgents(out: string[], adds: string[], removes: string[]): void {
+  if (adds.length === 0 && removes.length === 0) return;
+  const taskIdx = findTopLevel(out, "task");
+  if (taskIdx === -1) {
+    if (adds.length === 0) return;
+    const block = ["task:", "  disabledAgents:", ...adds.map((name) => `    - ${quote(name)}`)];
+    const at = out.length > 0 && out[out.length - 1] === "" ? out.length - 1 : out.length;
+    out.splice(at, 0, ...block);
+    return;
+  }
+  const daIdx = findDisabledAgents(out, taskIdx);
+  if (daIdx === -1) {
+    if (adds.length === 0) return;
+    out.splice(taskIdx + 1, 0, "  disabledAgents:", ...adds.map((name) => `    - ${quote(name)}`));
+    return;
+  }
+  const itemLines = sequenceItemLines(out, daIdx);
+  const removeSet: Record<string, true> = {};
+  for (const name of removes) removeSet[name] = true;
+  const present: Record<string, true> = {};
+  const removeLines: number[] = [];
+  for (const i of itemLines) {
+    const value = scalarValue(out[i].trim().replace(/^-\s+/, ""));
+    if (value === null) continue;
+    present[value] = true;
+    if (value in removeSet) removeLines.push(i);
+  }
+  const toAdd = adds.filter((name) => !(name in present));
+  if (removeLines.length === 0 && toAdd.length === 0) return;
+  const edits: LineEdit[] = [];
+  for (const i of removeLines) edits.push({ start: i, deleteCount: 1, insert: [] });
+  if (toAdd.length > 0) {
+    const itemIndent = itemLines.length > 0 ? indentOf(out[itemLines[0]]) : 4;
+    const insertAt = itemLines.length > 0 ? itemLines[itemLines.length - 1] + 1 : daIdx + 1;
+    edits.push({ start: insertAt, deleteCount: 0, insert: toAdd.map((name) => `${" ".repeat(itemIndent)}- ${quote(name)}`) });
+  }
   for (const edit of edits.sort((a, b) => b.start - a.start)) {
     out.splice(edit.start, edit.deleteCount, ...edit.insert);
   }

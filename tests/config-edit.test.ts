@@ -102,6 +102,73 @@ test("a role that left the managed set is removed from modelRoles", () => {
   assert.deepEqual(Object.keys(parseConfig(out).modelRoles), ["default"]);
 });
 
+test("disabledAgents: added to an existing task block, other keys and entries preserved", () => {
+  const config = `task:
+  isolation:
+    enabled: true
+  disabledAgents:
+    - "other-agent"
+  enableLsp: true
+tail: true
+`;
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+    agentDisableAdds: ["designer"],
+  });
+  const doc = parseYaml(out) as { task: { disabledAgents: string[]; isolation: { enabled: boolean }; enableLsp: boolean } };
+  assert.deepEqual(doc.task.disabledAgents, ["other-agent", "designer"]);
+  assert.equal(doc.task.isolation.enabled, true);
+  assert.equal(doc.task.enableLsp, true);
+  assert.deepEqual(parseConfig(out).disabledAgents, ["other-agent", "designer"]);
+});
+
+test("disabledAgents: removed in place, other entries preserved", () => {
+  const config = `task:
+  disabledAgents:
+    - "designer"
+    - "other-agent"
+tail: true
+`;
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+    agentDisableRemoves: ["designer"],
+  });
+  assert.deepEqual(parseConfig(out).disabledAgents, ["other-agent"]);
+  assert.ok(out.includes("tail: true"));
+});
+
+test("disabledAgents: task block created when absent", () => {
+  const out = patchConfig("modelRoles:\n  default: a\n", {
+    roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+    agentDisableAdds: ["designer"],
+  });
+  assert.deepEqual(parseConfig(out).disabledAgents, ["designer"]);
+  const doc = parseYaml(out) as { task: { disabledAgents: string[] } };
+  assert.deepEqual(doc.task.disabledAgents, ["designer"]);
+});
+
+test("disabledAgents: already-correct state is a byte-identical no-op", () => {
+  const config = `task:
+  disabledAgents:
+    - "designer"
+`;
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+    agentDisableAdds: ["designer"],
+  });
+  assert.equal(out, config);
+});
+
+test("disabledAgents: inline value is a structural surprise", () => {
+  assert.throws(
+    () => patchConfig("task:\n  disabledAgents: []\n", {
+      roleSelectors: {}, roleRemovals: {}, chainUpserts: {}, chainPrunes: [],
+      agentDisableAdds: ["designer"],
+    }),
+    ConfigEditError,
+  );
+});
+
 test("missing retry block is created at the end (house style: keys 4, items 6)", () => {
   const config = "modelRoles:\n  default: openrouter/org/a\n";
   const out = patchConfig(config, {
@@ -158,6 +225,12 @@ test("parseConfig agrees with the real yaml parser on block-style configs", () =
 modelTags:
   designer:
     name: Designer
+task:
+  isolation:
+    enabled: true
+  disabledAgents:
+    - "designer"
+    - other-agent
 retry:
   fallbackChains:
     openrouter/org/model-x:
@@ -171,12 +244,17 @@ tail: true
     chainPrunes: [],
   });
   for (const text of [COMMENTED_CONFIG, REAL_SHAPED, patched]) {
-    const doc = parseYaml(text) as { modelRoles?: Record<string, unknown>; retry?: { fallbackChains?: Record<string, unknown> } };
+    const doc = parseYaml(text) as {
+      modelRoles?: Record<string, unknown>;
+      retry?: { fallbackChains?: Record<string, unknown> };
+      task?: { disabledAgents?: unknown[] };
+    };
     const expectedRoles: Record<string, string> = {};
     for (const [key, value] of Object.entries(doc.modelRoles ?? {})) if (value != null) expectedRoles[key] = String(value);
+    const expectedDisabled = (doc.task?.disabledAgents ?? []).map((v) => String(v));
     assert.deepEqual(
       parseConfig(text),
-      { modelRoles: expectedRoles, chainKeys: Object.keys(doc.retry?.fallbackChains ?? {}) },
+      { modelRoles: expectedRoles, chainKeys: Object.keys(doc.retry?.fallbackChains ?? {}), disabledAgents: expectedDisabled },
       `divergence on: ${JSON.stringify(text)}`,
     );
   }

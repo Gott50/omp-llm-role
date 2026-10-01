@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { computeRankings, loadRankData, META_LEVELS, type Ranked, type RankData } from "./engine.ts";
 import { currentRankingId, enrichThinkingLevels, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, tierGate, type CatalogEntry, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
-import { readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "./settings.ts";
+import { readPluginSettingsMap, resolveSettings, SHIPPED_AGENTS, type ResolvedSettings } from "./settings.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
 
 export type DecisionReason = "adopted" | "switched" | "switched-cost" | "kept-margin" | "kept-eligible" | "no-current";
@@ -99,6 +99,52 @@ function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSe
   return best.priceEff <= current.priceEff * (1 - settings.priceSwitchFraction);
 }
 
+/** Abort lines for the two write-path failures (shared by the full run and the
+ * settings-derived agent sync). */
+const LOCK_ABORT = "omp-llm-role: could not acquire the refresh lock (concurrent run?) — no write";
+const CONFLICT_ABORT = `omp-llm-role: config.yml kept changing underneath (${CONFLICT_RETRIES} mtime conflicts) — no write`;
+
+/**
+ * `task.disabledAgents` entries the plugin manages: a shipped agent is disabled
+ * unless its same-named role is in the resolved set (opt-in roles gate their
+ * agent). Other entries are left alone.
+ */
+function agentDisablePatch(settings: ResolvedSettings): Pick<ConfigPatch, "agentDisableAdds" | "agentDisableRemoves"> {
+  const agentDisableAdds: string[] = [];
+  const agentDisableRemoves: string[] = [];
+  for (const name of SHIPPED_AGENTS) {
+    if (name in settings.roles) agentDisableRemoves.push(name);
+    else agentDisableAdds.push(name);
+  }
+  return { agentDisableAdds, agentDisableRemoves };
+}
+
+/**
+ * Read → patch → atomic write under the refresh lock, with mtime-conflict
+ * retries. `before` is the pre-write text when a write landed. `patchConfig`
+ * throws ConfigEditError (caller aborts) on a structural surprise.
+ */
+function writePatch(configPath: string, dir: string, patch: ConfigPatch): { status: "written" | "noop" | "conflict" | "locked"; before: string | null } {
+  if (!acquireLock(dir)) return { status: "locked", before: null };
+  try {
+    for (let attempt = 0; attempt < CONFLICT_RETRIES; attempt++) {
+      let text: string;
+      try {
+        text = readFileSync(configPath, "utf8");
+      } catch {
+        text = "";
+      }
+      const mtime = mtimeOf(configPath);
+      const patched = patchConfig(text, patch);
+      if (patched === text) return { status: "noop", before: text };
+      if (writeConfigAtomic(configPath, patched, mtime) === "written") return { status: "written", before: text };
+    }
+    return { status: "conflict", before: null };
+  } finally {
+    releaseLock(dir);
+  }
+}
+
 export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: boolean; dryRun?: boolean }): Promise<RunResult> {
   const notifyAll = trigger !== "session-start" || opts?.dryRun === true;
   const abort = (lines: string[]): RunResult => {
@@ -108,11 +154,24 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
   try {
     const state = loadState();
     const today = deps.nowUtcDay();
-    if (!opts?.force && state.lastRunDay === today) return { decisions: [], wrote: false };
-
     const raw = (await deps.getSettings?.()) ?? readPluginSettingsMap();
     const { settings, errors } = resolveSettings(raw);
     if (errors.length > 0) return abort([`omp-llm-role settings invalid, no write:`, ...errors.map((e) => `  ${e}`)]);
+
+    const dir = agentDir();
+    const configPath = join(dir, "config.yml");
+    const agentDisables = agentDisablePatch(settings);
+
+    // The settings-derived agent sync is not day-gated: enabling/disabling a
+    // shipped role must take effect on the next session, not the next day.
+    if (!opts?.force && state.lastRunDay === today) {
+      if (opts?.dryRun) return { decisions: [], wrote: false };
+      const res = writePatch(configPath, dir, { roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [], ...agentDisables });
+      if (res.status === "locked") return { decisions: [], wrote: false }; // another session is syncing — benign
+      if (res.status === "conflict") return abort([CONFLICT_ABORT]);
+      if (res.status === "written" && notifyAll) deps.notify(["omp-llm-role: task.disabledAgents updated"]);
+      return { decisions: [], wrote: res.status === "written" };
+    }
 
     let rank: RankData;
     try {
@@ -136,8 +195,6 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     const rowById = new Map(eligible.map((c) => [c.id, c]));
     enrichThinkingLevels(rank.models, catalog);
 
-    const dir = agentDir();
-    const configPath = join(dir, "config.yml");
     let configText = "";
     try {
       configText = readFileSync(configPath, "utf8");
@@ -289,37 +346,17 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     // `enabled: false` / `weights: null`, or removed from settings): delete their
     // `modelRoles.<role>` line so a stale pin cannot keep routing `@<role>`.
     const roleRemovals = state.managedRoles.filter((r) => !(r in settings.roles));
-    const patch: ConfigPatch = { roleSelectors, roleRemovals, chainUpserts, chainPrunes };
+    const patch: ConfigPatch = { roleSelectors, roleRemovals, chainUpserts, chainPrunes, ...agentDisables };
 
     let wrote = false;
     // Dry runs stop here: decisions are reported, but nothing is written, no
     // day gate is stamped, and no history row is appended.
     if (!opts?.dryRun) {
-      if (!acquireLock(dir)) return abort(["omp-llm-role: could not acquire the refresh lock (concurrent run?) — no write"]);
-      let previousRoles: Record<string, string> | null = null;
-      try {
-        for (let attempt = 0; attempt < CONFLICT_RETRIES; attempt++) {
-          let text: string;
-          try {
-            text = readFileSync(configPath, "utf8");
-          } catch {
-            text = "";
-          }
-          const mtime = mtimeOf(configPath);
-          const patched = patchConfig(text, patch); // throws ConfigEditError -> abort, no write
-          if (patched === text) break; // zero changes — no write, no mtime touch
-          if (writeConfigAtomic(configPath, patched, mtime) === "written") {
-            wrote = true;
-            previousRoles = parseConfig(text).modelRoles;
-            break;
-          }
-          if (attempt === CONFLICT_RETRIES - 1) {
-            return abort([`omp-llm-role: config.yml kept changing underneath (${CONFLICT_RETRIES} mtime conflicts) — no write`]);
-          }
-        }
-      } finally {
-        releaseLock(dir);
-      }
+      const res = writePatch(configPath, dir, patch); // throws ConfigEditError -> abort, no write
+      if (res.status === "locked") return abort([LOCK_ABORT]);
+      if (res.status === "conflict") return abort([CONFLICT_ABORT]);
+      wrote = res.status === "written";
+      const previousRoles = res.status === "written" && res.before !== null ? parseConfig(res.before).modelRoles : null;
 
       state.lastRunDay = today;
       state.managedRoles = decisions.map((d) => d.role);

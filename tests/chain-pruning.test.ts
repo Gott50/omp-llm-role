@@ -66,8 +66,9 @@ test("chain maintenance: prune stale plugin keys, preserve owner keys, replace m
   assert.equal(JSON.parse(history[0]).trigger, "manual");
 });
 test("zero-change run writes nothing and leaves no mtime trace", async () => {
-  // Config already matches today's best (model-a, bare selector for the suffix-less role).
-  const config = "modelRoles:\n  default: openrouter/org/model-a:auto\nretry:\n  fallbackChains:\n    openrouter/org/model-a:\n      - openrouter/org/model-b:auto\n      - openrouter/org/model-c:auto\n";
+  // Config already matches today's best (model-a, bare selector for the suffix-less role)
+  // and already carries the opt-in agent's disabled entry, so the run is a true no-op.
+  const config = "modelRoles:\n  default: openrouter/org/model-a:auto\ntask:\n  disabledAgents:\n    - \"designer\"\nretry:\n  fallbackChains:\n    openrouter/org/model-a:\n      - openrouter/org/model-b:auto\n      - openrouter/org/model-c:auto\n";
   const dir = setupAgentDir(config, {
     lastRunDay: null,
     managedRoles: [],
