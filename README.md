@@ -599,6 +599,8 @@ stay out. Gate: `node --test tests/`.
   `roleRemovals` in `ConfigPatch`), so the stale pin is cleaned up on the next
   run. The CLI report keeps documenting all shipped roles via `--all` (the
   default now ranks the nine built-in roles and omits the Design Arena legend).
+  The live config's `modelRoles.designer` and `modelTags.designer` were removed
+  (2026-10-01); the agent now resolves `modelRole: "default"`.
 - Advisor rebalance (2026-09-30): `advisor` weights now
   `{reasoning 0.3498, general 0.2449, long_context 0.1004, price 0.20,
   throughput 0.1049}` (Σ 1.0). `math` dropped (76.3% coverage, r 0.759 with
@@ -761,8 +763,9 @@ stay out. Gate: `node --test tests/`.
   pinned to `deepseek-v4.1-flash`, `--mode json` spawn records):
   `{"agent":"scout","agentSource":"bundled","modelRole":"smol"}` →
   `glm-5.3:off`, `{"agent":"reviewer","agentSource":"bundled","modelRole":"slow"}`
-  → `glm-5.3:max`. `modelRoles` now holds exactly the ten roles the plugin
-  manages, and a forced refresh afterwards reported `no changes` — the plugin
+  → `glm-5.3:max`. `modelRoles` then held exactly the ten roles the plugin
+  managed (nine since `designer` went opt-in, 2026-10-01), and a forced refresh
+  afterwards reported `no changes` — the plugin
   cannot re-add keys outside `settings.roles` `patchModelRoles` selects. The
   owner-written `retry.fallbackChains` key
   `openrouter/~deepseek/deepseek-v4-flash-latest` is now unreferenced by any
