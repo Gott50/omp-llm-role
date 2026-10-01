@@ -254,20 +254,26 @@ commit, tiny, task, advisor, designer`. No custom roles ship beyond these (decis
 drops it from the resolved set (like `weights: null`), so a stock run ranks the nine
 built-in roles and never fetches Design Arena. `roles.designer.enabled=true` opts in.
 The shipped `agents/designer.md` is discovered from the plugin's extension root
-regardless; it pins `model: "@designer, @default"` so the unresolved first entry is
-skipped and the child runs on `@default` when the role is disabled (a bare `@designer`
-would hard-fail — an unresolved `@x` is a literal pattern, not a parent-model fallback).
-The CLI report documents all shipped roles via `--all`.
+regardless, but the plugin keeps it in `task.disabledAgents` until
+`roles.designer.enabled=true` (below), so it is off the roster by default. Its
+`model: "@designer, @default"` chain only matters if a user re-enables the agent by
+hand: the unresolved first entry is skipped and the child runs on `@default` (a bare
+`@designer` would hard-fail — an unresolved `@x` is a literal pattern, not a
+parent-model fallback). The CLI report documents all shipped roles via `--all`.
 
 The shipped agent is **opt-in too**: omp has no per-agent frontmatter gate
 (`parseAgentFields` has no `enabled`; `discoverAgents` scans `<ext>/agents/*.md`
 unconditionally), so the plugin manages the core `task.disabledAgents` key in
-`config.yml` — the same key the `/agents` hub writes. `SHIPPED_AGENTS`
-(`src/settings.ts`) names the shipped agents; the updater keeps each in
-`task.disabledAgents` unless its same-named role is in the resolved set, so
-`designer` is off the roster and refuses spawns until `roles.designer.enabled=true`.
-The patch is surgical (other entries and their order preserved, self-checked) and the
-sync is not day-gated — enabling the role takes effect on the next session.
+`config.yml` — the same key the `/agents` hub writes. The updater derives the pin
+from each agent's `model:` chain (`src/agent-pins.ts`: `discoverAgentPins` scans the
+shipped `agents/`, `~/.omp/agent/agents/` and `<project>/.omp/agents/` dirs, project >
+user > plugin) and keeps an agent in `task.disabledAgents` exactly while the role it
+pins is known to the plugin but disabled; an agent that pins no role, or a
+role the plugin does not know, is left alone. So `designer` is off the roster and
+refuses spawns until `roles.designer.enabled=true`, and the same holds for any agent
+whose `model:` frontmatter pins a disabled role. The patch is surgical (other entries
+and their order preserved, self-checked) and the sync is not day-gated — enabling the
+role takes effect on the next session.
 
 ### 6.3 Role filters (schema capability)
 
@@ -365,8 +371,8 @@ independent of weights), weightable metric names ∈ the same set, `roles.<role>
 {off, minimal, low, medium, high, xhigh, max, auto}, `switchMargin` and
 `priceSwitchFraction` ∈ [0, 1], `roles.<role>.enabled` a boolean. A role entry with
 `weights: null` explicitly opts that role out; `enabled: false` drops a shipped role
-from the resolved set (the `designer` default) and keeps its same-named shipped agent in
-`task.disabledAgents` (§6.2). Legacy `suffixes.*` keys are rejected with a migration hint
+from the resolved set (the `designer` default) and keeps any agent whose `model:` chain
+pins it in `task.disabledAgents` (§6.2). Legacy `suffixes.*` keys are rejected with a migration hint
 (moved into `roles.<role>.thinking`).
 
 Six metrics are the raw llm-stats benchmark pass rates — `gpqa` (chance-anchored at
@@ -425,8 +431,8 @@ Files (all under `~/.omp/agent/`, next to the config they describe):
    managed roles inside the top-level `modelRoles:` block (upsert missing roles at the
    block end, two-space indent; delete the line for a role that left the managed set,
    §6.4), the managed keys inside `retry.fallbackChains:`, and the plugin-managed names
-   in `task.disabledAgents` (§6.2: add/remove a shipped agent's name, other entries and
-   their order preserved). All other bytes identical — comments, blank lines, unknown
+   in `task.disabledAgents` (§6.2: add/remove the name of an agent whose pinned role is
+   disabled, other entries and their order preserved). All other bytes identical — comments, blank lines, unknown
    keys untouched.
 4. Values always emitted YAML-quoted (`"openrouter/z-ai/glm-5.3-flash:high"`).
 5. mtime re-check before write; if config.yml changed underneath, re-read + recompute
@@ -444,14 +450,14 @@ Files (all under `~/.omp/agent/`, next to the config they describe):
 | Settings validation fails (§7) | Abort, notify the offending role/key |
 | Both tier branches false (no budget, no free quota) | Abort, notify |
 | Write conflict after 3 retries | Abort, notify; state file untouched |
-| Zero decisions changed | No write at all (config mtime untouched), history row appended |
+| Zero decisions changed | No role write; the non-day-gated `task.disabledAgents` sync (§6.2) can still rewrite `config.yml` (mtime moves) with no role change, and that path appends no history row. A full run that changes nothing still appends a history row |
 
 Session-start runs are **awaited** before the first prompt is dispatched (a deferred
 timer would be cleared when a short-lived session exits before it fires); the day gate
 (`state.lastRunDay !== today(UTC)`) makes the ranking run at most once/day; a concurrent
 second starter loses the lock and finds the day already stamped → no-op. The
-settings-derived `task.disabledAgents` sync (§6.2) is **not** day-gated: it runs on every
-session start so enabling/disabling a shipped role takes effect on the next session.
+pin-derived `task.disabledAgents` sync (§6.2) is **not** day-gated: it runs on every
+session start so enabling/disabling a role takes effect on the next session.
 
 ## 10. Plugin surfaces
 
