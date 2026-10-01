@@ -57,6 +57,7 @@ Start from the archetype closest to the purpose, then tune in the explorer (§4)
 |---|---|---|
 | review / audit | reasoning .30, general .24, code .20, agents .10, price .10, throughput .06 | general, price, throughput |
 | docs / writing | general .34, reasoning .20, code .10, long_context .10, price .16, throughput .10 | general, price, throughput |
+| prose / writing (WritingBench-weighted) | general .24, reasoning .16, long_context .10, writing .26, price .14, throughput .10 | general, price, throughput |
 | data / analysis | math .28, reasoning .26, general .20, code .10, price .10, throughput .06 | general, price, throughput |
 | research / search | search .28, general .24, reasoning .20, long_context .10, price .10, throughput .08 | general, price, throughput |
 | design / UI | vision .30, website .20, general .20, code .10, price .12, throughput .08 (+ `filters.image`) | general, price, throughput |
@@ -67,8 +68,11 @@ Start from the archetype closest to the purpose, then tune in the explorer (§4)
 Rules of thumb:
 
 - A weighted metric with low coverage turns q into a coverage score — prefer a `filters`
-  gate over requiring a sparse metric. `website` and `long_context` are capability-filled
-  (0.195), so they are safe to weight.
+  gate over requiring a sparse metric. `website`, `long_context` and `writing` are
+  capability-filled (0.195), so they are safe to weight. `writing` (WritingBench, the
+  writing leaderboard's export) covers only 15/400 models, all Qwen — weight it as a
+  differentiator for prose roles, never as a `required` gate, and expect a Qwen-leaning
+  leader at high weights.
 - Check differentiation: if the role's leader equals `default`'s, the role adds nothing —
   raise the distinctive metric or drop the role.
 - `thinking` must be a level the pool actually supports; `off`/`auto` are meta levels

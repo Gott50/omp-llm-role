@@ -38,7 +38,8 @@ export const METRIC_META: Record<string, MetricMeta> = {
   tool_calling: { label: "Tool-calling index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   long_context: { label: "Long-context index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   mrcr: { label: "MRCR v2", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
-  website: { label: "Design Arena (website)", kind: "percentile", unit: "percentile", formula: "identity (already 0-1)", anchors: "percentile within the design-covered field; models without Design Arena data get the covered median (0.5)" },
+  website: { label: "Design Arena (website)", kind: "percentile", unit: "percentile", formula: "identity (already 0-1)", anchors: "percentile within the design-covered field; models without Design Arena data get the capability fill 0.195" },
+  writing: { label: "WritingBench", kind: "percentile", unit: "score 0-1", formula: "identity (already 0-1)", anchors: "WritingBench normalized score (writing leaderboard); models outside the ranking get the capability fill 0.195" },
   price: { label: "Price", kind: "price", unit: "$/M", formula: "billed blend 3:1 in:out, ×(3ρ+1+T)/(3ρ+1) at the role's thinking level", anchors: "OpenRouter standard route" },
   throughput: { label: "Throughput", kind: "throughput", unit: "tok/s", formula: "ln(v/10)/ln(30)", anchors: "10 tok/s→0, 300 tok/s→1, clamped" },
 };
@@ -130,9 +131,10 @@ export type Contribution = {
   renormWeight: number;
   contribution: number;
   shareOfQ: number;
-  /** the value is a neutral fill rather than a measurement (Design Arena
-   * `website` for a model with no Design Arena data) */
-  imputed: boolean;
+  /** Note when the value is a capability fill rather than a measurement (Design
+   * Arena `website` with no board data, `writing` outside the WritingBench
+   * ranking); null when the value is measured. */
+  fillNote: string | null;
 };
 
 export type Closing = {
@@ -203,7 +205,12 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
       renormWeight,
       contribution,
       shareOfQ: self.q > 0 ? contribution / self.q : 0,
-      imputed: metric === "website" && model.designElo == null,
+      fillNote:
+        metric === "website" && model.designElo == null
+          ? "no Design Arena data → capability fill 0.195"
+          : metric === "writing" && model.writingBench == null
+            ? "outside the WritingBench ranking → capability fill 0.195"
+            : null,
     });
   }
   contributions.sort((a, b) => {

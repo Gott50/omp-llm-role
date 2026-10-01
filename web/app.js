@@ -425,8 +425,8 @@ function renderExplain() {
     );
     if (c.raw === null) {
       cbody.append(el("tr", { class: "note-row" }, el("td", { colspan: "6", class: "muted", text: metricLabel(c.metric) + ": missing → contributes 0" })));
-    } else if (c.imputed) {
-      cbody.append(el("tr", { class: "note-row" }, el("td", { colspan: "6", class: "muted", text: metricLabel(c.metric) + ": no Design Arena data → neutral fill (covered median)" })));
+    } else if (c.fillNote) {
+      cbody.append(el("tr", { class: "note-row" }, el("td", { colspan: "6", class: "muted", text: metricLabel(c.metric) + ": " + c.fillNote })));
     }
   }
   comp.append(cbody);

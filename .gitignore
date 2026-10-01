@@ -3,6 +3,7 @@ llm-stats-fetched-rankings.json
 openrouter-fetched-data.json
 openrouter-endpoints-fetched-data.json
 designarena-fetched-data.json
+writing-fetched-data.json
 
 node_modules/
 .DS_Store

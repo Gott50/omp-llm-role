@@ -90,13 +90,13 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   stale cache → none), returns models + match counts. Since 2026-09-30 the
   OpenRouter step also fetches the model pages (~150/day, own cache) and blends
   price/throughput per decision #14; the find payload alone is the fallback.
-  `opts.roles` names the roles the caller will rank: when none weights `website`,
-  the Design Arena endpoint (the sole role-exclusive source) is not fetched and
-  the OpenRouter mirror alone populates `designElo`. Undefined = fetch (the
-  standalone default).
+  `opts.roles` names the roles the caller will rank: a role-exclusive source is
+  fetched only when some role weights its metric — Design Arena (`website`) and the
+  writing leaderboard (`writing`); skipped, the OpenRouter mirror alone populates
+  `designElo` and `metrics.writing` stays null. Undefined = fetch all.
 - `computeRankings(models, roles)` — cardinal fixed-anchor transforms (index_* affine
-  `(v+20)/80`, benchmarks chance-anchored, throughput log-anchored, `website` identity
-  over an already-0-1 percentile) + quality composite
+  `(v+20)/80`, benchmarks chance-anchored, throughput log-anchored, `website`/`writing`
+  identity over an already-0-1 percentile/score) + quality composite
   `q` + value `q − λ·$/M` + eligibility (`required` non-null, billed price). `roles`
   comes from resolved settings (§7), not the hardcoded `ROLES`.
 - `llm-role-rank.ts` keeps its CLI, flags, report format, and suggested-YAML output; its
@@ -340,7 +340,7 @@ are written by `create-role.ts` or the explorer's Export (both go through
 
 Validation (fail the run, notify, no write): weights > 0, each role's weights sum to
 1.0 ± 0.01, `required` entries ∈ {general, reasoning, math, code, agents, search,
-vision, tool_calling, long_context, mrcr, website, price, throughput} (the eligibility gate,
+vision, tool_calling, long_context, mrcr, website, writing, price, throughput} (the eligibility gate,
 independent of weights), weightable metric names ∈ the same set, `roles.<role>.thinking` ∈
 {off, minimal, low, medium, high, xhigh, max, auto}, `switchMargin` and
 `priceSwitchFraction` ∈ [0, 1], `roles.<role>.enabled` a boolean. A role entry with
@@ -348,14 +348,22 @@ independent of weights), weightable metric names ∈ the same set, `roles.<role>
 from the resolved set (the `designer` default). Legacy `suffixes.*` keys are rejected
 with a migration hint (moved into `roles.<role>.thinking`).
 
-`website` is the one derived metric: Design Arena's `models-website` Elo as a
+`website` is the first of two derived metrics: Design Arena's `models-website` Elo as a
 percentile within the design-covered population, with models lacking Design Arena
-data filled at the capability-consistent `DESIGN_FILL_PERCENTILE` (0.195 — the
+data filled at the capability-consistent `CAPABILITY_FILL` (0.195 — the
 percentile implied by the uncovered cohort's mean general index). It is computed
 once per run in `applyDesignPercentiles` (role-independent), so it is never null
 for a model with a general index and never a `required` gate — the newest frontier
 models carry no Design Arena data. Shipped weight: `designer` 0.18 only (with
 `code` trimmed to 0.10 against their r = 0.876 collinearity).
+
+`writing` is the second sparse capability metric: the WritingBench score (0–1,
+identity transform) from the writing leaderboard's canonical export
+(`/research/best-ai-for-writing/evidence.json`), joined by the bare llm-stats id
+(15/400 covered, all Qwen), filled at the shared `CAPABILITY_FILL` 0.195 and
+never a `required` gate. Computed once per run in `applyWritingScores`
+(role-independent), and only when some ranked role weights it — otherwise
+`metrics.writing` stays null and the metric contributes 0.
 
 ## 8. State, history, and the write
 

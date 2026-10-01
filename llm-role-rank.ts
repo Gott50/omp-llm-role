@@ -51,6 +51,7 @@ const METRIC_ABBR: Record<string, string> = {
   long_context: "lc",
   mrcr: "mrcr",
   website: "web",
+  writing: "writ",
   price: "price",
   throughput: "tput",
 };
@@ -67,6 +68,7 @@ function formatRankings(
   // The Design Arena legend only applies when a ranked role weights `website`
   // (designer); a stock run ranks the built-in roles and never fetches it.
   const weightsWebsite = Object.values(roles).some((d) => d.weights.website !== undefined);
+  const weightsWriting = Object.values(roles).some((d) => d.weights.writing !== undefined);
   const lines: string[] = [
     `llm-stats.com best-fit ranking per omp model role — ${models.length} models, ` +
       `${fetchedAt.slice(0, 10)}`,
@@ -95,6 +97,14 @@ function formatRankings(
           "bar at which a metric earns weight).",
         ]
       : []),
+    ...(weightsWriting
+      ? [
+          "writ=writing: WritingBench normalized score (0-1) from the writing",
+          "leaderboard's canonical export (llm-stats.com/research/best-ai-for-writing/",
+          "evidence.json). Models outside the WritingBench ranking get the capability",
+          "fill 0.195 and are marked ~ in the model column.",
+        ]
+      : []),
     "★ = Pareto-frontier: no eligible model is both cheaper and better (q).",
   ];
   lines.push(
@@ -117,6 +127,7 @@ function formatRankings(
     const frontier = paretoFrontier(ranked);
     const metricKeys = Object.keys(def.weights).filter((k) => k !== "price");
     const weightsWebsite = def.weights.website !== undefined;
+    const weightsWriting = def.weights.writing !== undefined;
     const qW = 1 - (def.weights.price ?? 0);
     const rows: string[][] = [
       [
@@ -147,7 +158,7 @@ function formatRankings(
         String(i + 1),
         r.value.toFixed(3),
         r.q.toFixed(3),
-        `${frontier.has(m.id) ? "★ " : ""}${weightsWebsite && m.designElo == null ? "~ " : ""}${m.name}`,
+        `${frontier.has(m.id) ? "★ " : ""}${(weightsWebsite && m.designElo == null) || (weightsWriting && m.writingBench == null) ? "~ " : ""}${m.name}`,
         m.org,
         price,
         tokS,

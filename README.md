@@ -5,11 +5,14 @@ Ranks today's LLM leaderboard into best-fit picks for each omp model role
 opt-in `designer`), and ships an omp plugin that applies those picks to
 `~/.omp/agent/config.yml` daily. `SPEC.md` is the normative spec for the plugin.
 
-`designer` is the only non-built-in role and ships **disabled**: a stock run
-ranks the nine built-in roles and fetches only their sources. Enable it with
+`designer` is the only non-built-in *shipped* role and ships **disabled**: a
+stock run ranks the nine built-in roles and fetches only their sources. Enable
+it with
 `omp plugin config set omp-llm-role config '{"roles":{"designer":{"enabled":true}}}'`
-— the plugin then ranks it and fetches Design Arena (its only role-exclusive
-source).
+— the plugin then ranks it and fetches Design Arena. Role-exclusive sources are
+fetched only when a ranked role weights their metric: Design Arena (`website`,
+`designer`) and the writing leaderboard (`writing`, e.g. the `writing` role the
+create-agent skill produces).
 
 ## Files
 
@@ -32,15 +35,17 @@ source).
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) shared by the explorer's Export and `create-role.ts` |
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
 | `agents/designer.md` | The `designer` subagent, shipped by the plugin (discovered from the plugin's extension root — no install step) |
+| `agents/writing.md` | The `writing` subagent (prose/docs/reports), shipped the same way; pins `model: "@writing, @default"` so it stays spawnable while the role is absent |
 | `skills/omp-llm-role-create-agent/SKILL.md` | Shipped skill: create an agent + model role for a specific purpose (author the `.md` per `agents-guide.md`, fit weights, write the role, verify, tune in the explorer) |
 | `package.json` | Plugin manifest (`omp.extensions`) — no runtime dependencies (`yaml` is dev-only: tests validate patch output with the real parser) |
 | `.omp-plugin/marketplace.json` | Self-hosted omp marketplace catalog (`gott50-plugins`): `omp plugin marketplace add Gott50/omp-llm-role` + `omp plugin install omp-llm-role@gott50-plugins` |
 | `LICENSE` | MIT |
-| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, thinking-price, openrouter-blend |
+| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, writing metric, thinking-price, openrouter-blend |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
 | `openrouter-endpoints-fetched-data.json` | Daily cache of the OpenRouter model pages' per-provider routes (gitignored) |
 | `designarena-fetched-data.json` | Daily cache of the Design Arena leaderboard boards — `models/website` + `agents/agon_webapps` (gitignored) |
+| `writing-fetched-data.json` | Daily cache of the writing leaderboard's WritingBench export, keyed by llm-stats id (gitignored) |
 | `llm-role-rankings.md` | Generated report: per-role tables with per-metric weighted contributions (regenerate with `--out`) |
 | `SPEC.md` | Normative spec for the plugin |
 | `agents-guide.md` | How to author omp agent `.md` files: frontmatter contract, bundled-agent body conventions, md-file adjustments (verified against omp 18.4.4, links pinned to that tag) |
@@ -317,6 +322,22 @@ recoveries include `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`
 `gpt-6-sol`, `gpt-6-luna`, `deepseek-v4.1-flash`, `mistral-medium-3-5` and
 `gpt-4o-2024-08-06`.
 
+**Writing quality — the writing leaderboard's canonical export.** Fetched only
+when a ranked role weights `writing`. Unlike the leaderboard pages, this source
+has a real machine-readable endpoint: the page's JSON-LD `#ranking` ItemList
+(`https://llm-stats.com/leaderboards/best-ai-for-writing`) mirrors
+`https://llm-stats.com/research/best-ai-for-writing/evidence.json` — a CC BY 4.0,
+hourly-refreshed export whose `records[]` carry `modelId` (the bare llm-stats id,
+so the join is direct, 15/15 hit), `writingBenchScore` (0–1), organization, and
+the secondary communication index. WritingBench is the page's primary signal
+(1,239 prompts, 6 domains); the table's "Rating (conservative)" column is the
+*communication index* (`index_communication` in the main leaderboard, already in
+the find payload) and the page states it "is not substituted for the writing
+score", so the export — not the table — defines the metric. The ranking is
+narrow: 15 models, all Qwen, all `self_reported`/`verified: false` in the
+export, so `writing` is a sparse capability metric (see Scoring), never a
+`required` gate. Cached daily in `writing-fetched-data.json`.
+
 ## Scoring
 
 Per role, each metric is cardinal-normalized with **fixed anchors** (no ranks —
@@ -353,6 +374,16 @@ model. A regression fill was rejected (a least-squares fit saturates at 0 for
 discontinuous, 0.49 jumps between models 0.06 index points apart), and both
 would double-count capability that `general`/`code`/`vision` already carry.
 The report marks a filled value `~` in the model column.
+
+`writing` is the WritingBench score (0–1, already cardinal — identity
+transform) from the writing leaderboard's export. Coverage is 15 of 400 models,
+all Qwen, so it takes the same capability fill **0.195** as `website`/
+`long_context` (a policy constant, not a per-metric calibration) and is marked
+`~` in the report; like them it MUST NOT be a `required` gate — that would
+disqualify every model the source does not cover. Weight it as a differentiator,
+not a coverage score: with the shipped `writing` role profile it moves the
+leader to the export's #1 (`qwen3-235b-a22b-thinking-2507`) without making the
+role a one-org monoculture.
 
 Roles with a `thinking` level rank on the **thinking-adjusted price**: the
 billed blend scales by the level's factor `(3ρ+1+T)/(3ρ+1)` (ρ = input:output
@@ -582,7 +613,7 @@ level cannot be returned to bare by omitting the key, so the editor disables
 
 ## Caching
 
-All four caches are fresh while their `fetchedAt` is the current UTC day, and
+All five caches are fresh while their `fetchedAt` is the current UTC day, and
 resolve against the repo root (never the process cwd — the plugin runs with
 arbitrary cwd inside omp).
 
@@ -600,6 +631,9 @@ arbitrary cwd inside omp).
 - Design Arena cache: `{fetchedAt, source, categories}` where `categories`
   maps the two board keys (`models/website`, `agents/agon_webapps`) to their
   rows — same fresh → fetch → stale chain; an empty board is never cached.
+- Writing cache: `{fetchedAt, source, scores}` where `scores` maps the bare
+  llm-stats id to its WritingBench score — same fresh → fetch → stale chain; an
+  unusable payload or an empty record set is never cached.
 
 Fallback chain (every cache): fresh cache → live fetch (writes cache) → stale
 cache → no enrichment (affected models unranked, or single-route for the
@@ -659,6 +693,19 @@ public (404 / auth error).
   (no `Reset to shipped default`). `resolveSettings` now deep-merges a nested
   `roles` object with flat dotted keys in either order (previously a nested
   `roles` key replaced the flat patch, dropping sibling role settings).
+- Writing role + metric (2026-10-01): the `writing` metric (WritingBench, from
+  the writing leaderboard's canonical export) is wired end-to-end and the
+  `writing` role was created with the plugin's own flow
+  (`create-role.ts --name writing --weights general=0.24,reasoning=0.16,
+  long_context=0.10,writing=0.26,price=0.14,throughput=0.10 --thinking auto`,
+  Σ 1.0, `required: general,price,throughput`), with `agents/writing.md` pinning
+  `model: "@writing, @default"`. Verified live: the updater wrote
+  `modelRoles.writing: "openrouter/qwen/qwen3-235b-a22b-thinking-2507:auto"`
+  (the export's #1), the explorer ranks it (Qwen3-235B-A22B-Thinking-2507 #1,
+  value 0.621), and a headless spawn resolved the child to
+  `openrouter/qwen/qwen3-235b-a22b-thinking-2507:low` (role `auto` → the model's
+  own default) instead of the parent's `deepseek/deepseek-v4.1-flash:off`.
+  `writing` is sparse (15/400, all Qwen) and capability-filled at 0.195.
 - Release-ready (2026-10-01): no runtime dependencies — `config-edit.ts` reads
   and self-checks the config line-oriented (`yaml` is dev-only, used by tests
   to validate patch output with the real parser). `package.json` carries npm
@@ -911,6 +958,14 @@ public (404 / auth error).
   (`{mode, efforts[], …}`) which `extDeps` normalizes to the CLI's string
   array. In print/headless mode `ctx.ui.notify` is a no-op, so the extension
   mirrors decisions and aborts to stderr.
+- `writing` is a 15-model, single-org (Qwen) ranking: the source cannot
+  differentiate the other 385 models, so treat the fill as "unknown", never as
+  a measured 0.195, and expect the role's top-10 to be Qwen-heavy whenever the
+  weight is high enough to matter. The page's table sorts by the *communication
+  index* (`index_communication`, 114/400, already in the find payload), not by
+  WritingBench — the two disagree (the table's #1 `claude-opus-4-6` scores 31.97
+  on the communication index vs Qwen's 16.37, while WritingBench ranks Qwen
+  first). Do not conflate them.
 - `required` is the eligibility gate, not a weight: validation checks
   `required` against the known-metric set, not against `weights`, so a role may
   require a metric it does not weight (and vice versa).

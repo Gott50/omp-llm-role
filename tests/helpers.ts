@@ -21,6 +21,9 @@ export function makeModel(id: string, general: number, price: number, tput: numb
     thinking,
     price,
     throughput: tput,
+    designElo: null,
+    designEloAgents: null,
+    writingBench: null,
     metrics: {
       general,
       code: general,

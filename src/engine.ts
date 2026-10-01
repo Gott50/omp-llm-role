@@ -43,13 +43,17 @@ const DESIGN_ARENA_CACHE_PATH = join(REPO_ROOT, "designarena-fetched-data.json")
 const DESIGN_ARENA_URL = "https://www.designarena.ai/api/leaderboard";
 /** Minimum battles for an endpoint Elo to be trusted over the OR mirror's snapshot. */
 const DESIGN_MIN_BATTLES = 300;
+/** The writing leaderboard's canonical machine-readable export (CC BY 4.0, hourly):
+ * the WritingBench ranking the page's JSON-LD `#ranking` ItemList mirrors. */
+const WRITING_CACHE_PATH = join(REPO_ROOT, "writing-fetched-data.json");
+const WRITING_URL = "https://llm-stats.com/research/best-ai-for-writing/evidence.json";
 /** Below-median fill for sparse capability metrics, keyed by metric name. A model
  * missing one of these metrics is scored at the fill instead of 0, so absence is
  * not a coverage penalty. The scalar is the percentile implied by the uncovered
  * cohort's mean general index (29.8 vs covered 38.2) — a property of the fill
- * policy, not the metric, so `website` and `long_context` share it. Metrics not
- * listed here keep the 0-fill (a missing value contributes nothing). */
-export const CAPABILITY_FILL: Record<string, number> = { website: 0.195, long_context: 0.195 };
+ * policy, not the metric, so `website`, `long_context` and `writing` share it.
+ * Metrics not listed here keep the 0-fill (a missing value contributes nothing). */
+export const CAPABILITY_FILL: Record<string, number> = { website: 0.195, long_context: 0.195, writing: 0.195 };
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
@@ -119,6 +123,10 @@ export type Model = {
    * endpoint); report context only, never scored. null when the model has no
    * board row. */
   designEloAgents: number | null;
+  /** WritingBench normalized score (0–1) from the writing leaderboard's canonical
+   * export; null when the model is not in the WritingBench ranking — `metrics.writing`
+   * is then capability-filled, see `applyWritingScores`. */
+  writingBench: number | null;
   metrics: Record<string, number | null>;
 };
 
@@ -518,6 +526,51 @@ export function applyDesignPercentiles(
   return { covered: covered.length, imputed };
 }
 
+/**
+ * WritingBench scores from the writing leaderboard's canonical export
+ * (`/research/best-ai-for-writing/evidence.json`): `records[].modelId` is the
+ * llm-stats id (bare, same space as `LlmStatsRow.model_id`), so the join is direct.
+ * Null when the payload shape is unusable; rows without a finite score are skipped.
+ */
+export function parseWritingEvidence(v: unknown): Record<string, number> | null {
+  if (typeof v !== "object" || v === null || !("records" in v)) return null;
+  const records: unknown = v.records;
+  if (!Array.isArray(records)) return null;
+  const out: Record<string, number> = {};
+  for (const row of records) {
+    if (typeof row !== "object" || row === null) continue;
+    const id: unknown = "modelId" in row ? row.modelId : null;
+    const score: unknown = "writingBenchScore" in row ? row.writingBenchScore : null;
+    if (typeof id !== "string" || typeof score !== "number" || !Number.isFinite(score)) continue;
+    out[id] = score;
+  }
+  return out;
+}
+
+/**
+ * Set `writingBench` (raw) and `metrics.writing` (score, or the capability fill for
+ * models outside the WritingBench ranking). The score is already 0–1, so
+ * `cardinalMetric` passes it through unchanged. Role-independent: computed over
+ * every model, not a role's eligible pool.
+ */
+export function applyWritingScores(models: Model[], scores: Record<string, number>): { covered: number; imputed: number } {
+  let covered = 0;
+  let imputed = 0;
+  for (const m of models) {
+    const s = scores[m.id];
+    if (s !== undefined) {
+      m.writingBench = s;
+      m.metrics.writing = s;
+      covered++;
+    } else {
+      m.writingBench = null;
+      m.metrics.writing = CAPABILITY_FILL.writing;
+      imputed++;
+    }
+  }
+  return { covered, imputed };
+}
+
 /** Validated find payload: `find` is narrowed for throughput/price derivation; `data` is the
  * full response.data object (every section the endpoint returned), stored verbatim in the cache;
  * `designElo` is the Design Arena `models-website` Elo keyed by llm-stats model id. */
@@ -764,6 +817,7 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
     throughput: null,
     designElo: null,
     designEloAgents: null,
+    writingBench: null,
     metrics: {
       general: r.index_general,
       reasoning: r.index_reasoning,
@@ -784,6 +838,7 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
       price: null, // set by OpenRouter enrichment; the λ·$ penalty axis, never blended
       throughput: null,
       website: null, // set by applyDesignPercentiles (percentile + capability-consistent fill)
+      writing: null, // set by applyWritingScores (WritingBench score + capability-consistent fill)
     },
   }));
 }
@@ -901,6 +956,8 @@ type OrCacheFile = {
 
 type DesignArenaEntry = { modelId: string; elo: number; battles: number; btStdErr: number | null; winRate: number | null };
 type DesignArenaCacheFile = { fetchedAt: string; source: string; categories: Record<string, DesignArenaEntry[]> };
+/** llm-stats model id -> WritingBench normalized score (0–1). */
+type WritingCacheFile = { fetchedAt: string; source: string; scores: Record<string, number> };
 
 /** JSON with recursively sorted object keys (arrays keep order); the root keeps its given order. */
 export function sortedStringify(value: object): string {
@@ -981,6 +1038,62 @@ function writeDesignArenaCache(path: string, fetchedAt: string, categories: Reco
   const cache: DesignArenaCacheFile = { fetchedAt, source: DESIGN_ARENA_URL, categories };
   writeFileSync(path, sortedStringify(cache));
   console.error(`wrote ${path}`);
+}
+
+/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
+function readWritingCache(path: string, requireFresh: boolean): WritingCacheFile | null {
+  let parsed: WritingCacheFile;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8")) as WritingCacheFile;
+  } catch {
+    return null;
+  }
+  if (typeof parsed?.scores !== "object" || parsed.scores === null) return null;
+  if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
+  return parsed;
+}
+
+/** Pretty-printed with sorted keys for scannable diffs, mirroring the other caches. */
+function writeWritingCache(path: string, fetchedAt: string, scores: Record<string, number>): void {
+  const cache: WritingCacheFile = { fetchedAt, source: WRITING_URL, scores };
+  writeFileSync(path, sortedStringify(cache));
+  console.error(`wrote ${path}`);
+}
+
+/**
+ * WritingBench scores, cached daily. Fresh cache -> live fetch -> stale cache, the
+ * same three-path fallback as the other sources; null only when all three fail (the
+ * caller then leaves `writing` unfilled and the metric is simply unused).
+ */
+async function loadWritingScores(refresh: boolean): Promise<Record<string, number> | null> {
+  if (!refresh) {
+    const cached = readWritingCache(WRITING_CACHE_PATH, true);
+    if (cached) {
+      console.error(`using cache ${WRITING_CACHE_PATH} (fetched ${cached.fetchedAt})`);
+      return cached.scores;
+    }
+  }
+  try {
+    const res = await fetch(WRITING_URL, { headers: { "user-agent": UA } });
+    if (!res.ok) {
+      console.error(`writing leaderboard fetch failed: HTTP ${res.status}`);
+    } else {
+      const scores = parseWritingEvidence(await res.json());
+      if (scores && Object.keys(scores).length > 0) {
+        writeWritingCache(WRITING_CACHE_PATH, new Date().toISOString(), scores);
+        return scores;
+      }
+      console.error("writing leaderboard: unexpected payload shape; skipping");
+    }
+  } catch {
+    console.error("writing leaderboard fetch failed");
+  }
+  const stale = readWritingCache(WRITING_CACHE_PATH, false);
+  if (stale) {
+    console.error(`using stale cache ${WRITING_CACHE_PATH} (fetched ${stale.fetchedAt})`);
+    return stale.scores;
+  }
+  return null;
 }
 
 /** Join key for Design Arena ids: case-folded, separators stripped, trailing dated
@@ -1136,6 +1249,9 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string; rol
   // fetched anyway) still populates `designElo`. Undefined roles = fetch (the
   // standalone default, e.g. a caller that ranks every shipped role).
   const needsDesignArena = opts?.roles === undefined || Object.values(opts.roles).some((r) => r.weights.website !== undefined);
+  // The writing leaderboard is the only source a role can depend on exclusively
+  // (`writing`); skip its fetch when no ranked role weights it.
+  const needsWriting = opts?.roles === undefined || Object.values(opts.roles).some((r) => r.weights.writing !== undefined);
 
   const cached = refresh ? null : readCache(CACHE_PATH);
   let rows: LlmStatsRow[];
@@ -1259,6 +1375,16 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string; rol
   const design = applyDesignPercentiles(models, mergedElo);
   if (design.covered > 0) {
     console.error(`design arena: ${design.covered} models with a models-website Elo, ${design.imputed} imputed`);
+  }
+
+  // Writing leaderboard (WritingBench) — fetched only when a ranked role weights
+  // `writing`. Skipped, `metrics.writing` stays null and the metric is unused.
+  if (needsWriting) {
+    const scores = await loadWritingScores(refresh);
+    if (scores) {
+      const writing = applyWritingScores(models, scores);
+      console.error(`writing leaderboard: ${writing.covered} models with a WritingBench score, ${writing.imputed} imputed`);
+    }
   }
 
   return { models, fetchedAt, source, orMatched, orPriced };
