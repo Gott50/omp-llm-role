@@ -4,9 +4,13 @@
  * The document is patched as TEXT, line-oriented: only the value tokens of
  * managed roles inside the top-level `modelRoles:` block and the managed keys
  * inside `retry:` → `fallbackChains:` change. Comments, blank lines, unknown
- * keys and formatting stay byte-identical. The patched text is re-parsed with
- * the `yaml` parser before it is ever returned — a patch that does not parse
- * throws instead of writing. Values are always emitted as double-quoted strings.
+ * keys and formatting stay byte-identical. Reading back uses the same
+ * line-oriented rules, so the plugin has no runtime YAML dependency (required
+ * for omp marketplace installs, which never install package dependencies) and
+ * read/write can never disagree. Every patch is self-checked: the patched text
+ * must read back as exactly the intended state or it throws instead of
+ * returning. The real `yaml` parser still validates patch output in tests
+ * (dev-only dependency). Values are always emitted as double-quoted strings.
  *
  * Indentation follows the file's own style: existing chain keys keep their
  * indent; new keys match the first existing sibling (defaulting to the
@@ -14,35 +18,58 @@
  */
 
 import { renameSync, statSync, writeFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
-import { isRecord } from "./guards.ts";
 
 export class ConfigEditError extends Error {}
 
 export type ConfigPatch = {
   /** managed role -> final selector (emitted double-quoted) */
   roleSelectors: Record<string, string>;
+  /** roles the plugin previously managed but no longer does (disabled/removed) —
+   * their `modelRoles.<role>` line is deleted so a stale pin cannot keep routing */
+  roleRemovals: string[];
   /** fallbackChains key (selector without thinking suffix) -> bare selector values */
   chainUpserts: Record<string, string[]>;
   /** plugin-written chain keys to delete (key + its list items) */
   chainPrunes: string[];
 };
 
+/** Strip a trailing ` # comment`, then unquote a fully-quoted scalar; null for empty/`null`/`~` scalars. */
+function scalarValue(raw: string): string | null {
+  const stripped = raw.replace(/\s+#.*$/, "").trim();
+  if (stripped.length === 0 || stripped === "~" || stripped === "null") return null;
+  return stripped.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
+}
+
+/**
+ * Best-effort line-oriented read of the two surfaces the plugin owns: values
+ * inside the top-level `modelRoles:` block and keys inside
+ * `retry:` → `fallbackChains:`. Uses the same structural rules as the patch
+ * path, so read and write cannot disagree on a block-style document; inline
+ * blocks (`modelRoles: {}`), indented blocks and duplicate top-level blocks
+ * are structural surprises and throw.
+ */
 export function parseConfig(text: string): { modelRoles: Record<string, string>; chainKeys: string[] } {
-  let doc: unknown;
-  try {
-    doc = parseYaml(text);
-  } catch (err) {
-    throw new ConfigEditError(`config does not parse: ${err instanceof Error ? err.message : err}`);
+  const lines = text.split("\n");
+  const modelRoles: Record<string, string> = {};
+  const rolesIdx = findTopLevel(lines, "modelRoles");
+  if (rolesIdx !== -1) {
+    const end = blockEnd(lines, rolesIdx);
+    for (let i = rolesIdx + 1; i < end; i++) {
+      const parsed = parseMapLine(lines[i]);
+      if (!parsed) continue;
+      const value = scalarValue(parsed.value);
+      if (value !== null) modelRoles[parsed.key] = value;
+    }
   }
-  if (doc == null) doc = {};
-  if (!isRecord(doc)) throw new ConfigEditError("config root is not a mapping");
-  const modelRoles = isRecord(doc.modelRoles) ? doc.modelRoles : {};
-  const values: Record<string, string> = {};
-  for (const [k, v] of Object.entries(modelRoles)) if (v != null) values[k] = String(v);
-  const retry = isRecord(doc.retry) ? doc.retry : {};
-  const chains = isRecord(retry.fallbackChains) ? retry.fallbackChains : {};
-  return { modelRoles: values, chainKeys: Object.keys(chains) };
+  const chainKeys: string[] = [];
+  const retryIdx = findTopLevel(lines, "retry");
+  if (retryIdx !== -1) {
+    const fcIdx = findFallbackChains(lines, retryIdx);
+    if (fcIdx !== -1) {
+      for (const key of Object.keys(chainEntries(lines, fcIdx, blockEnd(lines, fcIdx)))) chainKeys.push(key);
+    }
+  }
+  return { modelRoles, chainKeys };
 }
 
 function indentOf(line: string): number {
@@ -51,18 +78,32 @@ function indentOf(line: string): number {
   return n;
 }
 
-/** Indexes of exact `key:` lines at top level. Throws on indented duplicates with no top-level home. */
+/** Indexes of exact `key:` lines at top level. Throws on indented duplicates with no top-level home, on inline values, and on duplicates. */
 function findTopLevel(lines: string[], key: string): number {
   const exact: number[] = [];
   const indented: number[] = [];
+  const inline: number[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (lines[i] === `${key}:`) exact.push(i);
+    else if (indentOf(lines[i]) === 0 && lines[i].startsWith(`${key}:`)) inline.push(i);
     else if (lines[i].trim() === `${key}:` && indentOf(lines[i]) > 0) indented.push(i);
   }
+  if (inline.length > 0) throw new ConfigEditError(`${key}: inline value is not supported (block mapping expected)`);
   if (exact.length > 1) throw new ConfigEditError(`multiple top-level ${key}: blocks`);
   if (exact.length === 1) return exact[0];
   if (indented.length > 0) throw new ConfigEditError(`${key}: found at non-top-level indent only`);
   return -1;
+}
+
+/** Reject flow-style/JSON documents before patching: every top-level line must be a block-style `key:` line. */
+function assertTopLevelBlockStyle(lines: string[]): void {
+  for (const line of lines) {
+    if (line.length === 0 || indentOf(line) > 0) continue;
+    if (line.startsWith("#") || line === "---" || line === "...") continue;
+    if (/^[{\["']/.test(line) || line.startsWith("- ") || !line.includes(":")) {
+      throw new ConfigEditError(`config is not block-style YAML at the top level: ${JSON.stringify(line)}`);
+    }
+  }
 }
 
 /** First index after `start` whose line is non-empty at indent 0 (the block terminator). */
@@ -90,21 +131,43 @@ function quote(value: string): string {
 
 export function patchConfig(configText: string, patch: ConfigPatch): string {
   const lines = configText.split("\n");
-  const out = [...lines];
+  assertTopLevelBlockStyle(lines);
+  const before = parseConfig(configText);
 
-  patchModelRoles(out, patch.roleSelectors);
+  const out = [...lines];
+  patchModelRoles(out, patch.roleSelectors, patch.roleRemovals);
   patchFallbackChains(out, patch.chainUpserts, patch.chainPrunes);
 
+  // Self-check: the patched text must read back as exactly the intended state
+  // (replaces the former yaml re-parse; the dev-only yaml dependency still
+  // validates every fixture in tests/config-edit.test.ts).
   const patched = out.join("\n");
-  try {
-    parseYaml(patched);
-  } catch (err) {
-    throw new ConfigEditError(`patched config does not parse (no write): ${err instanceof Error ? err.message : err}`);
+  const after = parseConfig(patched);
+  for (const [role, selector] of Object.entries(patch.roleSelectors)) {
+    if (after.modelRoles[role] !== selector) {
+      throw new ConfigEditError(`patch self-check failed: modelRoles.${role} did not read back as written`);
+    }
+  }
+  const expectedChains: Record<string, true> = {};
+  for (const key of before.chainKeys) expectedChains[key] = true;
+  for (const key of patch.chainPrunes) {
+    if (!(key in patch.chainUpserts)) delete expectedChains[key];
+  }
+  for (const [key, values] of Object.entries(patch.chainUpserts)) {
+    if (patch.chainPrunes.includes(key)) continue; // patchFallbackChains ignores keys in both lists
+    if (values.length === 0) delete expectedChains[key];
+    else expectedChains[key] = true;
+  }
+  const afterChains: Record<string, true> = {};
+  for (const key of after.chainKeys) afterChains[key] = true;
+  const expectedKeys = Object.keys(expectedChains);
+  if (expectedKeys.length !== after.chainKeys.length || expectedKeys.some((key) => !(key in afterChains))) {
+    throw new ConfigEditError("patch self-check failed: fallbackChains keys did not read back as written");
   }
   return patched;
 }
 
-function patchModelRoles(out: string[], roleSelectors: Record<string, string>): void {
+function patchModelRoles(out: string[], roleSelectors: Record<string, string>, roleRemovals: string[]): void {
   const roles = Object.entries(roleSelectors);
   const blockIdx = findTopLevel(out, "modelRoles");
   if (blockIdx === -1) {
@@ -114,7 +177,17 @@ function patchModelRoles(out: string[], roleSelectors: Record<string, string>): 
     out.splice(at, 0, "modelRoles:", ...roles.map(([role, selector]) => `  ${role}: ${quote(selector)}`));
     return;
   }
-  const end = blockEnd(out, blockIdx);
+  let end = blockEnd(out, blockIdx);
+  // Roles that left the managed set: delete their line so a stale pin cannot keep
+  // routing (a disabled role must stop resolving `@<role>`).
+  const removals = new Set(roleRemovals);
+  const removeLines: number[] = [];
+  for (let i = blockIdx + 1; i < end; i++) {
+    const parsed = parseMapLine(out[i]);
+    if (parsed && removals.has(parsed.key)) removeLines.push(i);
+  }
+  for (const i of removeLines.sort((a, b) => b - a)) out.splice(i, 1);
+  end -= removeLines.length;
   const upserts: string[] = [];
   for (const [role, selector] of roles) {
     const hits: number[] = [];
@@ -122,6 +195,7 @@ function patchModelRoles(out: string[], roleSelectors: Record<string, string>): 
       const parsed = parseMapLine(out[i]);
       if (parsed && parsed.key === role) hits.push(i);
     }
+    if (hits.length > 1) throw new ConfigEditError(`role ${role}: duplicate line in modelRoles block`);
     if (hits.length === 1) {
       const i = hits[0];
       if (indentOf(out[i]) !== 2) throw new ConfigEditError(`role ${role}: expected 2-space indent in modelRoles block`);
@@ -143,6 +217,48 @@ type ChainEntry = { keyLine: number; itemLines: number[]; indent: number };
 /** One disjoint edit on the ORIGINAL line array; applied bottom-up so positions stay valid. */
 type LineEdit = { start: number; deleteCount: number; insert: string[] };
 
+/** Index of the `fallbackChains:` line (indent 2) under the top-level retry: block; -1 when absent. */
+function findFallbackChains(lines: string[], retryIdx: number): number {
+  const retryEnd = blockEnd(lines, retryIdx);
+  let fcIdx = -1;
+  for (let i = retryIdx + 1; i < retryEnd; i++) {
+    const parsed = parseMapLine(lines[i]);
+    if (parsed && parsed.key === "fallbackChains") {
+      if (parsed.indent !== 2) throw new ConfigEditError(`fallbackChains: expected 2-space indent under retry:, got ${parsed.indent}`);
+      if (parsed.value.replace(/\s+#.*$/, "").trim().length > 0) throw new ConfigEditError("fallbackChains: inline value is not supported (block mapping expected)");
+      if (fcIdx !== -1) throw new ConfigEditError("duplicate fallbackChains: block under retry:");
+      fcIdx = i;
+    }
+  }
+  return fcIdx;
+}
+
+/**
+ * Chain keys (indent > 2) and their list-item lines inside the fallbackChains
+ * block, in document order. Every non-comment line must be a key line or belong
+ * to the preceding key's item run — anything else is a structural surprise.
+ */
+function chainEntries(lines: string[], fcIdx: number, fcEnd: number): Record<string, ChainEntry> {
+  const entries: Record<string, ChainEntry> = {};
+  let current: ChainEntry | null = null;
+  for (let i = fcIdx + 1; i < fcEnd; i++) {
+    const line = lines[i];
+    if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
+    const parsed = parseMapLine(line);
+    if (parsed && parsed.indent > 2) {
+      if (parsed.indent % 2 !== 0) throw new ConfigEditError(`odd indent (${parsed.indent}) in fallbackChains block`);
+      if (parsed.key in entries) throw new ConfigEditError(`duplicate chain key ${parsed.key} in fallbackChains block`);
+      current = { keyLine: i, itemLines: [], indent: parsed.indent };
+      entries[parsed.key] = current;
+    } else if (current) {
+      current.itemLines.push(i);
+    } else {
+      throw new ConfigEditError(`unexpected line in fallbackChains block: ${JSON.stringify(line)}`);
+    }
+  }
+  return entries;
+}
+
 function patchFallbackChains(out: string[], chainUpserts: Record<string, string[]>, chainPrunes: string[]): void {
   const upserts = Object.entries(chainUpserts).filter(([key]) => !chainPrunes.includes(key));
   const prunes = chainPrunes.filter((key) => !(key in chainUpserts));
@@ -162,39 +278,13 @@ function patchFallbackChains(out: string[], chainUpserts: Record<string, string[
     return;
   }
 
-  let fcIdx = -1;
-  const retryEnd = blockEnd(out, retryIdx);
-  for (let i = retryIdx + 1; i < retryEnd; i++) {
-    const parsed = parseMapLine(out[i]);
-    if (parsed && parsed.key === "fallbackChains") {
-      if (parsed.indent !== 2) throw new ConfigEditError(`fallbackChains: expected 2-space indent under retry:, got ${parsed.indent}`);
-      if (fcIdx !== -1) throw new ConfigEditError("duplicate fallbackChains: block under retry:");
-      fcIdx = i;
-    }
-  }
+  let fcIdx = findFallbackChains(out, retryIdx);
   if (fcIdx === -1) {
     out.splice(retryIdx + 1, 0, "  fallbackChains:");
     fcIdx = retryIdx + 1;
   }
   const fcEnd = blockEnd(out, fcIdx);
-  // Map chain keys (indent > 2) and their list items inside the fallbackChains block.
-  const entries: Record<string, ChainEntry> = {};
-  let current: ChainEntry | null = null;
-  for (let i = fcIdx + 1; i < fcEnd; i++) {
-    const line = out[i];
-    if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
-    const parsed = parseMapLine(line);
-    if (parsed && parsed.indent > 2) {
-      if (parsed.indent % 2 !== 0) throw new ConfigEditError(`odd indent (${parsed.indent}) in fallbackChains block`);
-      if (parsed.key in entries) throw new ConfigEditError(`duplicate chain key ${parsed.key} in fallbackChains block`);
-      current = { keyLine: i, itemLines: [], indent: parsed.indent };
-      entries[parsed.key] = current;
-    } else if (current) {
-      current.itemLines.push(i);
-    } else {
-      throw new ConfigEditError(`unexpected line in fallbackChains block: ${JSON.stringify(line)}`);
-    }
-  }
+  const entries = chainEntries(out, fcIdx, fcEnd);
 
   // Collect disjoint edits on original coordinates: prunes delete; upserts replace an
   // existing key's item run (or delete the key when the new chain is empty); new keys

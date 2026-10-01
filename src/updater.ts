@@ -285,7 +285,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       }
     }
     const chainPrunes = settings.writeFallbackChains ? state.pluginWrittenChainKeys.filter((k) => !referenced.has(k)) : [];
-    const patch: ConfigPatch = { roleSelectors, chainUpserts, chainPrunes };
+    // Roles the plugin managed on a previous run but no longer does (disabled via
+    // `enabled: false` / `weights: null`, or removed from settings): delete their
+    // `modelRoles.<role>` line so a stale pin cannot keep routing `@<role>`.
+    const roleRemovals = state.managedRoles.filter((r) => !(r in settings.roles));
+    const patch: ConfigPatch = { roleSelectors, roleRemovals, chainUpserts, chainPrunes };
 
     let wrote = false;
     // Dry runs stop here: decisions are reported, but nothing is written, no

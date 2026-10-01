@@ -20,13 +20,14 @@ tail: true
 `;
 
 test("noop patch returns byte-identical text", () => {
-  const out = patchConfig(COMMENTED_CONFIG, { roleSelectors: {}, chainUpserts: {}, chainPrunes: [] });
+  const out = patchConfig(COMMENTED_CONFIG, { roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [] });
   assert.equal(out, COMMENTED_CONFIG);
 });
 
 test("managed role value replaced in place; every other line byte-identical", () => {
   const out = patchConfig(COMMENTED_CONFIG, {
     roleSelectors: { default: "openrouter/org/new" },
+    roleRemovals: [],
     chainUpserts: {},
     chainPrunes: [],
   });
@@ -46,6 +47,7 @@ test("managed role value replaced in place; every other line byte-identical", ()
 test("missing role upserted at the end of the modelRoles block, quoted, 2-space", () => {
   const out = patchConfig(COMMENTED_CONFIG, {
     roleSelectors: { added: "openrouter/org/x" },
+    roleRemovals: [],
     chainUpserts: {},
     chainPrunes: [],
   });
@@ -58,7 +60,7 @@ test("missing role upserted at the end of the modelRoles block, quoted, 2-space"
 
 test("chain key replaced in place, never duplicated; owner items replaced", () => {
   const out = patchConfig(COMMENTED_CONFIG, {
-    roleSelectors: {},
+    roleSelectors: {}, roleRemovals: [],
     chainUpserts: { "openrouter/owner/key": ["openrouter/c", "openrouter/d"] },
     chainPrunes: [],
   });
@@ -75,7 +77,7 @@ test("chain key replaced in place, never duplicated; owner items replaced", () =
 
 test("pruned chain key removed with its items", () => {
   const out = patchConfig(COMMENTED_CONFIG, {
-    roleSelectors: {},
+    roleSelectors: {}, roleRemovals: [],
     chainUpserts: {},
     chainPrunes: ["openrouter/owner/key"],
   });
@@ -86,10 +88,23 @@ test("pruned chain key removed with its items", () => {
   assert.deepEqual(doc.chainKeys, []);
 });
 
+test("a role that left the managed set is removed from modelRoles", () => {
+  const out = patchConfig(COMMENTED_CONFIG, {
+    roleSelectors: {},
+    roleRemovals: ["custom"],
+    chainUpserts: {},
+    chainPrunes: [],
+  });
+  assert.ok(!out.includes("custom:"));
+  assert.ok(out.includes("default: openrouter/org/old"));
+  assert.ok(out.includes("# role comments survive"));
+  assert.deepEqual(Object.keys(parseConfig(out).modelRoles), ["default"]);
+});
+
 test("missing retry block is created at the end (house style: keys 4, items 6)", () => {
   const config = "modelRoles:\n  default: openrouter/org/a\n";
   const out = patchConfig(config, {
-    roleSelectors: {},
+    roleSelectors: {}, roleRemovals: [],
     chainUpserts: { "openrouter/org/a": ["openrouter/org/b"] },
     chainPrunes: [],
   });
@@ -101,6 +116,7 @@ test("missing retry block is created at the end (house style: keys 4, items 6)",
 test("missing modelRoles block is created", () => {
   const out = patchConfig("other: value\n", {
     roleSelectors: { default: "openrouter/org/a" },
+    roleRemovals: [],
     chainUpserts: {},
     chainPrunes: [],
   });
@@ -111,17 +127,18 @@ test("missing modelRoles block is created", () => {
 
 test("duplicate managed role line is a structural surprise", () => {
   const config = "modelRoles:\n  default: a\n  default: b\n";
-  assert.throws(() => patchConfig(config, { roleSelectors: { default: "c" }, chainUpserts: {}, chainPrunes: [] }), ConfigEditError);
+  assert.throws(() => patchConfig(config, { roleSelectors: { default: "c" }, roleRemovals: [], chainUpserts: {}, chainPrunes: [] }), ConfigEditError);
 });
 
 test("indented modelRoles block is a structural surprise", () => {
   const config = "top:\n  modelRoles:\n    default: a\n";
-  assert.throws(() => patchConfig(config, { roleSelectors: { default: "c" }, chainUpserts: {}, chainPrunes: [] }), ConfigEditError);
+  assert.throws(() => patchConfig(config, { roleSelectors: { default: "c" }, roleRemovals: [], chainUpserts: {}, chainPrunes: [] }), ConfigEditError);
 });
 
 test("patched output always re-parses as YAML", () => {
   const out = patchConfig(COMMENTED_CONFIG, {
     roleSelectors: { default: "openrouter/org/new", added: "openrouter/org/x" },
+    roleRemovals: [],
     chainUpserts: { "openrouter/owner/key": ["openrouter/c"], "openrouter/new/key": ["openrouter/d"] },
     chainPrunes: [],
   });

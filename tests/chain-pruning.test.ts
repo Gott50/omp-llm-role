@@ -101,3 +101,21 @@ test("writeFallbackChains: false leaves chains untouched and prunes nothing", as
   const state = JSON.parse(readFileSync(join(dir, "llm-role-state.json"), "utf8"));
   assert.deepEqual(state.pluginWrittenChainKeys, ["openrouter/org/model-stale", "openrouter/org/model-a"]);
 });
+
+test("a role that left the managed set is pruned from modelRoles", async () => {
+  // `designer` was managed last run (state) but ships disabled, so this run must
+  // delete its stale pin — otherwise the shipped agent keeps routing to it.
+  const config = "modelRoles:\n  default: openrouter/org/model-b\n  designer: openrouter/org/model-c\n";
+  const dir = setupAgentDir(config, {
+    lastRunDay: null,
+    managedRoles: ["default", "designer"],
+    roleLastSelector: {},
+    pluginWrittenChainKeys: [],
+    previousModelRoles: null,
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(MODELS), { force: true }));
+  assert.equal(result.aborted, undefined);
+  const parsed = parseConfig(readFileSync(join(dir, "config.yml"), "utf8"));
+  assert.equal(parsed.modelRoles.designer, undefined);
+  assert.ok(parsed.modelRoles.default !== undefined);
+});
