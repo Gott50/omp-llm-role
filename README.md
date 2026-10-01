@@ -203,7 +203,7 @@ Adding another task specialist:
    **string**, which the validator rejects for numbers/arrays/booleans, so write
    the typed def with the plugin's own validated path:
    ```sh
-   node create-role.ts --name review \
+   node ~/.omp/plugins/node_modules/omp-llm-role/create-role.ts --name review \
      --weights reasoning=0.30,general=0.24,code=0.20,agents=0.10,price=0.10,throughput=0.06 \
      --required general,price,throughput --thinking high \
      --description "Code review: agentic depth with cost awareness"
@@ -226,7 +226,7 @@ signal (delete `roles.<name>` from the lock file and let a run drop the key from
 `config.yml`):
 
 ```sh
-node update-roles.ts --dry-run   # a kept/switched line for the role, or "no changes"
+node ~/.omp/plugins/node_modules/omp-llm-role/update-roles.ts --dry-run   # a kept/switched line for the role, or "no changes"
 cd /tmp && omp -p --mode json "Use the <name> agent (task tool) to <trivial task>"
 ```
 
