@@ -45,8 +45,10 @@ then ranks it and fetches Design Arena (its only role-exclusive source).
 Install (users) — any one of: `omp plugin install omp-llm-role` (npm),
 `omp plugin install github:Gott50/omp-llm-role` (git, public repo), or
 `omp plugin marketplace add Gott50/omp-llm-role` +
-`omp plugin install omp-llm-role@gott50-plugins` (marketplace). No runtime
-dependencies; restart the session after install so the extension module loads.
+`omp plugin install omp-llm-role@gott50-plugins` (marketplace). npm and git
+installs shell out to `bun install` (bun must be on PATH); marketplace
+installs need no package manager. No runtime dependencies; restart the
+session after install so the extension module loads.
 
 Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
 
@@ -574,6 +576,14 @@ publish through any channel (same tree, no build step):
 The npm tarball ships exactly the `files` whitelist in `package.json`
 (`src/`, `web/`, `agents/`, the CLI scripts, `SPEC.md`) — caches and tests
 stay out. Gate: `node --test tests/`.
+
+Install routes verified 2026-10-01 (omp 18.4.8): npm (local-registry
+simulation of the packed tarball), git (local git daemon), marketplace (local
+path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
+`link` — every post-install session run wrote `modelRoles` +
+`retry.fallbackChains` and appended a history row. The public GitHub URLs
+(`github:Gott50/…`, `marketplace add Gott50/…`) fail until the repo is
+public (404 / auth error).
 
 ## Current state (2026-10-01)
 
