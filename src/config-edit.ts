@@ -148,6 +148,12 @@ export function patchConfig(configText: string, patch: ConfigPatch): string {
       throw new ConfigEditError(`patch self-check failed: modelRoles.${role} did not read back as written`);
     }
   }
+  for (const role of patch.roleRemovals) {
+    if (role in patch.roleSelectors) continue; // an upsert of the same role wins over its removal
+    if (role in after.modelRoles) {
+      throw new ConfigEditError(`patch self-check failed: modelRoles.${role} was not removed`);
+    }
+  }
   const expectedChains: Record<string, true> = {};
   for (const key of before.chainKeys) expectedChains[key] = true;
   for (const key of patch.chainPrunes) {

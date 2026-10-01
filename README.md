@@ -28,7 +28,9 @@ then ranks it and fetches Design Arena (its only role-exclusive source).
 | `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
 | `agents/designer.md` | The `designer` subagent, shipped by the plugin (discovered from the plugin's extension root — no install step) |
-| `package.json` | Plugin manifest (`omp.extensions`) + the single dependency (`yaml`) |
+| `package.json` | Plugin manifest (`omp.extensions`) — no runtime dependencies (`yaml` is dev-only: tests validate patch output with the real parser) |
+| `.omp-plugin/marketplace.json` | Self-hosted omp marketplace catalog (`gott50-plugins`): `omp plugin marketplace add Gott50/omp-llm-role` + `omp plugin install omp-llm-role@gott50-plugins` |
+| `LICENSE` | MIT |
 | `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, thinking-price, openrouter-blend |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
@@ -39,6 +41,12 @@ then ranks it and fetches Design Arena (its only role-exclusive source).
 | `agents-guide.md` | How to author omp agent `.md` files: frontmatter contract, bundled-agent body conventions, md-file adjustments (verified against omp 18.4.4, links pinned to that tag) |
 
 ## Plugin: daily model-role updater
+
+Install (users) — any one of: `omp plugin install omp-llm-role` (npm),
+`omp plugin install github:Gott50/omp-llm-role` (git, public repo), or
+`omp plugin marketplace add Gott50/omp-llm-role` +
+`omp plugin install omp-llm-role@gott50-plugins` (marketplace). No runtime
+dependencies; restart the session after install so the extension module loads.
 
 Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
 
@@ -93,8 +101,9 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   byte-identical; values are emitted double-quoted; a line whose value already
   equals the new selector (any quoting) is left untouched, so a no-change run
   writes nothing and never touches the config mtime. Atomic tmp+rename with a
-  3-attempt mtime-conflict retry; the patched text must re-parse as YAML or
-  nothing is written. Thinking suffixes come from each role's `thinking` field
+  3-attempt mtime-conflict retry; the patched text must read back through the
+  line-oriented reader as exactly the intended state or nothing is written.
+  Thinking suffixes come from each role's `thinking` field
   in `DEFAULT_ROLES` (`default`/`task`/`advisor`: `auto`; `smol`/`commit`/
   `tiny`: `off`; `slow`: `high`; `vision`/`plan`/`designer`: `auto` — every
   shipped role carries a level) and are only appended when the
@@ -545,8 +554,36 @@ pages). An empty/unusable OpenRouter payload is never cached, so the next run
 retries. llm-stats fetch failure is fatal (no data at all); OpenRouter and
 Design Arena failures are non-fatal.
 
+## Releasing
+
+`version` in `package.json` is the release switch — bump it, commit, then
+publish through any channel (same tree, no build step):
+
+- **npm**: `npm publish` (unscoped name). Users install with
+  `omp plugin install omp-llm-role`; upgrades via
+  `omp plugin upgrade omp-llm-role`.
+- **git**: push (repo public). `omp plugin install github:Gott50/omp-llm-role`
+  follows the default branch — tag `v<version>` for pinned refs.
+- **marketplace**: `.omp-plugin/marketplace.json` lists the repo itself
+  (`source: "./"`); bump its `plugins[0].version` together with
+  `package.json` (install cache paths key on it, and `upgrade --all` only
+  considers entries that declare a version). Users refresh with
+  `omp plugin marketplace update gott50-plugins` and
+  `omp plugin upgrade omp-llm-role@gott50-plugins`.
+
+The npm tarball ships exactly the `files` whitelist in `package.json`
+(`src/`, `web/`, `agents/`, the CLI scripts, `SPEC.md`) — caches and tests
+stay out. Gate: `node --test tests/`.
+
 ## Current state (2026-10-01)
 
+- Release-ready (2026-10-01): no runtime dependencies — `config-edit.ts` reads
+  and self-checks the config line-oriented (`yaml` is dev-only, used by tests
+  to validate patch output with the real parser). `package.json` carries npm
+  metadata + a `files` whitelist; the repo ships an MIT `LICENSE` and is its
+  own marketplace (`.omp-plugin/marketplace.json`, `gott50-plugins`) — install
+  via `omp plugin install omp-llm-role`, `github:Gott50/omp-llm-role`, or
+  `omp-llm-role@gott50-plugins`. See Releasing.
 - Designer is opt-in (2026-10-01): `designer` ships `enabled: false`, so a stock
   run ranks the nine built-in roles and skips the Design Arena endpoint (the
   sole role-exclusive source). Enable with

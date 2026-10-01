@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "gott50-plugins",
+  "owner": {
+    "name": "Gott50"
+  },
+  "metadata": {
+    "description": "omp plugins by Gott50",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "omp-llm-role",
+      "description": "Daily model-role updater: ranks models per omp role from llm-stats + OpenRouter and rewrites the agent config's modelRoles to the day's best key-eligible picks.",
+      "version": "1.0.0",
+      "source": "./",
+      "category": "development",
+      "homepage": "https://github.com/Gott50/omp-llm-role",
+      "license": "MIT",
+      "keywords": ["omp", "llm", "model-routing", "openrouter"]
+    }
+  ]
+}

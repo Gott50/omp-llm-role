@@ -1,15 +1,39 @@
 {
   "name": "omp-llm-role",
-  "private": true,
+  "version": "1.0.0",
   "type": "module",
   "description": "omp plugin: daily model-role updater driven by llm-stats/OpenRouter rankings",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gott50/omp-llm-role.git"
+  },
+  "homepage": "https://github.com/Gott50/omp-llm-role#readme",
+  "bugs": "https://github.com/Gott50/omp-llm-role/issues",
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "llm",
+    "model-routing",
+    "openrouter",
+    "llm-stats"
+  ],
+  "files": [
+    "src",
+    "web",
+    "agents",
+    "llm-role-rank.ts",
+    "update-roles.ts",
+    "explore.ts",
+    "SPEC.md"
+  ],
   "scripts": {
     "explore": "node explore.ts"
   },
   "omp": {
     "extensions": ["./src/extension.ts"]
   },
-  "dependencies": {
+  "devDependencies": {
     "yaml": "^2"
   }
 }

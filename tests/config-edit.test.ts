@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { parse as parseYaml } from "yaml";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic } from "../src/config-edit.ts";
 
 const COMMENTED_CONFIG = `# header comment
@@ -135,16 +136,65 @@ test("indented modelRoles block is a structural surprise", () => {
   assert.throws(() => patchConfig(config, { roleSelectors: { default: "c" }, roleRemovals: [], chainUpserts: {}, chainPrunes: [] }), ConfigEditError);
 });
 
-test("patched output always re-parses as YAML", () => {
+test("patched output is valid YAML (real parser) and reads back through parseConfig", () => {
   const out = patchConfig(COMMENTED_CONFIG, {
     roleSelectors: { default: "openrouter/org/new", added: "openrouter/org/x" },
     roleRemovals: [],
     chainUpserts: { "openrouter/owner/key": ["openrouter/c"], "openrouter/new/key": ["openrouter/d"] },
     chainPrunes: [],
   });
-  assert.doesNotThrow(() => parseConfig(out));
-  const doc = parseConfig(out);
-  assert.deepEqual(doc.chainKeys.sort(), ["openrouter/new/key", "openrouter/owner/key"]);
+  const doc = parseYaml(out) as { modelRoles: Record<string, string>; retry: { fallbackChains: Record<string, unknown> } };
+  assert.deepEqual(doc.modelRoles, { default: "openrouter/org/new", custom: "something-else", added: "openrouter/org/x" });
+  assert.deepEqual(Object.keys(doc.retry.fallbackChains).sort(), ["openrouter/new/key", "openrouter/owner/key"]);
+  const read = parseConfig(out);
+  assert.deepEqual(read.chainKeys.sort(), ["openrouter/new/key", "openrouter/owner/key"]);
+});
+
+test("parseConfig agrees with the real yaml parser on block-style configs", () => {
+  const REAL_SHAPED = `modelRoles:
+  smol: openrouter/deepseek/deepseek-v4.1-flash:off
+  default: "openrouter/org/model-x:auto"
+  web: web/exa
+modelTags:
+  designer:
+    name: Designer
+retry:
+  fallbackChains:
+    openrouter/org/model-x:
+      - "openrouter/org/model-y"
+tail: true
+`;
+  const patched = patchConfig(COMMENTED_CONFIG, {
+    roleSelectors: { default: "openrouter/org/new", added: "openrouter/org/x" },
+    roleRemovals: [],
+    chainUpserts: { "openrouter/owner/key": ["openrouter/c"], "openrouter/new/key": ["openrouter/d"] },
+    chainPrunes: [],
+  });
+  for (const text of [COMMENTED_CONFIG, REAL_SHAPED, patched]) {
+    const doc = parseYaml(text) as { modelRoles?: Record<string, unknown>; retry?: { fallbackChains?: Record<string, unknown> } };
+    const expectedRoles: Record<string, string> = {};
+    for (const [key, value] of Object.entries(doc.modelRoles ?? {})) if (value != null) expectedRoles[key] = String(value);
+    assert.deepEqual(
+      parseConfig(text),
+      { modelRoles: expectedRoles, chainKeys: Object.keys(doc.retry?.fallbackChains ?? {}) },
+      `divergence on: ${JSON.stringify(text)}`,
+    );
+  }
+});
+
+test("flow-style config (JSON) is rejected before patching", () => {
+  const config = '{"modelRoles": {"default": "openrouter/org/a"}}\n';
+  assert.throws(
+    () => patchConfig(config, { roleSelectors: { default: "openrouter/org/b" }, roleRemovals: [], chainUpserts: {}, chainPrunes: [] }),
+    ConfigEditError,
+  );
+});
+
+test("inline modelRoles value is a structural surprise", () => {
+  assert.throws(
+    () => patchConfig("modelRoles: {}\n", { roleSelectors: { default: "openrouter/org/a" }, roleRemovals: [], chainUpserts: {}, chainPrunes: [] }),
+    ConfigEditError,
+  );
 });
 
 test("writeConfigAtomic writes atomically and detects mtime conflicts", () => {
