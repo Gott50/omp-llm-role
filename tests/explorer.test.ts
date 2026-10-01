@@ -85,7 +85,7 @@ test("validateRole surfaces the plugin's own validation errors", () => {
   const badSum = validateRole("custom", { description: "", weights: { general: 0.7, price: 0.6 }, required: [] });
   assert.ok(badSum.some((e) => e.includes("weights sum")));
 
-  const unknown = validateRole("custom", { description: "", weights: { gpqa: 0.5, price: 0.5 }, required: [] });
+  const unknown = validateRole("custom", { description: "", weights: { nope: 0.5, price: 0.5 }, required: [] });
   assert.ok(unknown.some((e) => e.includes("unknown metric")));
 
   assert.deepEqual(validateRole("custom", { description: "", weights: { general: 0.5, price: 0.5 }, required: [] }), []);

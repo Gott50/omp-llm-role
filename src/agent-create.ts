@@ -204,7 +204,15 @@ export function applyExtraBenchmarks(weights: Record<string, number>, metrics: r
     const keys = Object.keys(next).filter((key) => key !== "price");
     const sum = keys.reduce((total, key) => total + next[key], 0);
     const target = 1 - price;
-    for (const key of keys) next[key] = (next[key] * target) / sum;
+    // Round to 4 decimals so the written role def stays readable, then absorb the
+    // rounding residual in the largest non-price weight so Σ(non-price) = 1 − price
+    // still holds exactly (the invariant `rankRole` divides by).
+    for (const key of keys) next[key] = Math.round(((next[key] * target) / sum) * 1e4) / 1e4;
+    const residual = target - keys.reduce((total, key) => total + next[key], 0);
+    if (residual !== 0) {
+      const largest = keys.reduce((a, b) => (next[a] >= next[b] ? a : b));
+      next[largest] = Math.round((next[largest] + residual) * 1e4) / 1e4;
+    }
   }
   return { weights: next, added, duplicates, unknown };
 }

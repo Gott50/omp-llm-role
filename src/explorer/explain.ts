@@ -25,8 +25,9 @@ export type MetricMeta = {
 
 const INDEX_ANCHORS = "−20→0, +60→1, unclamped (observed −16..+60)";
 
-/** One entry per KNOWN_METRICS key. `gpqa` is deliberately absent: it exists in
- * `Model.metrics` but is not weightable (resolveSettings rejects it). */
+/** One entry per KNOWN_METRICS key. The six raw llm-stats benchmark pass rates
+ * are sparse (gpqa 62.5%, aime 30.5%, swe_bench 29.0%, arc_agi/terminal_bench/
+ * tau_bench ~5-6% of the field) — weight them as differentiators, not gates. */
 export const METRIC_META: Record<string, MetricMeta> = {
   general: { label: "General index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   reasoning: { label: "Reasoning index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
@@ -38,6 +39,12 @@ export const METRIC_META: Record<string, MetricMeta> = {
   tool_calling: { label: "Tool-calling index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   long_context: { label: "Long-context index", kind: "index", unit: "index pts", formula: "(v+20)/80", anchors: INDEX_ANCHORS },
   mrcr: { label: "MRCR v2", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
+  gpqa: { label: "GPQA", kind: "benchmark", unit: "pass rate", formula: "(v−0.25)/0.75", anchors: "4-way multiple choice, chance 0.25" },
+  aime: { label: "AIME 2025", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
+  swe_bench: { label: "SWE-bench Verified", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
+  arc_agi: { label: "ARC-AGI v2", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
+  terminal_bench: { label: "Terminal-Bench", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
+  tau_bench: { label: "τ-bench (retail)", kind: "benchmark", unit: "pass rate", formula: "raw 0-1", anchors: "chance ≈ 0" },
   website: { label: "Design Arena (website)", kind: "percentile", unit: "percentile", formula: "identity (already 0-1)", anchors: "percentile within the design-covered field; models without Design Arena data get the capability fill 0.195" },
   writing: { label: "WritingBench", kind: "percentile", unit: "score 0-1", formula: "identity (already 0-1)", anchors: "WritingBench normalized score (writing leaderboard); models outside the ranking get the capability fill 0.195" },
   price: { label: "Price", kind: "price", unit: "$/M", formula: "billed blend 3:1 in:out, ×(3ρ+1+T)/(3ρ+1) at the role's thinking level", anchors: "OpenRouter standard route" },

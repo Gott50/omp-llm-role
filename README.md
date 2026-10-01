@@ -401,7 +401,11 @@ the scale is sample-independent): llm-stats `index_*` scores are interval-scale
 with arbitrary zero (observed −16..+60), mapped affinely `(v+20)/80`; benchmarks
 are chance-anchored pass rates (gpqa 0.25 four-way guessing baseline, others
 chance ≈ 0); throughput is log-anchored 10..300 tok/s (equal log-ratios count
-equally, saturated outside the anchors). The quality composite
+equally, saturated outside the anchors). The weightable benchmark set is `mrcr`,
+`gpqa`, `aime`, `swe_bench`, `arc_agi`, `terminal_bench`, `tau_bench`; the last
+six are sparse (gpqa 62.5%, aime 30.5%, swe_bench 29.0%, arc_agi/terminal_bench/
+tau_bench ~5-6% of the field), so weight them as differentiators, never as
+`required` gates. The quality composite
 `q = Σ (weight / (1 − w_price)) × metric` excludes price; the sort key is
 `value = q − λ·$/M` with `λ = (w_price/(1−w_price)) / $20` — the price weight's
 share, overridable per role via plugin settings `roles.<role>.lambda`. Report
@@ -810,6 +814,12 @@ public (404 / auth error).
   `model: "@archtest2, @default"` and `tools:` frontmatter; `--benchmarks writing` folded
   `writing` in and rebalanced (Σ = 1, non-price = 0.84 = 1 − 0.16), and a duplicate
   (`--benchmarks long_context` on the `docs` archetype) was reported and skipped.
+  The six raw llm-stats benchmark pass rates (`gpqa`, `aime`, `swe_bench`, `arc_agi`,
+  `terminal_bench`, `tau_bench`) are now weightable too — they were already in
+  `Model.metrics` and scored by `cardinalMetric`, but `resolveSettings` rejected them,
+  so "another benchmark" had no referent. They are sparse (gpqa 62.5%, aime 30.5%,
+  swe_bench 29.0%, arc_agi/terminal_bench/tau_bench ~5-6%), so they are differentiators,
+  never `required` gates; no shipped role weights them, so the report is unchanged.
 
 - Explorer in the plugin (2026-10-01): `/explore-roles` boots the ranking UI
   **in-process** inside omp — no `node explore.ts` subprocess, catalog from

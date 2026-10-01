@@ -134,7 +134,17 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
 export const SHIPPED_AGENTS: string[] = ["designer"];
 
 
-/** Metrics a role weight/required entry may name (SPEC §7). */
+/**
+ * Metrics a role weight/required entry may name (SPEC §7).
+ *
+ * The six raw llm-stats benchmark pass rates (`gpqa`, `aime`, `swe_bench`,
+ * `arc_agi`, `terminal_bench`, `tau_bench`) are weightable too: they are already
+ * in `Model.metrics` and scored by `cardinalMetric` (gpqa chance-anchored at
+ * 0.25, the rest raw 0-1). They are sparse (gpqa 62.5%, aime 30.5%, swe_bench
+ * 29.0%, arc_agi/terminal_bench/tau_bench ~5-6% of the field), so weight them as
+ * differentiators, never as `required` gates — a missing weighted metric
+ * contributes 0 and turns q into a coverage score.
+ */
 export const KNOWN_METRICS: Record<string, true> = {
   general: true,
   reasoning: true,
@@ -148,6 +158,12 @@ export const KNOWN_METRICS: Record<string, true> = {
   mrcr: true,
   website: true,
   writing: true,
+  gpqa: true,
+  aime: true,
+  swe_bench: true,
+  arc_agi: true,
+  terminal_bench: true,
+  tau_bench: true,
   price: true,
   throughput: true,
 };

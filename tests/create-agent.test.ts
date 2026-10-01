@@ -144,6 +144,10 @@ test("applyExtraBenchmarks adds new metrics, skips duplicates/unknown, and keeps
     .reduce((total, [, weight]) => total + weight, 0);
   assert.ok(Math.abs(nonPrice - (1 - applied.weights.price)) < 1e-9, `non-price sum ${nonPrice}`);
   assert.ok(applied.weights.writing > 0);
+  // Rescaled weights are rounded to 4 decimals so the written role def stays readable.
+  for (const [metric, weight] of Object.entries(applied.weights)) {
+    assert.equal(weight, Math.round(weight * 1e4) / 1e4, `${metric} is not 4-decimal: ${weight}`);
+  }
 
   // The rebalanced set still passes the plugin's own validator.
   const { errors } = resolveSettings({
@@ -153,6 +157,16 @@ test("applyExtraBenchmarks adds new metrics, skips duplicates/unknown, and keeps
 
   // An empty list is a no-op.
   assert.deepEqual(applyExtraBenchmarks(base, []).weights, base);
+});
+
+test("the raw llm-stats benchmarks are weightable", () => {
+  // These are in Model.metrics and scored by cardinalMetric, so a user naming one
+  // as "another benchmark" must be able to weight it.
+  for (const metric of ["gpqa", "aime", "swe_bench", "arc_agi", "terminal_bench", "tau_bench"]) {
+    assert.ok(metric in KNOWN_METRICS, `${metric} is not weightable`);
+    const { errors } = resolveSettings({ roles: { x: { weights: { [metric]: 0.5, price: 0.5 }, required: [] } } });
+    assert.deepEqual(errors, [], `${metric}: ${errors.join("; ")}`);
+  }
 });
 
 test("formatBenchmarks lists every weightable metric and marks the role's own", () => {

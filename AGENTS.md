@@ -19,8 +19,9 @@ After your work is done — every time, no exceptions:
   match/priced counts and eligible counts. Node type-stripping does not
   typecheck — typos surface as `undefined` at runtime, so a dropped count is
   your only signal.
-- Regenerate the report: `node llm-role-rank.ts --out llm-role-rankings.md`
-  (default `--top 10` matches the committed report's shape). It is a
+- Regenerate the report: `node llm-role-rank.ts --all --out llm-role-rankings.md`
+  (`--all` + the default `--top 10` matches the committed report's shape — it
+  includes the opt-in `designer` role, which the default run excludes). It is a
   committed artifact — commit the refreshed version with your change.
 
 ## Never commit
