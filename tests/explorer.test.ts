@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { cardinalMetric, rankRole, type RankData } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
-import { inverseCardinal, rankRows } from "../src/explorer/explain.ts";
+import { explainModel, inverseCardinal, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer } from "../src/explorer/server.ts";
 import { isRecord } from "../src/guards.ts";
 import { mergeExport, validateRole } from "../src/role-settings.ts";
@@ -44,6 +44,25 @@ test("rankRows: missing lists weighted metrics with a null raw value", () => {
   assert.deepEqual(rows[0].missing, ["math"]);
   assert.equal(rows[0].baselineRank, null);
   assert.equal(rows[0].delta, null);
+});
+
+test("explainModel: contributions sum to q, capability fill included", () => {
+  // `long_context` is null on every fixture model, so the role's 0.3 weight exercises
+  // the CAPABILITY_FILL branch rankRole takes — the panel must not report it as 0.
+  const def = { description: "", weights: { general: 0.5, long_context: 0.3, price: 0.2 }, required: ["general", "price"] };
+  const ex = explainModel(def, [makeModel("top", 60, 1, 50), makeModel("m", 30, 1, 50)], "m");
+  if (!ex.eligible) throw new Error(`unexpected ineligible: ${ex.reasons.join(", ")}`);
+
+  const sum = ex.contributions.reduce((a, c) => a + c.contribution, 0);
+  assert.ok(Math.abs(sum - ex.q) < 1e-12, `parts ${sum} != q ${ex.q}`);
+
+  const lc = ex.contributions.find((c) => c.metric === "long_context");
+  assert.ok(lc);
+  assert.equal(lc.t, 0.195); // the fill is already cardinal — no index transform
+  assert.equal(lc.contribution, (0.3 / 0.8) * 0.195);
+  assert.equal(lc.fillNote, "long_context not measured → capability fill 0.195");
+  // A filled score is not a measurable target, so it never enters the tuning list.
+  assert.deepEqual(ex.closing.map((c) => c.metric).sort(), ["general", "price"]);
 });
 
 test("inverseCardinal round-trips cardinalMetric and rejects clamped targets", () => {

@@ -93,7 +93,9 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   `opts.roles` names the roles the caller will rank: a role-exclusive source is
   fetched only when some role weights its metric — Design Arena (`website`) and the
   writing leaderboard (`writing`); skipped, the OpenRouter mirror alone populates
-  `designElo` and `metrics.writing` stays null. Undefined = fetch all.
+  `designElo` and `metrics.writing` is never set. Undefined = fetch all, which is
+  what the explorer passes so a user-created role always gets real values for the
+  metrics it weights.
 - `computeRankings(models, roles)` — cardinal fixed-anchor transforms (index_* affine
   `(v+20)/80`, benchmarks chance-anchored, throughput log-anchored, `website`/`writing`
   identity over an already-0-1 percentile/score) + quality composite
@@ -348,22 +350,32 @@ independent of weights), weightable metric names ∈ the same set, `roles.<role>
 from the resolved set (the `designer` default). Legacy `suffixes.*` keys are rejected
 with a migration hint (moved into `roles.<role>.thinking`).
 
-`website` is the first of two derived metrics: Design Arena's `models-website` Elo as a
-percentile within the design-covered population, with models lacking Design Arena
-data filled at the capability-consistent `CAPABILITY_FILL` (0.195 — the
-percentile implied by the uncovered cohort's mean general index). It is computed
-once per run in `applyDesignPercentiles` (role-independent), so it is never null
-for a model with a general index and never a `required` gate — the newest frontier
-models carry no Design Arena data. Shipped weight: `designer` 0.18 only (with
-`code` trimmed to 0.10 against their r = 0.876 collinearity).
+Three metrics are **capability-filled**: `website`, `long_context` and `writing`. A
+model missing one is scored at `CAPABILITY_FILL[metric]` instead of 0 — absence is not
+a coverage penalty — and none of the three may be a `required` gate.
 
-`writing` is the second sparse capability metric: the WritingBench score (0–1,
-identity transform) from the writing leaderboard's canonical export
-(`/research/best-ai-for-writing/evidence.json`), joined by the bare llm-stats id
-(15/400 covered, all Qwen), filled at the shared `CAPABILITY_FILL` 0.195 and
-never a `required` gate. Computed once per run in `applyWritingScores`
-(role-independent), and only when some ranked role weights it — otherwise
-`metrics.writing` stays null and the metric contributes 0.
+`website` is the first of them: Design Arena's `models-website` Elo as a percentile
+within the design-covered population, computed once per run in
+`applyDesignPercentiles` (role-independent), so it is never null for a model with a
+general index — the newest frontier models carry no Design Arena data. Shipped weight:
+`designer` 0.18 only (with `code` trimmed to 0.10 against their r = 0.876 collinearity).
+
+`writing` is the WritingBench score (0–1, identity transform) from the writing
+leaderboard's canonical export (`/research/best-ai-for-writing/evidence.json`), joined
+by the bare llm-stats id (15/400 covered, all Qwen), computed once per run in
+`applyWritingScores` (role-independent) and only when some ranked role weights it.
+
+`long_context` is never written into `metrics`: `rankRole` applies its fill at rank
+time, and `explainModel` mirrors that branch (same untransformed fill, no
+`cardinalMetric` pass) so the explorer's contributions sum exactly to `q`.
+
+`CAPABILITY_FILL` (0.195) is a **stated assumption, not a per-metric calibration**: it
+is the percentile implied by the *capability* cohort's uncovered-mean general index
+(29.8 vs covered 38.2). The `writing` cohort is stronger, not weaker — 19.8 covered vs
+22.2 uncovered, i.e. ≈0.513 on the same construction — so the shared constant
+understates an unmeasured model's writing. It stays conservative because 15
+self-reported, unverified rows cannot calibrate a per-metric fill, and a value derived
+per metric would need its own justification for each.
 
 ## 8. State, history, and the write
 

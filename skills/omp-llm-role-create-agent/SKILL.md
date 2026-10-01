@@ -72,7 +72,10 @@ Rules of thumb:
   capability-filled (0.195), so they are safe to weight. `writing` (WritingBench, the
   writing leaderboard's export) covers only 15/400 models, all Qwen — weight it as a
   differentiator for prose roles, never as a `required` gate, and expect a Qwen-leaning
-  leader at high weights.
+  leader at high weights — the source measures only Qwen. The 0.195 fill is a stated
+  assumption, not a calibration: on the writing cohort's own general index the
+  consistent value would be ≈0.51, so the shared constant is deliberately conservative
+  (it can only understate an unmeasured model's writing).
 - Check differentiation: if the role's leader equals `default`'s, the role adds nothing —
   raise the distinctive metric or drop the role.
 - `thinking` must be a level the pool actually supports; `off`/`auto` are meta levels

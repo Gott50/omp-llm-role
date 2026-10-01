@@ -8,7 +8,7 @@
  * src/engine.ts so the numbers on screen are exactly the plugin's numbers.
  */
 
-import { cardinalMetric, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { CAPABILITY_FILL, cardinalMetric, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -193,28 +193,32 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   const contributions: Contribution[] = [];
   for (const [metric, w] of Object.entries(def.weights)) {
     if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
-    const raw = model.metrics[metric] ?? null;
-    const t = raw == null ? null : cardinalMetric(metric, raw);
+    const stored = model.metrics[metric] ?? null;
+    // Mirror rankRole: a sparse capability metric with no data scores at
+    // CAPABILITY_FILL *as a cardinal value* (no transform), not 0 — otherwise
+    // the parts would not sum to q.
+    const fill = stored == null ? CAPABILITY_FILL[metric] : undefined;
+    const t = stored != null ? cardinalMetric(metric, stored) : (fill ?? null);
     const renormWeight = w / qW;
     const contribution = t == null ? 0 : renormWeight * t;
+    let fillNote: string | null = null;
+    if (metric === "website" && model.designElo == null) fillNote = "no Design Arena data → capability fill 0.195";
+    else if (metric === "writing" && model.writingBench == null) fillNote = "outside the WritingBench ranking → capability fill 0.195";
+    else if (fill !== undefined) fillNote = `${metric} not measured → capability fill ${fill}`;
     contributions.push({
       metric,
-      raw,
+      raw: stored ?? fill ?? null,
       t,
       weight: w,
       renormWeight,
       contribution,
       shareOfQ: self.q > 0 ? contribution / self.q : 0,
-      fillNote:
-        metric === "website" && model.designElo == null
-          ? "no Design Arena data → capability fill 0.195"
-          : metric === "writing" && model.writingBench == null
-            ? "outside the WritingBench ranking → capability fill 0.195"
-            : null,
+      fillNote,
     });
   }
   contributions.sort((a, b) => {
-    if ((a.raw == null) !== (b.raw == null)) return a.raw == null ? 1 : -1; // missing last
+    // Capability-filled metrics have no measured value to tune, so they stay last.
+    if ((a.fillNote != null) !== (b.fillNote != null)) return a.fillNote != null ? 1 : -1;
     return b.contribution - a.contribution;
   });
 
@@ -225,7 +229,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   const closing: Closing[] = [];
   if (gapAbove != null) {
     for (const c of contributions) {
-      if (c.raw == null || c.t == null) continue;
+      if (c.raw == null || c.t == null || c.fillNote != null) continue; // a filled score is not tunable
       const targetT = c.t + gapAbove / c.renormWeight;
       const targetRaw = inverseCardinal(c.metric, targetT);
       const deltaRaw = targetRaw == null ? null : targetRaw - c.raw;

@@ -47,11 +47,15 @@ const DESIGN_MIN_BATTLES = 300;
  * the WritingBench ranking the page's JSON-LD `#ranking` ItemList mirrors. */
 const WRITING_CACHE_PATH = join(REPO_ROOT, "writing-fetched-data.json");
 const WRITING_URL = "https://llm-stats.com/research/best-ai-for-writing/evidence.json";
-/** Below-median fill for sparse capability metrics, keyed by metric name. A model
- * missing one of these metrics is scored at the fill instead of 0, so absence is
- * not a coverage penalty. The scalar is the percentile implied by the uncovered
- * cohort's mean general index (29.8 vs covered 38.2) — a property of the fill
- * policy, not the metric, so `website`, `long_context` and `writing` share it.
+/** Fill for sparse capability metrics, keyed by metric name. A model missing one of
+ * these metrics is scored at the fill instead of 0, so absence is not a coverage
+ * penalty; `rankRole` applies it untransformed (the fill is already a cardinal value)
+ * and `explainModel` mirrors that branch. The scalar is the percentile implied by the
+ * *capability* cohort's uncovered-mean general index (29.8 vs covered 38.2) — a STATED
+ * ASSUMPTION, not a per-metric calibration: the `writing` cohort is stronger, not
+ * weaker (19.8 covered vs 22.2 uncovered ⇒ ≈0.513 on the same construction), so this
+ * shared constant deliberately understates an unmeasured model's writing. It is kept
+ * conservative because 15 self-reported rows cannot calibrate a per-metric fill.
  * Metrics not listed here keep the 0-fill (a missing value contributes nothing). */
 export const CAPABILITY_FILL: Record<string, number> = { website: 0.195, long_context: 0.195, writing: 0.195 };
 const UA =

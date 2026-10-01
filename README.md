@@ -34,8 +34,7 @@ create-agent skill produces).
 | `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) shared by the explorer's Export and `create-role.ts` |
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
-| `agents/designer.md` | The `designer` subagent, shipped by the plugin (discovered from the plugin's extension root — no install step) |
-| `agents/writing.md` | The `writing` subagent (prose/docs/reports), shipped the same way; pins `model: "@writing, @default"` so it stays spawnable while the role is absent |
+| `agents/designer.md` | The `designer` subagent, shipped by the plugin (discovered from the plugin's extension root — no install step). The `writing` agent the create-agent skill produces lives at `~/.omp/agent/agents/writing.md`, a user artifact, not a repo file |
 | `skills/omp-llm-role-create-agent/SKILL.md` | Shipped skill: create an agent + model role for a specific purpose (author the `.md` per `agents-guide.md`, fit weights, write the role, verify, tune in the explorer) |
 | `package.json` | Plugin manifest (`omp.extensions`) — no runtime dependencies (`yaml` is dev-only: tests validate patch output with the real parser) |
 | `.omp-plugin/marketplace.json` | Self-hosted omp marketplace catalog (`gott50-plugins`): `omp plugin marketplace add Gott50/omp-llm-role` + `omp plugin install omp-llm-role@gott50-plugins` |
@@ -222,6 +221,24 @@ Adding another task specialist:
 3. Non-agent entry points for a one-off run: `omp --model @review`, or add the
    role to `cycleOrder` for `Ctrl+P`.
 
+Verify the wiring end-to-end, from a clean slate if you want the strongest
+signal (delete `roles.<name>` from the lock file and let a run drop the key from
+`config.yml`):
+
+```sh
+node update-roles.ts --dry-run   # a kept/switched line for the role, or "no changes"
+cd /tmp && omp -p --mode json "Use the <name> agent (task tool) to <trivial task>"
+```
+
+The spawn record inside the JSON must read
+`{"agent":"<name>","agentSource":"user","modelRole":"<name>"}` with
+`resolvedModel` equal to the role's selector — not the parent's model. `agentSource`
+is `user` when the agent lives in `~/.omp/agent/agents/` and `extension` when it
+comes from a plugin's `agents/` dir. Verified this way for `writing`
+(2026-10-01): `agentSource: "user"`, `modelRole: "writing"`,
+`resolvedModel: "openrouter/qwen/qwen3-235b-a22b-thinking-2507:low"` against a
+parent on `deepseek/deepseek-v4.1-flash`.
+
 The shipped skill `omp-llm-role-create-agent` walks all three steps — agent
 authoring per `agents-guide.md`, purpose-fit weights, verification — so a user
 can just ask their omp agent to "create an agent for <purpose>".
@@ -377,13 +394,28 @@ The report marks a filled value `~` in the model column.
 
 `writing` is the WritingBench score (0–1, already cardinal — identity
 transform) from the writing leaderboard's export. Coverage is 15 of 400 models,
-all Qwen, so it takes the same capability fill **0.195** as `website`/
-`long_context` (a policy constant, not a per-metric calibration) and is marked
-`~` in the report; like them it MUST NOT be a `required` gate — that would
-disqualify every model the source does not cover. Weight it as a differentiator,
-not a coverage score: with the shipped `writing` role profile it moves the
-leader to the export's #1 (`qwen3-235b-a22b-thinking-2507`) without making the
-role a one-org monoculture.
+all Qwen, so it takes the capability fill **0.195** and is marked `~` in the
+report; like `website`/`long_context` it MUST NOT be a `required` gate — that
+would disqualify every model the source does not cover. Weight it as a
+differentiator, not a coverage score: with the `writing` role profile the
+create-agent skill produces, it moves the leader to the export's #1
+(`qwen3-235b-a22b-thinking-2507`), and five of the explorer's top six are Qwen —
+the source measures only Qwen, so a Qwen-leaning leader is what the metric
+encodes, not an independent verdict.
+
+**The 0.195 fill is a stated assumption, not a calibration.** The scalar is the
+percentile implied by the *capability* cohort's uncovered-mean general index
+(29.8 vs covered 38.2), and it is applied to every sparse capability metric
+unchanged. For `writing` that cohort is **stronger, not weaker**: the 15 covered
+models average general 19.8 against 22.2 for the uncovered 385, so the same
+construction yields **0.513** — the shared constant therefore *understates* an
+unmeasured model's writing. It stays at 0.195 because the constant is
+deliberately conservative (it can never inflate a model the source did not
+measure) and 15 self-reported, unverified rows cannot calibrate a per-metric
+fill; the source's own methodology says "missing evidence is not proof of poor
+writing ability". Making it per-metric (`CAPABILITY_FILL` in `src/engine.ts`,
+`writing: 0.513`) is a one-line change that would lift every non-Qwen model's
+`q` for this role.
 
 Roles with a `thinking` level rank on the **thinking-adjusted price**: the
 billed blend scales by the level's factor `(3ρ+1+T)/(3ρ+1)` (ρ = input:output
@@ -693,19 +725,33 @@ public (404 / auth error).
   (no `Reset to shipped default`). `resolveSettings` now deep-merges a nested
   `roles` object with flat dotted keys in either order (previously a nested
   `roles` key replaced the flat patch, dropping sibling role settings).
-- Writing role + metric (2026-10-01): the `writing` metric (WritingBench, from
-  the writing leaderboard's canonical export) is wired end-to-end and the
-  `writing` role was created with the plugin's own flow
-  (`create-role.ts --name writing --weights general=0.24,reasoning=0.16,
-  long_context=0.10,writing=0.26,price=0.14,throughput=0.10 --thinking auto`,
-  Σ 1.0, `required: general,price,throughput`), with `agents/writing.md` pinning
-  `model: "@writing, @default"`. Verified live: the updater wrote
-  `modelRoles.writing: "openrouter/qwen/qwen3-235b-a22b-thinking-2507:auto"`
-  (the export's #1), the explorer ranks it (Qwen3-235B-A22B-Thinking-2507 #1,
-  value 0.621), and a headless spawn resolved the child to
-  `openrouter/qwen/qwen3-235b-a22b-thinking-2507:low` (role `auto` → the model's
-  own default) instead of the parent's `deepseek/deepseek-v4.1-flash:off`.
-  `writing` is sparse (15/400, all Qwen) and capability-filled at 0.195.
+- Writing metric + user-created role (2026-10-01): the `writing` metric
+  (WritingBench, from the writing leaderboard's canonical export) is plugin
+  plumbing — fetch/cache/parse plus `applyWritingScores` in `src/engine.ts`,
+  gated on a ranked role weighting `writing`. The role and its agent are **user
+  artifacts**, produced through the plugin's own surfaces and verified as a
+  user-flow e2e rather than committed as repo code: `node create-role.ts --name
+  writing --weights general=0.24,reasoning=0.16,long_context=0.10,writing=0.26,
+  price=0.14,throughput=0.10 --required general,price,throughput --thinking auto`
+  wrote `roles.writing` into `~/.omp/plugins/omp-plugins.lock.json` (Σ 1.0,
+  backup first), the agent was authored at the **user** path
+  `~/.omp/agent/agents/writing.md` pinning `model: "@writing, @default"`, and
+  `node update-roles.ts` logged `@writing: (unset) ->
+  openrouter/qwen/qwen3-235b-a22b-thinking-2507:auto` and wrote the key into
+  `config.yml`. Verified live from a clean slate (role deleted from the lock, key
+  dropped from the config): the explorer ranks it (Qwen3-235B-A22B-Thinking-2507
+  #1, value 0.621), a headless spawn returned
+  `{"agent":"writing","agentSource":"user","modelRole":"writing"}` with
+  `resolvedModel: "openrouter/qwen/qwen3-235b-a22b-thinking-2507:low"` instead of
+  the parent's `deepseek/deepseek-v4.1-flash`, and the composition panel's
+  contributions sum exactly to `q` (0.635161) after `explainModel` learned to
+  mirror `rankRole`'s capability fill. `writing` is sparse (15/400, all Qwen) and
+  capability-filled at 0.195 — a stated assumption, see Scoring.
+- Not in the report (2026-10-01): `llm-role-rankings.md` is generated over
+  `DEFAULT_ROLES` only, so the `writing` metric and the `writing` role cannot
+  appear in it and AGENTS.md's report-refresh step is a no-op for them. The
+  explorer is the surface for user-created roles; regenerate the report only for
+  generator changes.
 - Release-ready (2026-10-01): no runtime dependencies — `config-edit.ts` reads
   and self-checks the config line-oriented (`yaml` is dev-only, used by tests
   to validate patch output with the real parser). `package.json` carries npm
@@ -960,12 +1006,13 @@ public (404 / auth error).
   mirrors decisions and aborts to stderr.
 - `writing` is a 15-model, single-org (Qwen) ranking: the source cannot
   differentiate the other 385 models, so treat the fill as "unknown", never as
-  a measured 0.195, and expect the role's top-10 to be Qwen-heavy whenever the
-  weight is high enough to matter. The page's table sorts by the *communication
-  index* (`index_communication`, 114/400, already in the find payload), not by
-  WritingBench — the two disagree (the table's #1 `claude-opus-4-6` scores 31.97
-  on the communication index vs Qwen's 16.37, while WritingBench ranks Qwen
-  first). Do not conflate them.
+  a measured 0.195 (the writing cohort's own general index implies ≈0.51, so
+  0.195 is a conservative floor), and expect the role's top-10 to be Qwen-heavy
+  whenever the weight is high enough to matter. The page's table sorts by the
+  *communication index* (`index_communication`, 114/400, already in the find
+  payload), not by WritingBench — the two disagree (the table's #1
+  `claude-opus-4-6` scores 31.97 on the communication index vs Qwen's 16.37,
+  while WritingBench ranks Qwen first). Do not conflate them.
 - `required` is the eligibility gate, not a weight: validation checks
   `required` against the known-metric set, not against `weights`, so a role may
   require a metric it does not weight (and vice versa).
