@@ -100,13 +100,46 @@ test("mergeExport preserves plugins and sibling settings, adds only dirty roles"
   assert.ok("lock" in merged);
   const lock = merged.lock as {
     plugins: unknown;
-    settings: { "omp-llm-role": { switchMargin: number; roles: Record<string, { weights: Record<string, number> }> } };
+    settings: { "omp-llm-role": Record<string, unknown> };
   };
+  const plugin = lock.settings["omp-llm-role"];
   assert.deepEqual(lock.plugins, existing.plugins);
-  assert.equal(lock.settings["omp-llm-role"].switchMargin, 0.5);
-  assert.deepEqual(lock.settings["omp-llm-role"].roles.slow.weights, DEFAULT_ROLES.slow.weights);
+  assert.equal(plugin.switchMargin, 0.5);
+  // Flat dotted keys, one per weight — no nested `roles` object.
+  assert.equal(plugin.roles, undefined);
+  assert.equal(plugin["roles.slow.description"], DEFAULT_ROLES.slow.description);
+  assert.deepEqual(plugin["roles.slow.required"], DEFAULT_ROLES.slow.required);
+  for (const [metric, weight] of Object.entries(DEFAULT_ROLES.slow.weights)) {
+    assert.equal(plugin[`roles.slow.weights.${metric}`], weight);
+  }
   // The input is cloned, never mutated.
   assert.equal((existing.settings["omp-llm-role"] as Record<string, unknown>).roles, undefined);
+});
+
+test("mergeExport normalizes a pre-existing nested role to flat keys", () => {
+  const existing = {
+    plugins: { "omp-llm-role": { enabled: true } },
+    settings: {
+      "omp-llm-role": {
+        switchMargin: 0.5,
+        roles: { slow: { description: "old", weights: { general: 1 }, required: [] }, other: { description: "keep" } },
+      },
+    },
+  };
+  const merged = mergeExport(existing, { slow: DEFAULT_ROLES.slow });
+  assert.ok("lock" in merged);
+  const lock = merged.lock as { settings: { "omp-llm-role": Record<string, unknown> } };
+  const plugin = lock.settings["omp-llm-role"];
+  // The dirty role's nested entry is gone; the untouched sibling nested role stays.
+  assert.deepEqual(plugin.roles, { other: { description: "keep" } });
+  assert.equal(plugin["roles.slow.description"], DEFAULT_ROLES.slow.description);
+  assert.equal(plugin["roles.slow.weights.general"], DEFAULT_ROLES.slow.weights.general);
+  // The input is cloned, never mutated.
+  const original = existing.settings["omp-llm-role"] as { roles: unknown };
+  assert.deepEqual(original.roles, {
+    slow: { description: "old", weights: { general: 1 }, required: [] },
+    other: { description: "keep" },
+  });
 });
 
 test("export writes the lock file with a backup and stays valid", async () => {
@@ -143,11 +176,13 @@ test("export writes the lock file with a backup and stays valid", async () => {
 
     const written = JSON.parse(readFileSync(lockPath, "utf8")) as {
       plugins: unknown;
-      settings: { "omp-llm-role": { roles: { slow: { weights: Record<string, number> } } } };
+      settings: { "omp-llm-role": Record<string, unknown> };
     };
+    const plugin = written.settings["omp-llm-role"];
     assert.deepEqual(written.plugins, seed.plugins);
-    assert.equal(written.settings["omp-llm-role"].roles.slow.weights.general, base.general + 0.02);
-    assert.equal(written.settings["omp-llm-role"].roles.slow.weights.code, base.code - 0.02);
+    assert.equal(plugin.roles, undefined);
+    assert.equal(plugin["roles.slow.weights.general"], base.general + 0.02);
+    assert.equal(plugin["roles.slow.weights.code"], base.code - 0.02);
 
     const backups = readdirSync(dir).filter((f) => f.includes(".bak-"));
     assert.equal(backups.length, 1);

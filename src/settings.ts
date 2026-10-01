@@ -203,6 +203,103 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   activateDefaultOnEmptySession: true,
 };
 
+/** One row of the plugin's settings schema (omp's `PluginSettingSchema`): the
+ *  flat, dotted key set omp's `/settings` Plugins tab renders and writes. */
+export type PluginSettingSchema = {
+  type: "string" | "number" | "boolean" | "enum";
+  description?: string;
+  default?: string | number | boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  values?: string[];
+};
+
+/** The plugin's settings schema, derived from the shipped defaults — the single
+ *  source of truth for package.json `omp.settings` (asserted by a test). */
+export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
+  const schema: Record<string, PluginSettingSchema> = {
+    switchMargin: {
+      type: "number",
+      description: "Value margin a challenger must beat the incumbent by before switching",
+      default: DEFAULT_SETTINGS.switchMargin,
+      min: 0,
+      max: 1,
+      step: 0.001,
+    },
+    priceSwitchFraction: {
+      type: "number",
+      description: "Adopt a challenger inside the margin when it is at least this fraction cheaper (0 disables)",
+      default: DEFAULT_SETTINGS.priceSwitchFraction,
+      min: 0,
+      max: 1,
+      step: 0.001,
+    },
+    writeFallbackChains: {
+      type: "boolean",
+      description: "Write per-role fallback chains into config.yml",
+      default: DEFAULT_SETTINGS.writeFallbackChains,
+    },
+    fallbackChainDepth: {
+      type: "number",
+      description: "Number of fallback models per role chain",
+      default: DEFAULT_SETTINGS.fallbackChainDepth,
+      min: 0,
+      step: 1,
+    },
+    activateDefaultOnEmptySession: {
+      type: "boolean",
+      description: "Reapply the new default selector to an empty session's active model",
+      default: DEFAULT_SETTINGS.activateDefaultOnEmptySession,
+    },
+  };
+  for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
+    const p = `roles.${name}`;
+    schema[`${p}.enabled`] = {
+      type: "boolean",
+      description: `Enable the ${name} role`,
+      default: def.enabled ?? true,
+    };
+    schema[`${p}.description`] = {
+      type: "string",
+      description: `Description of the ${name} role`,
+      default: def.description,
+    };
+    schema[`${p}.thinking`] = {
+      type: "enum",
+      description: `Thinking level appended to the ${name} selector`,
+      default: def.thinking ?? "auto",
+      values: Object.keys(SUFFIX_LEVELS),
+    };
+    schema[`${p}.required`] = {
+      type: "string",
+      description: `Comma-separated metrics a model must have to rank for ${name}`,
+      default: def.required.join(","),
+    };
+    schema[`${p}.filters.image`] = {
+      type: "boolean",
+      description: `Restrict the ${name} pool to image-capable models`,
+      default: def.filters?.image ?? false,
+    };
+    schema[`${p}.lambda`] = {
+      type: "number",
+      description: `Explicit λ ($ per quality point) override for ${name}`,
+      min: 0,
+    };
+    for (const [metric, w] of Object.entries(def.weights)) {
+      schema[`${p}.weights.${metric}`] = {
+        type: "number",
+        description: `Weight of ${metric} in the ${name} quality composite`,
+        default: w,
+        min: 0,
+        max: 1,
+        step: 0.001,
+      };
+    }
+  }
+  return schema;
+}
+
 
 /** Deep-merge `patch` into `target` in place; plain objects merge, everything else replaces. */
 export function deepMergeInto(target: Record<string, unknown>, patch: Record<string, unknown>): void {
@@ -375,6 +472,17 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
     }
     if (sum > 1.01 || sum < 0.99) errors.push(`role ${name}: weights sum ${Number(sum.toFixed(4))}`);
     const weights = rdef.weights as Record<string, number>;
+    // `required` arrives as an array from the plugin's own write path, but omp's
+    // `/settings` Plugins tab writes the flat string form (`"general, price"`).
+    // Coerce the comma-separated string to a trimmed, empty-dropped array before
+    // the array/known-metric validation below.
+    const requiredRaw: unknown = rdef.required;
+    if (typeof requiredRaw === "string") {
+      rdef.required = requiredRaw
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }
     if (rdef.required === undefined) rdef.required = [];
     if (!Array.isArray(rdef.required) || rdef.required.some((k) => typeof k !== "string")) {
       errors.push(`role ${name}: required must be an array of metric names`);

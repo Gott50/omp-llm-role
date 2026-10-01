@@ -36,7 +36,792 @@
     "create-agent": "node create-agent.ts"
   },
   "omp": {
-    "extensions": ["./src/extension.ts"]
+    "extensions": ["./src/extension.ts"],
+    "settings": {
+      "switchMargin": {
+        "type": "number",
+        "description": "Value margin a challenger must beat the incumbent by before switching",
+        "default": 0.02,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "priceSwitchFraction": {
+        "type": "number",
+        "description": "Adopt a challenger inside the margin when it is at least this fraction cheaper (0 disables)",
+        "default": 0.5,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "writeFallbackChains": {
+        "type": "boolean",
+        "description": "Write per-role fallback chains into config.yml",
+        "default": true
+      },
+      "fallbackChainDepth": {
+        "type": "number",
+        "description": "Number of fallback models per role chain",
+        "default": 2,
+        "min": 0,
+        "step": 1
+      },
+      "activateDefaultOnEmptySession": {
+        "type": "boolean",
+        "description": "Reapply the new default selector to an empty session's active model",
+        "default": true
+      },
+      "roles.default.enabled": {
+        "type": "boolean",
+        "description": "Enable the default role",
+        "default": true
+      },
+      "roles.default.description": {
+        "type": "string",
+        "description": "Description of the default role",
+        "default": "Main workhorse: strong general coding-agent quality, sane cost"
+      },
+      "roles.default.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the default selector",
+        "default": "auto",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.default.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for default",
+        "default": "general,price,throughput"
+      },
+      "roles.default.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the default pool to image-capable models",
+        "default": false
+      },
+      "roles.default.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for default",
+        "min": 0
+      },
+      "roles.default.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the default quality composite",
+        "default": 0.3221,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.default.weights.reasoning": {
+        "type": "number",
+        "description": "Weight of reasoning in the default quality composite",
+        "default": 0.1705,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.default.weights.code": {
+        "type": "number",
+        "description": "Weight of code in the default quality composite",
+        "default": 0.1705,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.default.weights.agents": {
+        "type": "number",
+        "description": "Weight of agents in the default quality composite",
+        "default": 0.1137,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.default.weights.tool_calling": {
+        "type": "number",
+        "description": "Weight of tool_calling in the default quality composite",
+        "default": 0.0947,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.default.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the default quality composite",
+        "default": 0.0285,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.default.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the default quality composite",
+        "default": 0.1,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.smol.enabled": {
+        "type": "boolean",
+        "description": "Enable the smol role",
+        "default": true
+      },
+      "roles.smol.description": {
+        "type": "string",
+        "description": "Description of the smol role",
+        "default": "Fast lightweight model: cheap and quick, still competent"
+      },
+      "roles.smol.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the smol selector",
+        "default": "off",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.smol.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for smol",
+        "default": "general,price,throughput"
+      },
+      "roles.smol.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the smol pool to image-capable models",
+        "default": false
+      },
+      "roles.smol.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for smol",
+        "min": 0
+      },
+      "roles.smol.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the smol quality composite",
+        "default": 0.3,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.smol.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the smol quality composite",
+        "default": 0.28,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.smol.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the smol quality composite",
+        "default": 0.2,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.smol.weights.code": {
+        "type": "number",
+        "description": "Weight of code in the smol quality composite",
+        "default": 0.12,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.smol.weights.tool_calling": {
+        "type": "number",
+        "description": "Weight of tool_calling in the smol quality composite",
+        "default": 0.1,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.slow.enabled": {
+        "type": "boolean",
+        "description": "Enable the slow role",
+        "default": true
+      },
+      "roles.slow.description": {
+        "type": "string",
+        "description": "Description of the slow role",
+        "default": "Most capable model for hard problems; cost and speed as tiebreakers"
+      },
+      "roles.slow.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the slow selector",
+        "default": "high",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.slow.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for slow",
+        "default": "general,price,throughput"
+      },
+      "roles.slow.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the slow pool to image-capable models",
+        "default": false
+      },
+      "roles.slow.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for slow",
+        "min": 0
+      },
+      "roles.slow.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the slow quality composite",
+        "default": 0.26,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.slow.weights.reasoning": {
+        "type": "number",
+        "description": "Weight of reasoning in the slow quality composite",
+        "default": 0.26,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.slow.weights.code": {
+        "type": "number",
+        "description": "Weight of code in the slow quality composite",
+        "default": 0.18,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.slow.weights.agents": {
+        "type": "number",
+        "description": "Weight of agents in the slow quality composite",
+        "default": 0.13,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.slow.weights.math": {
+        "type": "number",
+        "description": "Weight of math in the slow quality composite",
+        "default": 0.08,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.slow.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the slow quality composite",
+        "default": 0.04,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.slow.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the slow quality composite",
+        "default": 0.05,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.vision.enabled": {
+        "type": "boolean",
+        "description": "Enable the vision role",
+        "default": true
+      },
+      "roles.vision.description": {
+        "type": "string",
+        "description": "Description of the vision role",
+        "default": "Image understanding: vision index dominates"
+      },
+      "roles.vision.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the vision selector",
+        "default": "auto",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.vision.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for vision",
+        "default": "vision,general,price,throughput"
+      },
+      "roles.vision.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the vision pool to image-capable models",
+        "default": true
+      },
+      "roles.vision.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for vision",
+        "min": 0
+      },
+      "roles.vision.weights.vision": {
+        "type": "number",
+        "description": "Weight of vision in the vision quality composite",
+        "default": 0.4767,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.vision.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the vision quality composite",
+        "default": 0.1833,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.vision.weights.reasoning": {
+        "type": "number",
+        "description": "Weight of reasoning in the vision quality composite",
+        "default": 0.1375,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.vision.weights.code": {
+        "type": "number",
+        "description": "Weight of code in the vision quality composite",
+        "default": 0.055,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.vision.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the vision quality composite",
+        "default": 0.0275,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.vision.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the vision quality composite",
+        "default": 0.12,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.plan.enabled": {
+        "type": "boolean",
+        "description": "Enable the plan role",
+        "default": true
+      },
+      "roles.plan.description": {
+        "type": "string",
+        "description": "Description of the plan role",
+        "default": "Planning: reasoning, math, long-context coherence"
+      },
+      "roles.plan.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the plan selector",
+        "default": "auto",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.plan.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for plan",
+        "default": "reasoning,general,price,throughput"
+      },
+      "roles.plan.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the plan pool to image-capable models",
+        "default": false
+      },
+      "roles.plan.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for plan",
+        "min": 0
+      },
+      "roles.plan.weights.reasoning": {
+        "type": "number",
+        "description": "Weight of reasoning in the plan quality composite",
+        "default": 0.3129,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.plan.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the plan quality composite",
+        "default": 0.2542,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.plan.weights.long_context": {
+        "type": "number",
+        "description": "Weight of long_context in the plan quality composite",
+        "default": 0.1369,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.plan.weights.math": {
+        "type": "number",
+        "description": "Weight of math in the plan quality composite",
+        "default": 0.1369,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.plan.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the plan quality composite",
+        "default": 0.0391,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.plan.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the plan quality composite",
+        "default": 0.12,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.commit.enabled": {
+        "type": "boolean",
+        "description": "Enable the commit role",
+        "default": true
+      },
+      "roles.commit.description": {
+        "type": "string",
+        "description": "Description of the commit role",
+        "default": "Commit messages: cheap and fast with decent general quality"
+      },
+      "roles.commit.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the commit selector",
+        "default": "off",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.commit.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for commit",
+        "default": "general,price,throughput"
+      },
+      "roles.commit.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the commit pool to image-capable models",
+        "default": false
+      },
+      "roles.commit.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for commit",
+        "min": 0
+      },
+      "roles.commit.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the commit quality composite",
+        "default": 0.35,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.commit.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the commit quality composite",
+        "default": 0.27,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.commit.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the commit quality composite",
+        "default": 0.28,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.commit.weights.code": {
+        "type": "number",
+        "description": "Weight of code in the commit quality composite",
+        "default": 0.1,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.tiny.enabled": {
+        "type": "boolean",
+        "description": "Enable the tiny role",
+        "default": true
+      },
+      "roles.tiny.description": {
+        "type": "string",
+        "description": "Description of the tiny role",
+        "default": "Background tasks (titles, memory): cheapest and fastest wins"
+      },
+      "roles.tiny.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the tiny selector",
+        "default": "off",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.tiny.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for tiny",
+        "default": "general,price,throughput"
+      },
+      "roles.tiny.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the tiny pool to image-capable models",
+        "default": false
+      },
+      "roles.tiny.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for tiny",
+        "min": 0
+      },
+      "roles.tiny.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the tiny quality composite",
+        "default": 0.4,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.tiny.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the tiny quality composite",
+        "default": 0.35,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.tiny.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the tiny quality composite",
+        "default": 0.25,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.task.enabled": {
+        "type": "boolean",
+        "description": "Enable the task role",
+        "default": true
+      },
+      "roles.task.description": {
+        "type": "string",
+        "description": "Description of the task role",
+        "default": "Subagents: agentic + tool calling, moderate cost sensitivity"
+      },
+      "roles.task.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the task selector",
+        "default": "auto",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.task.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for task",
+        "default": "general,price,throughput"
+      },
+      "roles.task.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the task pool to image-capable models",
+        "default": false
+      },
+      "roles.task.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for task",
+        "min": 0
+      },
+      "roles.task.weights.agents": {
+        "type": "number",
+        "description": "Weight of agents in the task quality composite",
+        "default": 0.26,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.task.weights.tool_calling": {
+        "type": "number",
+        "description": "Weight of tool_calling in the task quality composite",
+        "default": 0.18,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.task.weights.code": {
+        "type": "number",
+        "description": "Weight of code in the task quality composite",
+        "default": 0.16,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.task.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the task quality composite",
+        "default": 0.22,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.task.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the task quality composite",
+        "default": 0.05,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.task.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the task quality composite",
+        "default": 0.13,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.advisor.enabled": {
+        "type": "boolean",
+        "description": "Enable the advisor role",
+        "default": true
+      },
+      "roles.advisor.description": {
+        "type": "string",
+        "description": "Description of the advisor role",
+        "default": "Advisor/watchdog: deep reasoning over long context"
+      },
+      "roles.advisor.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the advisor selector",
+        "default": "auto",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.advisor.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for advisor",
+        "default": "reasoning,general,price,throughput"
+      },
+      "roles.advisor.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the advisor pool to image-capable models",
+        "default": false
+      },
+      "roles.advisor.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for advisor",
+        "min": 0
+      },
+      "roles.advisor.weights.reasoning": {
+        "type": "number",
+        "description": "Weight of reasoning in the advisor quality composite",
+        "default": 0.3498,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.advisor.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the advisor quality composite",
+        "default": 0.2449,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.advisor.weights.long_context": {
+        "type": "number",
+        "description": "Weight of long_context in the advisor quality composite",
+        "default": 0.1004,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.advisor.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the advisor quality composite",
+        "default": 0.2,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.advisor.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the advisor quality composite",
+        "default": 0.1049,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.designer.enabled": {
+        "type": "boolean",
+        "description": "Enable the designer role",
+        "default": false
+      },
+      "roles.designer.description": {
+        "type": "string",
+        "description": "Description of the designer role",
+        "default": "Design work: visual/UX judgement on image-capable models"
+      },
+      "roles.designer.thinking": {
+        "type": "enum",
+        "description": "Thinking level appended to the designer selector",
+        "default": "auto",
+        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+      },
+      "roles.designer.required": {
+        "type": "string",
+        "description": "Comma-separated metrics a model must have to rank for designer",
+        "default": "general,price,throughput"
+      },
+      "roles.designer.filters.image": {
+        "type": "boolean",
+        "description": "Restrict the designer pool to image-capable models",
+        "default": true
+      },
+      "roles.designer.lambda": {
+        "type": "number",
+        "description": "Explicit λ ($ per quality point) override for designer",
+        "min": 0
+      },
+      "roles.designer.weights.general": {
+        "type": "number",
+        "description": "Weight of general in the designer quality composite",
+        "default": 0.26,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.designer.weights.code": {
+        "type": "number",
+        "description": "Weight of code in the designer quality composite",
+        "default": 0.1,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.designer.weights.vision": {
+        "type": "number",
+        "description": "Weight of vision in the designer quality composite",
+        "default": 0.18,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.designer.weights.throughput": {
+        "type": "number",
+        "description": "Weight of throughput in the designer quality composite",
+        "default": 0.13,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.designer.weights.price": {
+        "type": "number",
+        "description": "Weight of price in the designer quality composite",
+        "default": 0.15,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.designer.weights.website": {
+        "type": "number",
+        "description": "Weight of website in the designer quality composite",
+        "default": 0.18,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      }
+    }
   },
   "devDependencies": {
     "yaml": "^2"

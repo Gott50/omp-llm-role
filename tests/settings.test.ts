@@ -41,3 +41,13 @@ test("flat dotted keys and a nested roles object merge without clobbering", () =
     assert.deepEqual(settings.roles.review?.weights, review.weights);
   }
 });
+
+test("required accepts a comma-separated string (omp /settings) or an array", () => {
+  const fromString = resolveSettings({ "roles.slow.required": "general, price , throughput" });
+  assert.deepEqual(fromString.errors, []);
+  assert.deepEqual(fromString.settings.roles.slow.required, ["general", "price", "throughput"]);
+
+  const fromArray = resolveSettings({ "roles.slow.required": ["general", "price", "throughput"] });
+  assert.deepEqual(fromArray.errors, []);
+  assert.deepEqual(fromArray.settings.roles.slow.required, ["general", "price", "throughput"]);
+});

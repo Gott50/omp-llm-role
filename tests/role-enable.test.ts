@@ -32,11 +32,16 @@ test("disabling a role writes enabled:false and drops it from the resolved set",
   assert.equal(result.ok, true);
 
   const written = JSON.parse(readFileSync(lockPath, "utf8")) as {
-    settings: { "omp-llm-role": { roles: { slow: { enabled: boolean; weights: Record<string, number> } } } };
+    settings: { "omp-llm-role": Record<string, unknown> };
   };
-  assert.equal(written.settings["omp-llm-role"].roles.slow.enabled, false);
-  // The def rides along untouched; only the gate flipped.
-  assert.deepEqual(written.settings["omp-llm-role"].roles.slow.weights, DEFAULT_ROLES.slow.weights);
+  const plugin = written.settings["omp-llm-role"];
+  assert.equal(plugin["roles.slow.enabled"], false);
+  // The def rides along untouched; only the gate flipped. The write path stores
+  // flat dotted keys (issue #5), so each weight is its own key.
+  for (const [metric, weight] of Object.entries(DEFAULT_ROLES.slow.weights)) {
+    assert.equal(plugin[`roles.slow.weights.${metric}`], weight);
+  }
+  assert.equal(plugin.roles, undefined);
 
   const { settings, errors } = resolveSettings(readPluginSettingsMap({ global: lockPath, project: null }));
   assert.deepEqual(errors, []);

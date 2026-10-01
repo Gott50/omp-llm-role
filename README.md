@@ -22,7 +22,8 @@ e.g. the `writing` role the create-agent skill produces).
 |---|---|
 | `llm-role-rank.ts` | CLI report (Node 26, type-stripping — no bun/deno/tsx, no build step) |
 | `src/engine.ts` | Ranking engine shared by CLI and plugin: fetch/caches, cardinal transforms, value scoring, `loadRankData`, `computeRankings` |
-| `src/settings.ts` | Shipped role defaults (`DEFAULT_ROLES`, incl. per-role `thinking` levels), `SHIPPED_AGENTS` (the opt-in agent names), plugin-settings deep-merge + validation |
+| `src/settings.ts` | Shipped role defaults (`DEFAULT_ROLES`, incl. per-role `thinking` levels), `SHIPPED_AGENTS` (the shipped agent names), the role universe (`roleUniverse`), the settings schema (`deriveSettingsSchema`, mirrored into `package.json` → `omp.settings`), plugin-settings deep-merge + validation |
+| `src/agent-pins.ts` | Agent → pinned-role derivation: parses `model:` frontmatter and discovers agents in the shipped, user and project agent dirs (drives the `task.disabledAgents` sync) |
 | `src/availability.ts` | OpenRouter key tier gate, catalog filter, variant resolution (`resolveVariant`), provider-allowlist probe (`probeModel`) |
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains` + `task.disabledAgents`, atomic write |
 | `src/state.ts` | State/history/lock files under the agent dir; agent-dir resolution |
@@ -44,7 +45,7 @@ e.g. the `writing` role the create-agent skill produces).
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
 | `agents/designer.md` | The `designer` subagent, shipped by the plugin (discovered from the plugin's extension root — no install step) but **opt-in**: the plugin keeps it in `task.disabledAgents` until `roles.designer.enabled=true`. The `writing` agent the create-agent skill produces lives at `~/.omp/agent/agents/writing.md`, a user artifact, not a repo file |
 | `skills/omp-llm-role-create-agent/SKILL.md` | Shipped skill: the hand-driven version of `/create-agent` — author the `.md` with omp's agent-creation feature, fit weights, write the role, verify, tune in the explorer |
-| `package.json` | Plugin manifest (`omp.extensions`) — no runtime dependencies (`yaml` is dev-only: tests validate patch output with the real parser) |
+| `package.json` | Plugin manifest (`omp.extensions` + `omp.settings`, the flat settings schema omp's `/settings` → Plugins tab renders) — no runtime dependencies (`yaml` is dev-only: tests validate patch output with the real parser) |
 | `.omp-plugin/marketplace.json` | Self-hosted omp marketplace catalog (`gott50-plugins`): `omp plugin marketplace add Gott50/omp-llm-role` + `omp plugin install omp-llm-role@gott50-plugins` |
 | `LICENSE` | MIT |
 | `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, writing metric, thinking-price, openrouter-blend, agent disable |
@@ -139,8 +140,15 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   rather than the session
   `defaultThinkingLevel`; a key shared by several managed roles (one
   model-scoped chain, two role levels) stays level-free.
-- **Agent opt-in**: the shipped `designer` agent is kept in
-  `task.disabledAgents` until `roles.designer.enabled=true` (see omp wiring).
+- **Agent opt-in (pin-derived)**: the plugin reads each agent's pinned role from
+  the first `@<role>` in its `model:` frontmatter — across the shipped `agents/`
+  dir, the user dir (`~/.omp/agent/agents/`) and the project dir
+  (`<project>/.omp/agents/`) — and keeps the agent in `task.disabledAgents`
+  while that role is disabled (and removes it once the role is enabled). So the
+  shipped `designer` agent is off the roster until `roles.designer.enabled=true`,
+  and a user role pinned by a user agent behaves the same way. An agent pinning
+  a role the plugin does not know (its `@role, @default` chain falls back) is
+  left alone; other `task.disabledAgents` entries and their order are preserved.
   This sync is **not** day-gated — it runs on every session start, so enabling
   the role takes effect on the next session.
 - **Rollback aid**: `~/.omp/agent/llm-role-state.json` snapshots the previous
@@ -155,12 +163,22 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   resolved set (the shipped `designer` default) — set `roles.designer.enabled=true`
   to opt in. A role that leaves the resolved set (disabled or removed) has its
   `modelRoles.<role>` line deleted on the next run, so a stale pin cannot keep
-  routing `@<role>`. A shipped agent whose same-named role is not in the
-  resolved set is kept in `task.disabledAgents` (and removed from it when the
-  role is enabled), so the `designer` agent is disabled by default; other
-  `task.disabledAgents` entries and their order are preserved. This sync is not
+  routing `@<role>`. The agent that pins a disabled role is kept in
+  `task.disabledAgents` (see *Agent opt-in* above); other `task.disabledAgents`
+  entries and their order are preserved. This sync is not
   day-gated — enabling the role takes effect on the next session, not the next
-  day. Invalid settings abort the run with the offending role/key and no write. Write typed values with `node create-role.ts` (roles) or the
+  day. Invalid settings abort the run with the offending role/key and no write.
+  The plugin manifest declares the whole shipped surface in `package.json` →
+  `omp.settings`, so omp's `/settings` → **Plugins** → *omp-llm-role* shows every
+  global knob and every shipped role's `enabled`/`description`/`thinking`/
+  `required`/`filters.image`/`lambda`/`weights.<metric>` as an editable row
+  (booleans as toggles, `thinking` as a picker, `required` as a comma-separated
+  string). An edit there is written as a typed value and takes effect on the next
+  `/refresh-roles` (or the next day-gated session start). Flat dotted keys
+  (`roles.slow.weights.code`) are the canonical lock-file shape — the plugin's
+  write path emits them and its reader accepts both flat and nested, so an
+  existing nested lock file keeps working and normalizes on the next role write.
+  Write typed values with `node create-role.ts` (roles) or the
   explorer's Export; `omp plugin config set <plugin> <key> <value>` stores every
   value as a **string**, which the validator rejects for numbers/arrays/booleans,
   so it is only usable for string-valued keys — for a whole-object override use

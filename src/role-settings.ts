@@ -13,7 +13,7 @@ import { copyFileSync, existsSync, readFileSync, statSync } from "node:fs";
 import { writeConfigAtomic } from "./config-edit.ts";
 import type { RoleDef } from "./engine.ts";
 import { isRecord } from "./guards.ts";
-import { deepMergeInto, resolveSettings } from "./settings.ts";
+import { resolveSettings } from "./settings.ts";
 
 /** Validate one role def through the plugin's own validator (resolveSettings
  * clones its input, so this is safe per call). Errors are returned verbatim. */
@@ -22,14 +22,39 @@ export function validateRole(name: string, def: RoleDef): string[] {
 }
 
 /** Merge dirty role defs into a parsed lock file, preserving `plugins` and every
- * sibling settings key. Returns the new lock object or a refusal. */
+ * sibling settings key. Returns the new lock object or a refusal.
+ *
+ * Roles are written as flat dotted keys (`roles.<name>.weights.<metric>`) because
+ * omp's `/settings` Plugins tab shallow-merges the settings object and does not
+ * flatten nested objects — a nested `roles` object would render as schema
+ * defaults. A pre-existing nested entry for a dirty role is deleted so an older
+ * lock file is normalized on the next write. */
 export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): { lock: object } | { error: string } {
   if (!isRecord(existing)) return { error: "lock file root is not an object" };
   const lock = structuredClone(existing);
   if (!isRecord(lock.settings)) lock.settings = {};
   const settings = lock.settings as Record<string, unknown>;
   if (!isRecord(settings["omp-llm-role"])) settings["omp-llm-role"] = {};
-  deepMergeInto(settings["omp-llm-role"] as Record<string, unknown>, { roles: dirty });
+  const plugin = settings["omp-llm-role"] as Record<string, unknown>;
+
+  for (const [name, def] of Object.entries(dirty)) {
+    // Normalize: drop any nested entry left by an older write path.
+    const nested = plugin.roles;
+    if (isRecord(nested)) {
+      delete nested[name];
+      if (Object.keys(nested).length === 0) delete plugin.roles;
+    }
+
+    const prefix = `roles.${name}`;
+    plugin[`${prefix}.description`] = def.description;
+    if (def.enabled !== undefined) plugin[`${prefix}.enabled`] = def.enabled;
+    if (def.locked !== undefined) plugin[`${prefix}.locked`] = def.locked;
+    plugin[`${prefix}.required`] = def.required;
+    if (def.thinking !== undefined) plugin[`${prefix}.thinking`] = def.thinking;
+    if (def.lambda !== undefined) plugin[`${prefix}.lambda`] = def.lambda;
+    if (def.filters?.image !== undefined) plugin[`${prefix}.filters.image`] = def.filters.image;
+    for (const [metric, weight] of Object.entries(def.weights)) plugin[`${prefix}.weights.${metric}`] = weight;
+  }
   return { lock };
 }
 
