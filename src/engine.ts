@@ -124,6 +124,11 @@ export type Model = {
 
 export type RoleDef = {
   description: string;
+  /** Shipped-default opt-in gate. `false` drops the role from the resolved set
+   * (like `weights: null`), so a role that ships disabled is not ranked and its
+   * sources are not fetched until a user override sets `enabled: true`. Absent
+   * = enabled. */
+  enabled?: boolean;
   /** metric -> weight; metrics are cardinal-normalized with fixed anchors */
   weights: Record<string, number>;
   /** metrics the model must have to be ranked at all for this role */
@@ -1070,15 +1075,67 @@ function mergeDesignElo(orElo: Record<string, number>, da: Record<string, Design
 // ---------------------------------------------------------------------------
 
 /**
+ * Design Arena keyless leaderboard endpoint (POST designarena.ai/api/leaderboard):
+ * a fresher `models-website` board with battle counts — merged over the OR mirror
+ * with a battles floor — plus the `agents/agon_webapps` Elo for the report. Same
+ * cache -> fetch -> stale-cache chain as OpenRouter, non-fatal throughout: on
+ * total failure the caller falls back to the OR mirror alone. Only called when a
+ * ranked role weights `website` (see `loadRankData`).
+ */
+async function loadDesignArenaBoards(refresh: boolean): Promise<{ website: DesignArenaEntry[] | null; agon: DesignArenaEntry[] | null }> {
+  const daBoards = [
+    { key: "models/website", arenaType: "models", category: "website" },
+    { key: "agents/agon_webapps", arenaType: "agents", category: "agon_webapps" },
+  ];
+  const boards: Record<string, DesignArenaEntry[]> = {};
+  const cachedDa = refresh ? null : readDesignArenaCache(DESIGN_ARENA_CACHE_PATH, true);
+  if (cachedDa) {
+    for (const b of daBoards) {
+      const entries = cachedDa.categories[b.key];
+      if (entries && entries.length > 0) boards[b.key] = entries;
+    }
+    if (Object.keys(boards).length === daBoards.length) {
+      console.error(`using cache ${DESIGN_ARENA_CACHE_PATH} (fetched ${cachedDa.fetchedAt})`);
+    }
+  }
+  if (Object.keys(boards).length !== daBoards.length) {
+    for (const b of daBoards) {
+      const entries = await fetchDesignArenaBoard(b.arenaType, b.category);
+      // An empty board is never cached (the next run retries) — the OR rule.
+      if (entries !== null && entries.length > 0) boards[b.key] = entries;
+    }
+    if (Object.keys(boards).length > 0) {
+      writeDesignArenaCache(DESIGN_ARENA_CACHE_PATH, new Date().toISOString(), boards);
+    } else {
+      const stale = readDesignArenaCache(DESIGN_ARENA_CACHE_PATH, false);
+      for (const b of daBoards) {
+        const entries = stale?.categories[b.key];
+        if (entries && entries.length > 0) boards[b.key] = entries;
+      }
+      if (Object.keys(boards).length > 0) {
+        console.error(`using stale cache ${DESIGN_ARENA_CACHE_PATH} (fetched ${stale?.fetchedAt})`);
+      }
+    }
+  }
+  return { website: boards["models/website"] ?? null, agon: boards["agents/agon_webapps"] ?? null };
+}
+
+/**
  * The cache -> fetch -> stale-cache chain from the original main(): a fresh
  * same-day llm-stats cache wins; otherwise the leaderboard is fetched live and
  * cached; OpenRouter enrichment reuses its own fresh cache, else fetches, else
  * falls back to a stale cache (non-fatal — affected models just go unranked).
  * Throws only when llm-stats has neither fresh cache nor a usable fetch (§9 abort).
  */
-export async function loadRankData(opts?: { refresh?: boolean; url?: string }): Promise<RankData> {
+export async function loadRankData(opts?: { refresh?: boolean; url?: string; roles?: Record<string, RoleDef> }): Promise<RankData> {
   const refresh = opts?.refresh ?? false;
   const url = opts?.url ?? DEFAULT_URL;
+  // Design Arena is the only source a role can depend on exclusively (`website`).
+  // When the caller names the roles it will rank and none weights `website`, skip
+  // the endpoint fetch entirely — the OpenRouter mirror (part of the find payload
+  // fetched anyway) still populates `designElo`. Undefined roles = fetch (the
+  // standalone default, e.g. a caller that ranks every shipped role).
+  const needsDesignArena = opts?.roles === undefined || Object.values(opts.roles).some((r) => r.weights.website !== undefined);
 
   const cached = refresh ? null : readCache(CACHE_PATH);
   let rows: LlmStatsRow[];
@@ -1182,54 +1239,19 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string }): 
     console.error(`openrouter: matched ${orMatched}/${models.length} models (throughput), ${orPriced} priced`);
   }
 
-  // Design Arena keyless leaderboard endpoint (POST designarena.ai/api/leaderboard):
-  // a fresher `models-website` board with battle counts — merged over the OR
-  // mirror with a battles floor — plus the `agents/agon_webapps` Elo for the
-  // report. Same cache -> fetch -> stale-cache chain as OpenRouter, non-fatal
-  // throughout: on total failure the ranking falls back to the OR mirror alone.
-  const daBoards = [
-    { key: "models/website", arenaType: "models", category: "website" },
-    { key: "agents/agon_webapps", arenaType: "agents", category: "agon_webapps" },
-  ];
+  // Design Arena endpoint boards — fetched only when a ranked role weights
+  // `website` (the sole role-exclusive source). Skipped, the OR mirror in
+  // `designElo` still stands and `website` is simply unused.
   let daWebsite: Record<string, DesignArenaEntry> | null = null;
   let daAgon: Record<string, DesignArenaEntry> | null = null;
-  try {
-    const boards: Record<string, DesignArenaEntry[]> = {};
-    const cachedDa = refresh ? null : readDesignArenaCache(DESIGN_ARENA_CACHE_PATH, true);
-    if (cachedDa) {
-      for (const b of daBoards) {
-        const entries = cachedDa.categories[b.key];
-        if (entries && entries.length > 0) boards[b.key] = entries;
-      }
-      if (Object.keys(boards).length === daBoards.length) {
-        console.error(`using cache ${DESIGN_ARENA_CACHE_PATH} (fetched ${cachedDa.fetchedAt})`);
-      }
+  if (needsDesignArena) {
+    try {
+      const boards = await loadDesignArenaBoards(refresh);
+      if (boards.website) daWebsite = buildDesignArenaIndex(models, boards.website);
+      if (boards.agon) daAgon = buildDesignArenaIndex(models, boards.agon);
+    } catch (e) {
+      console.error(`design arena: ${e instanceof Error ? e.message : String(e)}; continuing on the OpenRouter mirror alone`);
     }
-    if (Object.keys(boards).length !== daBoards.length) {
-      for (const b of daBoards) {
-        const entries = await fetchDesignArenaBoard(b.arenaType, b.category);
-        // An empty board is never cached (the next run retries) — the OR rule.
-        if (entries !== null && entries.length > 0) boards[b.key] = entries;
-      }
-      if (Object.keys(boards).length > 0) {
-        writeDesignArenaCache(DESIGN_ARENA_CACHE_PATH, new Date().toISOString(), boards);
-      } else {
-        const stale = readDesignArenaCache(DESIGN_ARENA_CACHE_PATH, false);
-        for (const b of daBoards) {
-          const entries = stale?.categories[b.key];
-          if (entries && entries.length > 0) boards[b.key] = entries;
-        }
-        if (Object.keys(boards).length > 0) {
-          console.error(`using stale cache ${DESIGN_ARENA_CACHE_PATH} (fetched ${stale?.fetchedAt})`);
-        }
-      }
-    }
-    const websiteBoard = boards["models/website"];
-    const agonBoard = boards["agents/agon_webapps"];
-    if (websiteBoard) daWebsite = buildDesignArenaIndex(models, websiteBoard);
-    if (agonBoard) daAgon = buildDesignArenaIndex(models, agonBoard);
-  } catch (e) {
-    console.error(`design arena: ${e instanceof Error ? e.message : String(e)}; continuing on the OpenRouter mirror alone`);
   }
   const mergedElo = mergeDesignElo(designElo, daWebsite);
   for (const m of models) m.designEloAgents = daAgon?.[m.id]?.elo ?? null;

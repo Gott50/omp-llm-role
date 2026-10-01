@@ -53,7 +53,9 @@ function parseArgs(argv: string[]): Args {
 async function main(): Promise<void> {
   const { port, lockPath, refresh, open } = parseArgs(process.argv.slice(2));
 
-  let rank: RankData = await loadRankData({ refresh });
+  // The explorer can surface any shipped role (including opt-in ones via
+  // `defaults`), so it always loads the full role set — and thus Design Arena.
+  let rank: RankData = await loadRankData({ refresh, roles: DEFAULT_ROLES });
 
   // The omp catalog gates the thinking price factor per model, matching the
   // plugin's ranking; unavailable omp falls back to the OR flag.
@@ -78,7 +80,7 @@ async function main(): Promise<void> {
     lockPath,
     getSnapshot: () => ({ rank, roles, defaults: DEFAULT_ROLES }),
     refresh: async () => {
-      rank = await loadRankData({ refresh: true });
+      rank = await loadRankData({ refresh: true, roles: DEFAULT_ROLES });
       enrichThinkingLevels(rank.models, catalog);
     },
   });

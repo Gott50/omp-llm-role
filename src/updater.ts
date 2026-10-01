@@ -116,7 +116,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
     let rank: RankData;
     try {
-      rank = (await deps.getRankData?.()) ?? (await loadRankData());
+      rank = (await deps.getRankData?.()) ?? (await loadRankData({ roles: settings.roles }));
     } catch (err) {
       return abort([`omp-llm-role: ranking data unavailable, no write: ${err instanceof Error ? err.message : err}`]);
     }

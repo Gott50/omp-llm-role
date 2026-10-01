@@ -1,9 +1,14 @@
 # omp-llm-role
 
 Ranks today's LLM leaderboard into best-fit picks for each omp model role
-(`default, smol, slow, vision, plan, commit, tiny, task, advisor, designer`), and ships
-an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
-`SPEC.md` is the normative spec for the plugin.
+(`default, smol, slow, vision, plan, commit, tiny, task, advisor`, plus the
+opt-in `designer`), and ships an omp plugin that applies those picks to
+`~/.omp/agent/config.yml` daily. `SPEC.md` is the normative spec for the plugin.
+
+`designer` is the only non-built-in role and ships **disabled**: a stock run
+ranks the nine built-in roles and fetches only their sources. Enable it with
+`omp plugin config omp-llm-role --set=roles.designer.enabled=true` — the plugin
+then ranks it and fetches Design Arena (its only role-exclusive source).
 
 ## Files
 
@@ -22,6 +27,7 @@ an omp plugin that applies those picks to `~/.omp/agent/config.yml` daily.
 | `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, export merge |
 | `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
+| `agents/designer.md` | The `designer` subagent, shipped by the plugin (discovered from the plugin's extension root — no install step) |
 | `package.json` | Plugin manifest (`omp.extensions`) + the single dependency (`yaml`) |
 | `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, thinking-price, openrouter-blend |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
@@ -108,10 +114,12 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   whole-object escape hatch). Knobs: `switchMargin`, `priceSwitchFraction`,
   `writeFallbackChains`,
   `fallbackChainDepth`, `activateDefaultOnEmptySession`,
-  `roles.<name>.{description,weights,required,filters,
+  `roles.<name>.{enabled,description,weights,required,filters,
   thinking,lambda}`. `weights: null` opts a role out; a new role with a full
-  weight set gets managed too. Invalid settings abort the run with the
-  offending role/key and no write.
+  weight set gets managed too. `enabled: false` drops a shipped role from the
+  resolved set (the shipped `designer` default) — set `roles.designer.enabled=true`
+  to opt in. Invalid settings abort the run with the offending role/key and no
+  write.
 - **State files** (next to the config): `llm-role-state.json` (day gate,
   managed roles, last selectors, plugin-owned chain keys, previous
   `modelRoles` snapshot), `llm-role-history.jsonl` (one row per completed
@@ -134,27 +142,28 @@ model handles design tasks" is therefore two pieces:
 
 | Piece | Where | Role |
 |---|---|---|
-| `modelRoles.designer` | `~/.omp/agent/config.yml` | the plugin's daily pick (`openrouter/deepseek/deepseek-v4-flash-vision-exp:high` — suffix from `roles.designer.thinking`) |
+| `modelRoles.designer` | `~/.omp/agent/config.yml` | the plugin's daily pick, written **only when the role is enabled** (`roles.designer.enabled=true`); suffix from `roles.designer.thinking` |
 | `modelTags.designer` | same file | hub cosmetics only (`name: Designer`, `color: accent`) |
-| `designer` agent | `~/.omp/agent/agents/designer.md` (global) or `<project>/.omp/agents/designer.md` (repo-scoped) | `model: "@designer"` is the routing; its `description` is the delegation hint the main session reads |
+| `designer` agent | `agents/designer.md` in this repo — discovered from the plugin's extension root, so linking/installing the plugin ships it (a user/project copy at `~/.omp/agent/agents/designer.md` or `<project>/.omp/agents/designer.md` overrides it) | `model: "@designer, @default"` is the routing (the `@default` fallback keeps it spawnable with the role disabled); its `description` is the delegation hint the main session reads |
 
 ```md
 ---
 name: designer
-description: Design specialist for UI/UX work. Use for layout, spacing, typography, color, visual hierarchy, icons, accessibility, and for reviewing how an interface actually looks.
-tools: [read, grep, glob, edit, write]
-model: "@designer"
+description: UI/UX specialist for design implementation, review, visual refinement
+tools: [read, bash, edit, ast_grep, ast_edit, ask, debug, ida, eval, github, glob, grep, find, lsp, checkpoint, rewind, context_notes, new_context, security_scan, task, wait, todo, web_search, write, memory_edit, retain, recall, reflect, learn, manage_skill]
+model: "@designer, @default"
 ---
 ```
 
 Verified end-to-end (2026-09-27, headless `-p --mode json` with the parent
-pinned to `openrouter/deepseek/deepseek-v4.1-flash`, agent at the global path):
-a design prompt spawned
+pinned to `openrouter/deepseek/deepseek-v4.1-flash`): a design prompt spawned
 `{"agent":"designer","agentSource":"user","modelRole":"designer"}` and the
-child ran on `openrouter/deepseek/deepseek-v4-flash-vision-exp:high` — the
-role's selector, not the parent's model (`agentSource` reads `project` when the
-agent file came from the repo's own `.omp/agents/`). The agent should not pin
-`thinkingLevel`: the role's `:suffix` already sets the effort.
+child ran on the role's selector, not the parent's model. The agent should not
+pin `thinkingLevel`: the role's `:suffix` already sets the effort. Re-verified
+2026-10-01 with the agent discovered from the plugin's extension root (the
+user-level copy removed): with `modelRoles.designer` present the child resolves
+`modelRole: "designer"`; with it absent the `@default` fallback resolves
+`modelRole: "default"`.
 
 Adding another task specialist:
 
@@ -183,9 +192,14 @@ Adding another task specialist:
 Caveats: `@<name>` is a role alias only when `<name>` is a built-in id or a key
 in `modelRoles` — otherwise omp treats it as a literal model pattern and fails
 hard (`Model "@x" not found`), and a role merely *named* after an agent routes
-nothing. Agent discovery is first-wins: nearest project `.omp/agents/` →
-`~/.omp/agent/agents/` → extension roots → Claude marketplace plugins →
-bundled (18.1.3 removed the bundled `designer` agent, so this one is ours).
+nothing. That applies to agent frontmatter too: a bare `model: "@designer"`
+hard-fails when the role is disabled, so the shipped agent pins the chain
+`model: "@designer, @default"` — the unresolved first entry is skipped and the
+child runs on `@default` (verified: spawn record `modelRole: "default"` with
+`modelRoles.designer` absent). Agent discovery is first-wins: nearest
+project `.omp/agents/` → `~/.omp/agent/agents/` → extension roots → Claude
+marketplace plugins → bundled (18.1.3 removed the bundled `designer` agent, so
+this one is ours).
 
 ## Data sources
 
@@ -248,7 +262,10 @@ no comparable design metric: its design/UI benchmark pages (`design2code`,
 `artifacts-bench`, `webdev-arena`, `svg-bench`, …) carry 1–5 rows each, all
 self-reported with zero verified results.
 
-**Design quality — designarena.ai endpoint (second route).** The keyless
+**Design quality — designarena.ai endpoint (second route).** Fetched only when
+a ranked role weights `website` (i.e. `designer` is enabled) — it is the sole
+role-exclusive source, so a stock run skips it and the OpenRouter mirror above
+stands alone. The keyless
 `POST https://www.designarena.ai/api/leaderboard` (body `{arenaType, category}`,
 no Authorization header) returns the same Elo family *with* battle counts:
 `data[] = {modelId, elo, battles, winRate, btStdErr, …}`. Two boards are
@@ -324,7 +341,9 @@ Roles and weights (see `DEFAULT_ROLES` in `src/settings.ts`, overridable via
 plugin settings): `default` (quality-heavy workhorse), `smol` (cheap+fast),
 `slow` (capability-heavy), `vision` (requires image input), `plan`
 (reasoning/long-context), `commit`, `tiny` (price+throughput dominated),
-`task` (agentic), `advisor` (deep reasoning, cost-aware), `designer` (visual/UX, image input).
+`task` (agentic), `advisor` (deep reasoning, cost-aware), and the opt-in
+`designer` (visual/UX, image input; `enabled: false` by default — the plugin
+skips it and its Design Arena source until `roles.designer.enabled=true`).
 
 Weight design rules (2026-09-27 review):
 
@@ -403,7 +422,7 @@ caches:
 ## Usage
 
 ```
-node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]
+node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]
 node update-roles.ts [--dry-run] [--json]
 node explore.ts [--port N] [--lock PATH] [--refresh] [--no-open]
 npm run explore [-- --port N --lock PATH --refresh --no-open]
@@ -416,8 +435,9 @@ node --test tests/
   (`fetchedAt, source, modelCount, roles{role:[{rank, modelId, name,
   organization, value, q, lambda, paretoFrontier, priceBlendedUsdPerM,
   priceEffUsdPerM, throughputTokS, contextTokens}]}`). `--out FILE`:
-  write instead of stdout. `--refresh`: bypass both caches. `--url`: override
-  the llm-stats page URL.
+  write instead of stdout. `--refresh`: bypass both caches. `--all`: include
+  opt-in roles (designer) — the default ranks the nine built-in roles only and
+  skips Design Arena. `--url`: override the llm-stats page URL.
 - `update-roles.ts` runs the plugin pipeline headlessly (key + catalog via the
   `omp` CLI); `--dry-run` prints decisions without writing, `--json` emits
   `{wrote, aborted, decisions[]}` only.
@@ -523,8 +543,21 @@ pages). An empty/unusable OpenRouter payload is never cached, so the next run
 retries. llm-stats fetch failure is fatal (no data at all); OpenRouter and
 Design Arena failures are non-fatal.
 
-## Current state (2026-09-30)
+## Current state (2026-10-01)
 
+- Designer is opt-in (2026-10-01): `designer` ships `enabled: false`, so a stock
+  run ranks the nine built-in roles and skips the Design Arena endpoint (the
+  sole role-exclusive source). Enable with
+  `omp plugin config omp-llm-role --set=roles.designer.enabled=true`. The
+  `designer` agent moved from `~/.omp/agent/agents/designer.md` into the repo
+  `agents/designer.md`), discovered from the plugin's extension root — linking
+  the plugin ships it, no install step. It pins `model: "@designer, @default"`:
+  with the role disabled the unresolved first entry is skipped and the child
+  runs on `@default` (a bare `@designer` would hard-fail — an unresolved `@x`
+  is a literal pattern, not a parent-model fallback; verified live, spawn
+  record `modelRole: "default"` with `modelRoles.designer` absent). The CLI
+  report keeps documenting all shipped roles via `--all` (the default now ranks
+  the nine built-in roles and omits the Design Arena legend).
 - Advisor rebalance (2026-09-30): `advisor` weights now
   `{reasoning 0.3498, general 0.2449, long_context 0.1004, price 0.20,
   throughput 0.1049}` (Σ 1.0). `math` dropped (76.3% coverage, r 0.759 with
@@ -634,11 +667,11 @@ Design Arena failures are non-fatal.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 399 llm-stats models; OpenRouter matched 151/399 (throughput), 150 priced.
-- Eligible per role: 142 (vision 74, designer 87, image-input filter).
+- 400 llm-stats models; OpenRouter matched 152/400 (throughput), 151 priced.
+- Eligible per role: 143 (vision 75, designer 88, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.808), `smol` Muse Spark 1.1 (0.764, blocked
+  `default` DeepSeek-V4.1-Flash (0.809), `smol` Muse Spark 1.1 (0.793, blocked
   → DeepSeek), `slow` GLM-5.3 (0.818), `vision` Qwen3.8 Flash (0.732, blocked
   → DeepSeek), `plan` Hy4 preview (0.759), `commit` Muse Spark 1.1 (0.793,
   blocked → DeepSeek), `tiny` Muse Spark 1.1 (0.814, blocked → Ling Fin),
@@ -795,9 +828,8 @@ Design Arena failures are non-fatal.
   measurement for a weak covered minority.
 - The `designer` `image: true` filter excludes `glm-5.3` (llm-stats
   `multimodal=false`) whose website Elo 1309 outranks the shipped #1
-  `gemini-3.8-flash` (1308) — kept deliberately: `~/.omp/agent/agents/designer.md`
-  requires screenshot grounding and grants only read/grep/glob/edit/write, so
-  the model must accept image input.
+  `gemini-3.8-flash` (1308) — kept deliberately: the shipped `agents/designer.md`
+  requires screenshot grounding, so the model must accept image input.
 - The designer ranking was insensitive to its `thinking` pin between medium and
   high (2026-09-27 probe: only #9/#10 swap), so `high` was pure multiplier
   there; the 2026-09-30 review moved it to `auto` (same overhead as medium,

@@ -29,7 +29,7 @@ import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { catalogFromOmpModelsJson, enrichThinkingLevels, resolveVariant, type CatalogEntry } from "./src/availability.ts";
-import { computeRankings, loadRankData, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked } from "./src/engine.ts";
+import { computeRankings, loadRankData, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "./src/engine.ts";
 import { DEFAULT_ROLES as ROLES } from "./src/settings.ts";
 
 const execFileP = promisify(execFile);
@@ -57,12 +57,16 @@ const METRIC_ABBR: Record<string, string> = {
 
 function formatRankings(
   rankings: Record<string, Ranked[]>,
+  roles: Record<string, RoleDef>,
   models: Model[],
   top: number,
   fetchedAt: string,
   orMatched: number,
   orPriced: number,
 ): string {
+  // The Design Arena legend only applies when a ranked role weights `website`
+  // (designer); a stock run ranks the built-in roles and never fetches it.
+  const weightsWebsite = Object.values(roles).some((d) => d.weights.website !== undefined);
   const lines: string[] = [
     `llm-stats.com best-fit ranking per omp model role — ${models.length} models, ` +
       `${fetchedAt.slice(0, 10)}`,
@@ -78,15 +82,19 @@ function formatRankings(
     "without thinking support are not adjusted.",
     "Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context",
     "sea=search vis=vision tput=throughput (code, mrcr as-is).",
-    "web=website: Design Arena `models-website` Elo as a percentile within the",
-    "design-covered field (the OpenRouter mirror merged with the keyless",
-    "designarena.ai board; an endpoint Elo is trusted only at >=300 battles).",
-    "Models without Design Arena data get the capability-consistent fill 0.195 —",
-    "the percentile implied by the uncovered cohort's mean general index — and are",
-    "marked ~ in the model column.",
-    "agon=Design Arena `agents/agon_webapps` Elo from the same endpoint: context",
-    "only, unweighted (22/87 of the designer pool, below the ~35–40% coverage",
-    "bar at which a metric earns weight).",
+    ...(weightsWebsite
+      ? [
+          "web=website: Design Arena `models-website` Elo as a percentile within the",
+          "design-covered field (the OpenRouter mirror merged with the keyless",
+          "designarena.ai board; an endpoint Elo is trusted only at >=300 battles).",
+          "Models without Design Arena data get the capability-consistent fill 0.195 —",
+          "the percentile implied by the uncovered cohort's mean general index — and are",
+          "marked ~ in the model column.",
+          "agon=Design Arena `agents/agon_webapps` Elo from the same endpoint: context",
+          "only, unweighted (22/87 of the designer pool, below the ~35–40% coverage",
+          "bar at which a metric earns weight).",
+        ]
+      : []),
     "★ = Pareto-frontier: no eligible model is both cheaper and better (q).",
   ];
   lines.push(
@@ -97,7 +105,7 @@ function formatRankings(
   );
   lines.push("");
 
-  for (const [role, def] of Object.entries(ROLES)) {
+  for (const [role, def] of Object.entries(roles)) {
     const ranked = rankings[role] ?? [];
     lines.push(`## @${role} — ${def.description}`);
     if (ranked.length === 0) {
@@ -172,13 +180,13 @@ function formatRankings(
  * `openrouter/<catalogId>`. Roles whose best model has no catalog match get a
  * comment placeholder instead of a selector.
  */
-function formatModelRolesYaml(rankings: Record<string, Ranked[]>, catalog: CatalogEntry[]): string {
+function formatModelRolesYaml(rankings: Record<string, Ranked[]>, roles: Record<string, RoleDef>, catalog: CatalogEntry[]): string {
   const lines: string[] = [
     "# Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).",
     "# Selectors are openrouter/<id>; the omp-llm-role plugin writes this block daily.",
     "modelRoles:",
   ];
-  for (const role of Object.keys(ROLES)) {
+  for (const role of Object.keys(roles)) {
     const best = rankings[role]?.[0];
     if (!best) continue;
     const catalogId = resolveVariant(best.model.id, catalog, "billed");
@@ -202,19 +210,24 @@ async function main(): Promise<void> {
   let asJson = false;
   let outPath: string | null = null;
   let refresh = false;
+  let all = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--top") top = Number(args[++i]);
     else if (args[i] === "--json") asJson = true;
     else if (args[i] === "--out") outPath = args[++i];
     else if (args[i] === "--refresh") refresh = true;
+    else if (args[i] === "--all") all = true;
     else if (args[i] === "--url") url = args[++i];
     else if (args[i] === "--help" || args[i] === "-h") {
-      console.log("Usage: node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]");
+      console.log("Usage: node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]");
       process.exit(0);
     }
   }
 
-  const { models, fetchedAt, source, orMatched, orPriced } = await loadRankData({ refresh, url });
+  // Shipped defaults rank the omp built-in roles only; `--all` adds opt-in roles
+  // (designer) — which also pulls in their exclusive sources (Design Arena).
+  const roles = all ? ROLES : Object.fromEntries(Object.entries(ROLES).filter(([, d]) => d.enabled !== false));
+  const { models, fetchedAt, source, orMatched, orPriced } = await loadRankData({ refresh, url, roles });
   // The omp catalog gates the thinking price factor per model (a model whose
   // thinking[] excludes the role's level is priced bare, matching the plugin's
   // suffix gate) and resolves each role's #1 into a concrete openrouter/<id>
@@ -229,7 +242,7 @@ async function main(): Promise<void> {
   }
   enrichThinkingLevels(models, catalog);
 
-  const rankings = computeRankings(models, ROLES);
+  const rankings = computeRankings(models, roles);
 
   let report: string;
   if (asJson) {
@@ -238,7 +251,7 @@ async function main(): Promise<void> {
       source,
       modelCount: models.length,
       roles: Object.fromEntries(
-        Object.entries(ROLES).map(([role, def]) => {
+        Object.entries(roles).map(([role, def]) => {
           const ranked = rankings[role] ?? [];
           const frontier = paretoFrontier(ranked);
           return [
@@ -266,8 +279,8 @@ async function main(): Promise<void> {
     const suggested =
       catalog.length === 0
         ? "# (catalog unavailable — suggested modelRoles skipped)"
-        : formatModelRolesYaml(rankings, catalog);
-    report = formatRankings(rankings, models, top, fetchedAt, orMatched, orPriced) + "\n" + suggested + "\n";
+        : formatModelRolesYaml(rankings, roles, catalog);
+    report = formatRankings(rankings, roles, models, top, fetchedAt, orMatched, orPriced) + "\n" + suggested + "\n";
   }
 
   if (outPath) {

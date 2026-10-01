@@ -41,7 +41,7 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 | # | Question | Decision |
 |---|---|---|
 | 1 | Form factor | **omp plugin** living in this repo, installed via `omp plugin link` (dev) / install (later) |
-| 2 | Role coverage | **Config-driven weights.** Shipped defaults cover the official roles plus `designer`; the settings schema is flexible enough to define full weight sets for custom agent roles |
+| 2 | Role coverage | **Config-driven weights.** Shipped defaults cover the nine official roles; `designer` ships as an opt-in role (`enabled: false`, §6.2). The settings schema is flexible enough to define full weight sets for custom agent roles |
 | 3 | Key-scoped availability | **Tier gate + catalog check** (§5) |
 | 4 | Config write | **Surgical in-place edit** of `~/.omp/agent/config.yml` (only managed lines change; atomic tmp+rename) |
 | 5 | Thinking suffixes | **Per-role `thinking` field** on the role def, shipped as defaults, overridable in settings |
@@ -86,6 +86,10 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   stale cache → none), returns models + match counts. Since 2026-09-30 the
   OpenRouter step also fetches the model pages (~150/day, own cache) and blends
   price/throughput per decision #14; the find payload alone is the fallback.
+  `opts.roles` names the roles the caller will rank: when none weights `website`,
+  the Design Arena endpoint (the sole role-exclusive source) is not fetched and
+  the OpenRouter mirror alone populates `designElo`. Undefined = fetch (the
+  standalone default).
 - `computeRankings(models, roles)` — cardinal fixed-anchor transforms (index_* affine
   `(v+20)/80`, benchmarks chance-anchored, throughput log-anchored, `website` identity
   over an already-0-1 percentile) + quality composite
@@ -233,6 +237,15 @@ Exactly the current `ROLES` from `llm-role-rank.ts` (weights/required verbatim, 
 `llm-role-rankings.md` legend for metric meanings): `default, smol, slow, vision, plan,
 commit, tiny, task, advisor, designer`. No custom roles ship beyond these (decision #2).
 
+`designer` is the only non-built-in role and ships `enabled: false`: `resolveSettings`
+drops it from the resolved set (like `weights: null`), so a stock run ranks the nine
+built-in roles and never fetches Design Arena. `roles.designer.enabled=true` opts in.
+The shipped `agents/designer.md` is discovered from the plugin's extension root
+regardless; it pins `model: "@designer, @default"` so the unresolved first entry is
+skipped and the child runs on `@default` when the role is disabled (a bare `@designer`
+would hard-fail — an unresolved `@x` is a literal pattern, not a parent-model fallback).
+The CLI report documents all shipped roles via `--all`.
+
 ### 6.3 Role filters (schema capability)
 
 Role definitions may declare `filters: { image: true }` (require image input) and
@@ -285,6 +298,9 @@ a power-user escape hatch for whole-object overrides.
   "roles": {
     "slow": {
       "description": "…",
+      // Opt-in gate (default true). `false` drops the role from the resolved
+      // set, like `weights: null`; the shipped `designer` default is false.
+      "enabled": true,
       "weights": { "general": 0.26, "reasoning": 0.26, "code": 0.18, "agents": 0.13,
                    "math": 0.08, "throughput": 0.04, "price": 0.05 },
       "required": ["general", "price", "throughput"],
@@ -315,9 +331,10 @@ Validation (fail the run, notify, no write): weights > 0, each role's weights su
 vision, tool_calling, long_context, mrcr, website, price, throughput} (the eligibility gate,
 independent of weights), weightable metric names ∈ the same set, `roles.<role>.thinking` ∈
 {off, minimal, low, medium, high, xhigh, max, auto}, `switchMargin` and
-`priceSwitchFraction` ∈ [0, 1]. A role entry with `weights: null`
-explicitly opts that role out. Legacy `suffixes.*` keys are rejected with a migration
-hint (moved into `roles.<role>.thinking`).
+`priceSwitchFraction` ∈ [0, 1], `roles.<role>.enabled` a boolean. A role entry with
+`weights: null` explicitly opts that role out; `enabled: false` drops a shipped role
+from the resolved set (the `designer` default). Legacy `suffixes.*` keys are rejected
+with a migration hint (moved into `roles.<role>.thinking`).
 
 `website` is the one derived metric: Design Arena's `models-website` Elo as a
 percentile within the design-covered population, with models lacking Design Arena

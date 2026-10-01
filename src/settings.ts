@@ -100,6 +100,16 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
   },
   designer: {
     description: "Design work: visual/UX judgement on image-capable models",
+    // Opt-in: the only role that is not an omp built-in id, and the only one
+    // whose ranking needs a role-exclusive source (Design Arena `website`). Off
+    // by default so a stock run ranks the nine built-in roles and fetches only
+    // their sources; enable with `roles.designer.enabled=true` (the plugin then
+    // ranks it and fetches Design Arena). The shipped `agents/designer.md` is
+    // discovered from the plugin's extension root regardless; its
+    // `model: "@designer, @default"` chain falls through to `@default` when the
+    // role is disabled (an unresolved `@x` is a literal pattern, so a bare
+    // `@designer` would hard-fail — the chain is what keeps the agent spawnable).
+    enabled: false,
     weights: { general: 0.26, code: 0.10, vision: 0.18, throughput: 0.13, price: 0.15, website: 0.18 },
     required: ["general", "price", "throughput"],
     // `auto` for the same reason as `plan`: nothing in the designer pool lists
@@ -284,6 +294,15 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   for (const [name, rdef] of Object.entries(merged.roles)) {
     if (!isRecord(rdef)) {
       errors.push(`role ${name}: must be an object with weights/required, got ${JSON.stringify(rdef)}`);
+      delete merged.roles[name];
+      continue;
+    }
+    if (rdef.enabled !== undefined && typeof rdef.enabled !== "boolean") {
+      errors.push(`role ${name}: enabled must be a boolean, got ${JSON.stringify(rdef.enabled)}`);
+    }
+    // enabled: false opts the role out of the resolved set entirely (shipped
+    // opt-in roles); a user override to true re-enables it.
+    if (rdef.enabled === false) {
       delete merged.roles[name];
       continue;
     }
