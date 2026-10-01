@@ -378,7 +378,7 @@ scoring kills two percentile artifacts: rank compression (real magnitude gaps
 now count — e.g. @default flipped DeepSeek-V4.1-Flash → GPT-6 Astra) and
 field-dependent scales (adding a model no longer reshuffles everyone).
 
-`website` is the one **derived** metric: Design Arena `models-website` Elo
+`website` is the first of the two **derived** metrics: Design Arena `models-website` Elo
 (the two routes merged, see Data sources) converted to a percentile within the
 design-covered population (121 of 399 models), so it is role-independent and
 identical for every role that weights it. Models without Design Arena data
