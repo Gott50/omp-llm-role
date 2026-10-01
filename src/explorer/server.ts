@@ -14,14 +14,14 @@
  * wrapped so a throw becomes a 500 JSON error.
  */
 
-import { copyFileSync, existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
-import { writeConfigAtomic } from "../config-edit.ts";
 import { SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { isRecord } from "../guards.ts";
+import { validateRole, writeRoleSettings } from "../role-settings.ts";
 import { KNOWN_METRICS } from "../settings.ts";
-import { METRIC_META, explainModel, mergeExport, rankRows, validateRole } from "./explain.ts";
+import { METRIC_META, explainModel, rankRows } from "./explain.ts";
 
 export type ExplorerOpts = {
   webDir: string;
@@ -129,13 +129,6 @@ function bootstrapPayload(opts: ExplorerOpts): object {
   };
 }
 
-function timestamp(): string {
-  const d = new Date();
-  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-  const hms = `${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
-  return `${ymd}-${hms}`;
-}
-
 async function handleRank(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts): Promise<void> {
   const body = await readJson(req);
   if (!isRecord(body) || typeof body.role !== "string" || !isRecord(body.def)) {
@@ -169,63 +162,9 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
 async function handleExport(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts): Promise<void> {
   const body = await readJson(req);
   if (!isRecord(body) || !isRecord(body.roles)) throw new HttpError(400, "expected { roles: object }");
-  const dirty = body.roles as Record<string, RoleDef>;
-
-  // 1. Validate every dirty role before touching the file.
-  const errors: string[] = [];
-  for (const [name, def] of Object.entries(dirty)) errors.push(...validateRole(name, def));
-  if (errors.length > 0) {
-    sendJson(res, 200, { ok: false, errors });
-    return;
-  }
-
-  // 2. Read the lock file; never clobber an unreadable one.
-  let text = "";
-  try {
-    text = readFileSync(opts.lockPath, "utf8");
-  } catch {
-    text = "";
-  }
-  let parsed: unknown = {};
-  if (text.trim() !== "") {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      sendJson(res, 200, { ok: false, error: "lock file is not valid JSON — refusing to overwrite" });
-      return;
-    }
-  }
-
-  // 3. mtime guard (0 when the file is absent).
-  let mtimeBefore = 0;
-  try {
-    mtimeBefore = statSync(opts.lockPath).mtimeMs;
-  } catch {
-    mtimeBefore = 0;
-  }
-
-  // 4. Backup before any write.
-  let backupPath: string | null = null;
-  if (existsSync(opts.lockPath)) {
-    backupPath = `${opts.lockPath}.bak-${timestamp()}`;
-    copyFileSync(opts.lockPath, backupPath);
-  }
-
-  // 5. Merge dirty roles into the parsed lock.
-  const merged = mergeExport(parsed, dirty);
-  if ("error" in merged) {
-    sendJson(res, 200, { ok: false, error: merged.error });
-    return;
-  }
-
-  // 6. Atomic, mtime-guarded write.
-  const result = writeConfigAtomic(opts.lockPath, JSON.stringify(merged.lock, null, 2) + "\n", mtimeBefore);
-  if (result === "conflict") {
-    sendJson(res, 200, { ok: false, error: "lock file changed since load — reload the page and re-export" });
-    return;
-  }
-
-  sendJson(res, 200, { ok: true, backupPath, roles: Object.keys(dirty) });
+  const result = writeRoleSettings(opts.lockPath, body.roles as unknown as Record<string, RoleDef>);
+  if (!result.ok) return sendJson(res, 200, { ok: false, errors: result.errors });
+  sendJson(res, 200, { ok: true, backupPath: result.backupPath, roles: result.roles });
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts): Promise<void> {

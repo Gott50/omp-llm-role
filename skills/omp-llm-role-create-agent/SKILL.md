@@ -1,0 +1,112 @@
+---
+name: omp-llm-role-create-agent
+description: "Use when a user wants a new omp subagent for a specific purpose wired to an omp-llm-role model role: author the agent .md per agents-guide.md, add the role with purpose-fit weights, verify routing, tune in the explorer."
+---
+
+# Create an agent + model role for a specific purpose
+
+Produces three things, in order:
+
+1. an agent `.md` (the routing unit) authored per `agents-guide.md`;
+2. a `roles.<name>` entry in the plugin settings lock file, with weights fitted to the purpose;
+3. a role that is visible and tunable in the explorer.
+
+This skill ships inside the plugin at `<plugin>/skills/omp-llm-role-create-agent/SKILL.md`;
+the plugin root is two levels up. Resolve it from the skill directory the harness
+reports, or fall back to `~/.omp/plugins/node_modules/omp-llm-role`. `agents-guide.md`
+sits at the plugin root.
+
+## 0. Pin the purpose
+
+Ask (or infer) and write down:
+
+- **name** — `[A-Za-z0-9_-]+`, not `main`/`sub`, not an existing role or agent.
+- **purpose** — one sentence; this becomes the delegation hint the main model reads.
+- **tools** — the smallest set that does the job (`agents-guide.md` §4).
+- **read-only?** — if yes, every tool must be in the read-only set.
+- **output** — a structured yield schema, or free text.
+- **thinking** — the effort level the role should run at.
+
+## 1. Author the agent
+
+Follow `agents-guide.md` exactly (frontmatter contract §3, body conventions §5,
+YAML gotchas §9). Non-negotiables:
+
+- `description` is a routing rule: "MUST be used for …", what it returns, when to skip.
+- `model: "@<name>, @default"` — the chain keeps the agent spawnable while the role is
+  disabled or unranked (a bare `@<name>` hard-fails when the role is absent).
+- Do NOT pin `thinking-level` — the role's `thinking` field already sets the effort.
+- Write to `<project>/.omp/agents/<name>.md` (project-scoped) or
+  `~/.omp/agent/agents/<name>.md` (global). Project wins.
+- Keep the body pure role; the wrapper supplies yield/validation/peer mechanics.
+
+## 2. Fit the weights
+
+Two invariants — the validator enforces the first, the engine's math needs the second:
+
+- Σ(all weights) = 1.0 (±0.01).
+- Σ(non-price weights) = 1 − w_price exactly: `q = Σ (wᵢ/(1−w_price))·tᵢ`, so any other
+  split silently rescales q against λ.
+- `price` and `throughput` MUST both be weighted and both in `required`.
+- `required` is the eligibility gate, not a weight: a model missing a required metric is
+  not ranked at all.
+
+Start from the archetype closest to the purpose, then tune in the explorer (§4):
+
+| purpose | weights (Σ = 1) | required |
+|---|---|---|
+| review / audit | reasoning .30, general .24, code .20, agents .10, price .10, throughput .06 | general, price, throughput |
+| docs / writing | general .34, reasoning .20, code .10, long_context .10, price .16, throughput .10 | general, price, throughput |
+| data / analysis | math .28, reasoning .26, general .20, code .10, price .10, throughput .06 | general, price, throughput |
+| research / search | search .28, general .24, reasoning .20, long_context .10, price .10, throughput .08 | general, price, throughput |
+| design / UI | vision .30, website .20, general .20, code .10, price .12, throughput .08 (+ `filters.image`) | general, price, throughput |
+| refactor / migration | code .30, agents .20, general .20, long_context .10, price .12, throughput .08 | general, price, throughput |
+| test / QA | code .28, agents .20, tool_calling .14, general .18, price .12, throughput .08 | general, price, throughput |
+| ops / infra | agents .24, tool_calling .20, general .20, code .14, price .12, throughput .10 | general, price, throughput |
+
+Rules of thumb:
+
+- A weighted metric with low coverage turns q into a coverage score — prefer a `filters`
+  gate over requiring a sparse metric. `website` and `long_context` are capability-filled
+  (0.195), so they are safe to weight.
+- Check differentiation: if the role's leader equals `default`'s, the role adds nothing —
+  raise the distinctive metric or drop the role.
+- `thinking` must be a level the pool actually supports; `off`/`auto` are meta levels
+  (always appended).
+
+## 3. Write the role
+
+`omp plugin config set` stores every value as a string, and the plugin's validator rejects
+a string weight/required/boolean — do NOT use it for role settings. Write the typed role
+def with the plugin's own validated path:
+
+```sh
+node <plugin>/create-role.ts --name <name> \
+  --weights general=0.30,code=0.20,price=0.25,throughput=0.25 \
+  --required general,price,throughput --thinking auto \
+  --description "<one-line purpose>"
+```
+
+It validates through `resolveSettings`, backs up the lock file, and writes atomically.
+`--dry-run` validates and prints without touching the file; `--json` prints the payload.
+
+## 4. Verify
+
+1. **Role ranked**: `node <plugin>/update-roles.ts --dry-run` → a `kept`/`switched` line
+   for the role (or `no changes`).
+2. **Routing**: spawn the agent headlessly and read the spawn record — it MUST carry
+   `"agent":"<name>"` and `"modelRole":"<name>"`, with `resolvedModel` = the role's
+   selector, not the parent's.
+3. **Explorer**: `node <plugin>/explore.ts` → the role is a tab; tune weights/required/
+   thinking/description and Export (writes the lock file, backup first). The explorer's
+   numbers are the plugin's own.
+
+## Pitfalls
+
+- A role merely *named* after an agent routes nothing; the agent's `model:` pin is the routing.
+- `@<name>` is a role alias only when `<name>` is a built-in id or a key in `modelRoles`;
+  otherwise it is a literal model pattern and hard-fails.
+- The plugin only rewrites `modelRoles` keys for roles in its resolved settings, so a
+  hand-added key survives — but a role that leaves the set has its key deleted.
+- Never put non-agent `.md` files in an `agents/` dir.
+- Restart the session after the plugin writes `modelRoles` so the new alias resolves.

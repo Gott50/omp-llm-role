@@ -7,8 +7,9 @@ opt-in `designer`), and ships an omp plugin that applies those picks to
 
 `designer` is the only non-built-in role and ships **disabled**: a stock run
 ranks the nine built-in roles and fetches only their sources. Enable it with
-`omp plugin config omp-llm-role --set=roles.designer.enabled=true` — the plugin
-then ranks it and fetches Design Arena (its only role-exclusive source).
+`omp plugin config set omp-llm-role config '{"roles":{"designer":{"enabled":true}}}'`
+— the plugin then ranks it and fetches Design Arena (its only role-exclusive
+source).
 
 ## Files
 
@@ -23,15 +24,18 @@ then ranks it and fetches Design Arena (its only role-exclusive source).
 | `src/updater.ts` | Orchestration: rank → tier gate → hysteresis → chains → config write |
 | `src/extension.ts` | omp extension entry: day-gated `session_start` run + `/refresh-roles` |
 | `update-roles.ts` | Headless shim: `node update-roles.ts [--dry-run] [--json]` (always forces) |
-| `explore.ts` | Interactive ranking explorer: loopback web UI for why-this-rank, live weight tuning, and lock-file export |
-| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, export merge |
+| `create-role.ts` | Add/update one role in the plugin settings lock file: `node create-role.ts --name <role> --weights m=w,... [--required ...] [--thinking ...] [--image] [--dry-run]` |
+| `explore.ts` | Interactive ranking explorer: loopback web UI for why-this-rank, live weight tuning, new-role creation, and lock-file export |
+| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets |
 | `src/explorer/server.ts` | Zero-dependency HTTP surface for the explorer (static SPA + JSON API) |
+| `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) shared by the explorer's Export and `create-role.ts` |
 | `web/` | Explorer SPA (`index.html`, `app.js`, `style.css`) — no framework, no build step, no external requests |
 | `agents/designer.md` | The `designer` subagent, shipped by the plugin (discovered from the plugin's extension root — no install step) |
+| `skills/omp-llm-role-create-agent/SKILL.md` | Shipped skill: create an agent + model role for a specific purpose (author the `.md` per `agents-guide.md`, fit weights, write the role, verify, tune in the explorer) |
 | `package.json` | Plugin manifest (`omp.extensions`) — no runtime dependencies (`yaml` is dev-only: tests validate patch output with the real parser) |
 | `.omp-plugin/marketplace.json` | Self-hosted omp marketplace catalog (`gott50-plugins`): `omp plugin marketplace add Gott50/omp-llm-role` + `omp plugin install omp-llm-role@gott50-plugins` |
 | `LICENSE` | MIT |
-| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, thinking-price, openrouter-blend |
+| `tests/` | `node --test tests/` fixtures: tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, thinking-price, openrouter-blend |
 | `llm-stats-fetched-rankings.json` | Daily cache of the raw llm-stats leaderboard (script-owned, gitignored) |
 | `openrouter-fetched-data.json` | Daily cache of the full OpenRouter `find` response (gitignored) |
 | `openrouter-endpoints-fetched-data.json` | Daily cache of the OpenRouter model pages' per-provider routes (gitignored) |
@@ -120,10 +124,9 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   model-scoped chain, two role levels) stays level-free.
 - **Rollback aid**: `~/.omp/agent/llm-role-state.json` snapshots the previous
   `modelRoles` block on every write (`previousModelRoles`).
-- **Settings**: `omp plugin config omp-llm-role --set=<dotted.key>=<value>`
-  (flat dotted keys are deep-merged by the plugin; `config=<json>` is a
-  whole-object escape hatch). Knobs: `switchMargin`, `priceSwitchFraction`,
-  `writeFallbackChains`,
+- **Settings**: `~/.omp/plugins/omp-plugins.lock.json` →
+  `settings["omp-llm-role"]`, deep-merged over the shipped defaults. Knobs:
+  `switchMargin`, `priceSwitchFraction`, `writeFallbackChains`,
   `fallbackChainDepth`, `activateDefaultOnEmptySession`,
   `roles.<name>.{enabled,description,weights,required,filters,
   thinking,lambda}`. `weights: null` opts a role out; a new role with a full
@@ -132,7 +135,12 @@ Install (dev): `omp plugin link ~/Documents/omp-llm-role`. From then on:
   to opt in. A role that leaves the resolved set (disabled or removed) has its
   `modelRoles.<role>` line deleted on the next run, so a stale pin cannot keep
   routing `@<role>`. Invalid settings abort the run with the offending role/key
-  and no write.
+  and no write. Write typed values with `node create-role.ts` (roles) or the
+  explorer's Export; `omp plugin config set <plugin> <key> <value>` stores every
+  value as a **string**, which the validator rejects for numbers/arrays/booleans,
+  so it is only usable for string-valued keys — for a whole-object override use
+  `omp plugin config set omp-llm-role config '<json>'` (the `config` escape
+  hatch, JSON-parsed by the plugin).
 - **State files** (next to the config): `llm-role-state.json` (day gate,
   managed roles, last selectors, plugin-owned chain keys, previous
   `modelRoles` snapshot), `llm-role-history.jsonl` (one row per completed
@@ -182,25 +190,31 @@ Adding another task specialist:
 
 1. Define the role in plugin settings — one full weight set, `required` ⊆
    weights, `thinking` for the effort level (the legacy `suffixes.<role>` knob
-   is rejected by validation):
+   is rejected by validation). `omp plugin config set` stores every value as a
+   **string**, which the validator rejects for numbers/arrays/booleans, so write
+   the typed def with the plugin's own validated path:
    ```sh
-   omp plugin config omp-llm-role \
-     --set=roles.review.weights.general=0.35 --set=roles.review.weights.agents=0.25 \
-     --set=roles.review.weights.code=0.2 --set=roles.review.weights.price=0.12 \
-     --set=roles.review.weights.throughput=0.08 \
-     --set='roles.review.required=["general","price","throughput"]' \
-     --set=roles.review.thinking=high \
-     --set='roles.review.description=Code review: agentic depth with cost awareness'
+   node create-role.ts --name review \
+     --weights reasoning=0.30,general=0.24,code=0.20,agents=0.10,price=0.10,throughput=0.06 \
+     --required general,price,throughput --thinking high \
+     --description "Code review: agentic depth with cost awareness"
    ```
-   From then on the plugin ranks, prices, probes, hysteresis-checks, chain-fills
-   and writes `modelRoles.review` daily (it touches only roles it has weights
-   for, so hand-added keys stay untouched). Settings live in
+   It validates through `resolveSettings`, backs up the lock file, and writes
+   atomically (`--dry-run` validates without writing). From then on the plugin
+   ranks, prices, probes, hysteresis-checks, chain-fills and writes
+   `modelRoles.review` daily (it touches only roles it has weights for, so
+   hand-added keys stay untouched). Settings live in
    `~/.omp/plugins/omp-plugins.lock.json` → `settings["omp-llm-role"]`, not in
-   `config.yml`.
-2. Author the agent that pins `model: "@review"` (the routing), or pin an
-   existing agent through `task: { agentModelOverrides: { <agent>: "@review" } }`.
+   `config.yml`. The explorer's **+ new role** button and **Export** write the
+   same shape.
+2. Author the agent that pins `model: "@review, @default"` (the routing), or pin
+   an existing agent through `task: { agentModelOverrides: { <agent>: "@review" } }`.
 3. Non-agent entry points for a one-off run: `omp --model @review`, or add the
    role to `cycleOrder` for `Ctrl+P`.
+
+The shipped skill `omp-llm-role-create-agent` walks all three steps — agent
+authoring per `agents-guide.md`, purpose-fit weights, verification — so a user
+can just ask their omp agent to "create an agent for <purpose>".
 
 Caveats: `@<name>` is a role alias only when `<name>` is a built-in id or a key
 in `modelRoles` — otherwise omp treats it as a literal model pattern and fails
@@ -437,6 +451,7 @@ caches:
 ```
 node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]
 node update-roles.ts [--dry-run] [--json]
+node create-role.ts --name <role> --weights m=w,... [--required m,...] [--thinking <level>] [--description <text>] [--image] [--lambda N] [--lock PATH] [--dry-run] [--json]
 node explore.ts [--port N] [--lock PATH] [--refresh] [--no-open]
 npm run explore [-- --port N --lock PATH --refresh --no-open]
 node --test tests/
@@ -454,6 +469,10 @@ node --test tests/
 - `update-roles.ts` runs the plugin pipeline headlessly (key + catalog via the
   `omp` CLI); `--dry-run` prints decisions without writing, `--json` emits
   `{wrote, aborted, decisions[]}` only.
+- `create-role.ts` adds/updates one role in the plugin settings lock file
+  (validated through `resolveSettings`, backup + atomic write); `--dry-run`
+  validates without writing, `--json` prints the payload. The shipped skill
+  `omp-llm-role-create-agent` drives it together with agent authoring.
 - `explore.ts` boots the interactive explorer (below); `--port` (default 5177),
   `--lock` (default `~/.omp/plugins/omp-plugins.lock.json`), `--refresh` (force
   a refetch before serving), `--no-open` (skip the browser launch). `npm run
@@ -477,11 +496,16 @@ the CLI.
   `value = q − penalty`), "why not higher" (the value gap to the model above
   plus the per-metric target that would close it, with unreachable/extrapolated
   notes), and the models that dominate it on (price, q).
-- **Weight editor** — edit the role's weights, `required` set, `filters.image`,
-  `thinking` level, and `λ` override live; the table re-ranks on every change
-  (120 ms debounce). Weights are edited freely (no implicit rescaling): the `Σ`
-  readout turns red until `|Σ − 1| ≤ 0.01`, and `Normalize` rescales in one
-  click. Changing the price weight visibly changes `λ`.
+- **Weight editor** — edit the role's description, weights, `required` set,
+  `filters.image`, `thinking` level, and `λ` override live; the table re-ranks on
+  every change (120 ms debounce). Weights are edited freely (no implicit
+  rescaling): the `Σ` readout turns red until `|Σ − 1| ≤ 0.01`, and `Normalize`
+  rescales in one click. Changing the price weight visibly changes `λ`.
+- **New role** — the `+ new role` tab creates a role from a template
+  (`general/code/price/throughput`, Σ 1.0) that you then tune and Export. A role
+  with no shipped default is fully editable: `Reset to shipped default` is
+  hidden, and `×` deletes an added metric outright (the deep-merge parking at
+  `0.001` only applies to metrics the shipped default weights).
 - **Thinking level** — a per-role select over the eight `SUFFIX_LEVELS`
   (`off`…`max`, `auto`) plus `— (bare)`. The level is the role's `thinking`
   field: it is appended to the written selector (`:level`) and scales the price
@@ -574,8 +598,8 @@ publish through any channel (same tree, no build step):
   `omp plugin upgrade omp-llm-role@gott50-plugins`.
 
 The npm tarball ships exactly the `files` whitelist in `package.json`
-(`src/`, `web/`, `agents/`, the CLI scripts, `SPEC.md`) — caches and tests
-stay out. Gate: `node --test tests/`.
+(`src/`, `web/`, `agents/`, `skills/`, the CLI scripts, `SPEC.md`,
+`agents-guide.md`) — caches and tests stay out. Gate: `node --test tests/`.
 
 Install routes verified 2026-10-01 (omp 18.4.8): npm (local-registry
 simulation of the packed tarball), git (local git daemon), marketplace (local
@@ -587,6 +611,14 @@ public (404 / auth error).
 
 ## Current state (2026-10-01)
 
+- Agent + role creation (2026-10-01): the plugin ships the
+  `omp-llm-role-create-agent` skill (discovered from the plugin's `skills/` root;
+  verified via `read skill://omp-llm-role-create-agent`), `create-role.ts` (typed,
+  validated role write into the settings lock file), and an explorer `+ new role`
+  button + description editor. Roles with no shipped default are fully editable
+  (no `Reset to shipped default`). `resolveSettings` now deep-merges a nested
+  `roles` object with flat dotted keys in either order (previously a nested
+  `roles` key replaced the flat patch, dropping sibling role settings).
 - Release-ready (2026-10-01): no runtime dependencies — `config-edit.ts` reads
   and self-checks the config line-oriented (`yaml` is dev-only, used by tests
   to validate patch output with the real parser). `package.json` carries npm
@@ -597,7 +629,7 @@ public (404 / auth error).
 - Designer is opt-in (2026-10-01): `designer` ships `enabled: false`, so a stock
   run ranks the nine built-in roles and skips the Design Arena endpoint (the
   sole role-exclusive source). Enable with
-  `omp plugin config omp-llm-role --set=roles.designer.enabled=true`. The
+  `omp plugin config set omp-llm-role config '{"roles":{"designer":{"enabled":true}}}'`. The
   `designer` agent moved from `~/.omp/agent/agents/designer.md` into the repo
   `agents/designer.md`), discovered from the plugin's extension root — linking
   the plugin ships it, no install step. It pins `model: "@designer, @default"`:

@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { cardinalMetric, rankRole, type RankData } from "../src/engine.ts";
-import { inverseCardinal, mergeExport, rankRows, validateRole } from "../src/explorer/explain.ts";
+import { inverseCardinal, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer } from "../src/explorer/server.ts";
+import { isRecord } from "../src/guards.ts";
+import { mergeExport, validateRole } from "../src/role-settings.ts";
 import { DEFAULT_ROLES, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 import { makeModel } from "./helpers.ts";
 
@@ -130,6 +132,64 @@ test("export writes the lock file with a backup and stays valid", async () => {
 
     const { errors } = resolveSettings(readPluginSettingsMap({ global: lockPath, project: null }));
     assert.deepEqual(errors, []);
+  } finally {
+    server.close();
+  }
+});
+
+test("a role absent from the shipped defaults ranks and exports", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-new-role-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  const seed = { plugins: { "omp-llm-role": { enabled: true } }, settings: {} };
+  writeFileSync(lockPath, JSON.stringify(seed, null, 2));
+
+  const rank: RankData = { models: MODELS, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const server = createExplorerServer({
+    webDir: join(process.cwd(), "web"),
+    lockPath,
+    getSnapshot: () => ({ rank, roles: DEFAULT_ROLES, defaults: DEFAULT_ROLES }),
+    refresh: async () => {},
+  });
+  const { promise, resolve } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", resolve);
+  await promise;
+  const port = (server.address() as { port: number }).port;
+
+  try {
+    // A role the explorer created from its template: not in roles or defaults, so
+    // the baseline ranking is empty and every row reports a null baseline rank.
+    const review = { description: "Code review", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+    const rankRes = await fetch(`http://127.0.0.1:${port}/api/rank`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "review", def: review }),
+    });
+    const rankBody: unknown = await rankRes.json();
+    assert.ok(isRecord(rankBody));
+    assert.deepEqual(rankBody.errors, []);
+    assert.ok(Array.isArray(rankBody.rows));
+    assert.equal(rankBody.rows.length, 2);
+    const firstRow: unknown = rankBody.rows[0];
+    assert.ok(isRecord(firstRow));
+    assert.equal(firstRow.baselineRank, null);
+
+    const expRes = await fetch(`http://127.0.0.1:${port}/api/export`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roles: { review } }),
+    });
+    const expBody: unknown = await expRes.json();
+    assert.ok(isRecord(expBody));
+    assert.equal(expBody.ok, true);
+    assert.deepEqual(expBody.roles, ["review"]);
+
+    const written: unknown = JSON.parse(readFileSync(lockPath, "utf8"));
+    assert.ok(isRecord(written));
+    assert.deepEqual(written.plugins, seed.plugins);
+
+    const { settings, errors } = resolveSettings(readPluginSettingsMap({ global: lockPath, project: null }));
+    assert.deepEqual(errors, []);
+    assert.deepEqual(settings.roles.review.weights, review.weights);
   } finally {
     server.close();
   }

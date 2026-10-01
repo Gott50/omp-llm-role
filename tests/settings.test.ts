@@ -26,3 +26,18 @@ test("priceSwitchFraction defaults to 0.5 and validates its range", () => {
   assert.deepEqual(resolveSettings({ priceSwitchFraction: 0 }).errors, []);
   assert.deepEqual(resolveSettings({ priceSwitchFraction: 1 }).errors, []);
 });
+
+test("flat dotted keys and a nested roles object merge without clobbering", () => {
+  const review = { description: "Code review", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+  // The explorer writes a nested `roles` object; `omp plugin config set` writes
+  // flat dotted keys. Both must survive in either order.
+  for (const raw of [
+    { "roles.designer.enabled": true, roles: { review } },
+    { roles: { review }, "roles.designer.enabled": true },
+  ]) {
+    const { settings, errors } = resolveSettings(raw);
+    assert.deepEqual(errors, []);
+    assert.equal(settings.roles.designer?.enabled, true);
+    assert.deepEqual(settings.roles.review?.weights, review.weights);
+  }
+});

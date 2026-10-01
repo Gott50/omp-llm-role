@@ -138,6 +138,8 @@ const TIPS = {
   addMetric: "Add a metric at weight 0.05, then Normalize.",
   resetEffective: "Discard edits and restore the role's saved (effective) definition.",
   resetDefaults: "Restore the shipped default definition from src/settings.ts.",
+  newRole: "Create a new role from a template (general/code/price/throughput), then tune it and Export. The plugin ranks any role in its settings; an agent must pin @<role> to route to it.",
+  description: "One-line role description, shown in the report and the role tab tooltip.",
   dropInherited: "set to ~0 — the plugin deep-merges weights over the shipped defaults, so an inherited metric cannot be removed",
   dropAdded: "remove — this metric is not in the shipped default, so the key is deleted outright",
   exportBtn: "Write the edited roles into the plugin lock file (a .bak-<timestamp> sibling is written first); takes effect on the next /refresh-roles in any running session — the lock file is re-read from disk on every run.",
@@ -236,6 +238,29 @@ function renderRoles() {
       }),
     );
   }
+  nav.append(el("button", { class: "tab new", "data-tip": TIPS.newRole, text: "+ new role", onclick: onNewRole }));
+}
+
+/** Create a role from a template so it can be tuned and exported. The plugin
+ * ranks any role in its settings; the name must be a valid omp role alias. */
+function onNewRole() {
+  const name = (window.prompt("New role name ([A-Za-z0-9_-]+, not main/sub):") || "").trim();
+  if (!name) return;
+  if (!/^[A-Za-z0-9_-]+$/.test(name) || /^(main|sub)$/i.test(name)) {
+    alert("Invalid role name: " + name);
+    return;
+  }
+  if (state.defs[name]) {
+    alert("Role already exists: " + name);
+    return;
+  }
+  state.defs[name] = {
+    description: "",
+    weights: { general: 0.35, code: 0.2, price: 0.25, throughput: 0.2 },
+    required: ["general", "price", "throughput"],
+  };
+  state.exportMessage = "";
+  selectRole(name);
 }
 
 function selectRole(role) {
@@ -486,6 +511,14 @@ function renderEditor() {
   const def = state.defs[state.role];
   panel.append(el("h2", { text: "Edit @" + state.role }));
 
+  const desc = el("input", { type: "text", class: "desc", "data-tip": TIPS.description, value: def.description || "", placeholder: "one-line role description" });
+  desc.addEventListener("input", () => {
+    def.description = desc.value;
+    renderRoles();
+    renderExportState();
+  });
+  panel.append(el("div", { class: "row-controls" }, [desc]));
+
   panel.append(el("h3", { text: "Weights" }));
   const weights = el("table", { class: "weights" });
   const wbody = el("tbody");
@@ -571,7 +604,7 @@ function renderEditor() {
   panel.append(el("label", { class: "check" }, [imgCb, el("span", { "data-tip": TIPS.imageFilter, text: "requires image input (filters.image)" })]));
 
   panel.append(el("h3", { "data-tip": TIPS.thinking, text: "Thinking level" }));
-  const bareLocked = state.effective[state.role].thinking !== undefined;
+  const bareLocked = state.effective[state.role]?.thinking !== undefined;
   const levelSel = el("select", { id: "thinking", "data-tip": TIPS.thinking });
   levelSel.append(el("option", { value: "", text: "— (bare)", disabled: bareLocked ? "" : null, "data-tip": bareLocked ? TIPS.thinkingBare : null }));
   for (const level of state.levels) levelSel.append(el("option", { value: level, text: level }));
@@ -598,7 +631,9 @@ function renderEditor() {
   panel.append(
     el("div", { class: "row-controls" }, [
       el("button", { id: "reset-effective", "data-tip": TIPS.resetEffective, text: "Reset to effective", onclick: () => { state.defs[state.role] = structuredClone(state.effective[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } }),
-      el("button", { id: "reset-defaults", "data-tip": TIPS.resetDefaults, text: "Reset to shipped default", onclick: () => { state.defs[state.role] = structuredClone(state.defaults[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } }),
+      state.defaults[state.role]
+        ? el("button", { id: "reset-defaults", "data-tip": TIPS.resetDefaults, text: "Reset to shipped default", onclick: () => { state.defs[state.role] = structuredClone(state.defaults[state.role]); renderEditor(); renderRoles(); scheduleRecompute(); } })
+        : null,
     ]),
   );
 

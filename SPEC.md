@@ -28,7 +28,7 @@ These facts constrain the design; they were probed live, not assumed.
 | `omp models ls --json` is the selector universe | rows: `{provider, id, selector, name, contextWindow, maxTokens, reasoning, thinking[], input[], cost{}}` |
 | `modelRoles` values are `provider/modelId[:thinkingLevel]` | `omp://models.md`; levels `off|minimal|low|medium|high|xhigh|max|auto` |
 | `retry.fallbackChains` keys are selectors **without** thinking suffix | user's config.yml: role values carry `:off/:high/:max`, chain keys don't (values may — `omp://settings.md`: "selectors accept an optional thinking suffix") |
-| omp plugins load via package manifest; `omp plugin link <dir>` for dev | `omp://plugin-manager-installer-plumbing.md`; settings map in `omp-plugins.lock.json`, `omp plugin config <pkg> --set=k=v` |
+| omp plugins load via package manifest; `omp plugin link <dir>` for dev | `omp://plugin-manager-installer-plumbing.md`; settings map in `omp-plugins.lock.json`, `omp plugin config set <pkg> <key> <value>` (values stored as strings) |
 | Extensions run in-process under Bun; `ctx.modelRegistry`, `ctx.ui.notify`, `registerCommand` available; `ctx.setTimeout` for contained background work | `omp://extensions.md` |
 | config.yml hot-reloads (task/eval preflight re-reads settings); omp writes it under `config.yml.lock` | `omp://config-usage.md`, `omp://task-agent-discovery.md` |
 
@@ -47,7 +47,7 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 | 5 | Thinking suffixes | **Per-role `thinking` field** on the role def, shipped as defaults, overridable in settings |
 | 6 | Trigger | **session_start, UTC-day gated** (first omp session of the day refreshes; later sessions no-op) + manual `/refresh-roles` |
 | 7 | Switch policy | **Hysteresis**: switch only if current model ineligible or new best beats current score by `switchMargin` (default `0.02`; `0` = always take today's best). The margin is a flat band on `value`, so it can veto up to `switchMargin / λ` $/M of savings; a challenger inside the band that undercuts the incumbent's effective price by `priceSwitchFraction` (default `0.5`) is adopted anyway (2026-09-30, `switched-cost`) |
-| 8 | Settings home | **omp plugin settings** (`omp-plugins.lock.json` via `omp plugin config omp-llm-role --set=k=v`); plugin deep-merges dotted keys itself |
+| 8 | Settings home | **omp plugin settings** (`omp-plugins.lock.json` → `settings["omp-llm-role"]`); plugin deep-merges flat dotted keys and nested objects itself. `omp plugin config set` stores values as strings, so typed role defs are written by `create-role.ts` / the explorer's Export (both validate through `resolveSettings`) |
 | 9 | Variant pick | **Exact dated slug**: resolution order exact id → newest dated → bare → `-latest` alias (last resort); never `:batch`; `:free` only on free-tier keys |
 | 10 | Deliverable | **This spec**; implementation in a later session on owner go |
 | 11 | `retry.fallbackChains` | **Auto-populate** #2/#3 per managed role; prune stale keys the plugin wrote |
@@ -285,11 +285,14 @@ Maintenance rules:
 
 ## 7. Plugin settings schema
 
-Stored in the omp plugin settings map (`omp-plugins.lock.json` → `settings["omp-llm-role"]`),
-edited via `omp plugin config omp-llm-role --set=<key>=<value>`. The plugin receives the
-raw map and **deep-merges flat dotted keys itself** (`roles.slow.weights.code=0.2` nests
-correctly regardless of omp's value typing); a single `config=<json>` key is accepted as
-a power-user escape hatch for whole-object overrides.
+Stored in the omp plugin settings map (`omp-plugins.lock.json` → `settings["omp-llm-role"]`).
+The plugin receives the raw map and **deep-merges flat dotted keys and nested objects
+itself** (`roles.slow.weights.code=0.2` and `roles: { slow: {...} }` both nest, in either
+order); a single `config` key holding JSON is accepted as a power-user escape hatch for
+whole-object overrides. `omp plugin config set <pkg> <key> <value>` stores every value as
+a **string**, which the validator rejects for numbers/arrays/booleans, so typed role defs
+are written by `create-role.ts` or the explorer's Export (both go through
+`src/role-settings.ts`: validate → merge → backup → atomic write).
 
 ```jsonc
 // logical shape (defaults shown for knobs; role weights default to §6.2)
@@ -406,6 +409,9 @@ a concurrent second starter loses the lock and finds the day already stamped →
 - **Headless**: `node update-roles.ts [--dry-run] [--json]` — always runs (no day gate;
   explicit invocation is consent), `--dry-run` prints decisions without writing, `--json`
   emits the decisions payload for scripting.
+- **Role authoring**: `node create-role.ts --name <role> --weights m=w,...` writes a
+  validated role def into the settings lock file (backup + atomic write); the shipped
+  skill `omp-llm-role-create-agent` drives agent authoring + role creation + verification.
 
 ## 11. Verification plan (implementation gate)
 
@@ -431,6 +437,7 @@ a concurrent second starter loses the lock and finds the day already stamped →
 
 ## 12. Out of scope
 
-First-party provider selectors (decision #12), non-OpenRouter scoring sources, a UI for
-weight editing (`omp plugin config` is the surface), a `/rollback` command (state snapshot
-only), marketplace publishing (link/install is the path), and auto-tuning `switchMargin`.
+First-party provider selectors (decision #12), non-OpenRouter scoring sources, a
+`/rollback` command (state snapshot only), marketplace publishing (link/install is the
+path), and auto-tuning `switchMargin`. Weight editing is the explorer's Export or
+`create-role.ts` (both validate through `resolveSettings`).

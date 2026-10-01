@@ -4,6 +4,10 @@ How to author custom omp subagents the way omp's own bundled agents are written 
 
 Verified against omp **18.4.4** ([can1357/oh-my-pi](https://github.com/can1357/oh-my-pi/tree/v18.4.4)). Source links in §5 and §10 point at that exact tag on GitHub.
 
+> Wiring an agent to a ranked model role (weights, plugin settings, explorer
+> tuning) is the `omp-llm-role-create-agent` skill shipped by the omp-llm-role
+> plugin; this guide covers the `.md` contract only.
+
 ## 1. What an agent file is
 
 One markdown file = one subagent definition:

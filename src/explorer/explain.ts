@@ -9,8 +9,7 @@
  */
 
 import { cardinalMetric, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
-import { isRecord } from "../guards.ts";
-import { KNOWN_METRICS, deepMergeInto, resolveSettings } from "../settings.ts";
+import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
 // Metric metadata (the UI's picklists and formula legends)
@@ -273,26 +272,8 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
 }
 
 // ---------------------------------------------------------------------------
-// Validation + export merge
+// Metric universe
 // ---------------------------------------------------------------------------
-
-/** Validate one role def through the plugin's own validator (resolveSettings
- * clones its input, so this is safe per call). Errors are returned verbatim. */
-export function validateRole(name: string, def: RoleDef): string[] {
-  return resolveSettings({ roles: { [name]: def } }).errors;
-}
-
-/** Merge dirty role defs into a parsed lock file, preserving `plugins` and every
- * sibling settings key. Returns the new lock object or a refusal. */
-export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): { lock: object } | { error: string } {
-  if (!isRecord(existing)) return { error: "lock file root is not an object" };
-  const lock = structuredClone(existing);
-  if (!isRecord(lock.settings)) lock.settings = {};
-  const settings = lock.settings as Record<string, unknown>;
-  if (!isRecord(settings["omp-llm-role"])) settings["omp-llm-role"] = {};
-  deepMergeInto(settings["omp-llm-role"] as Record<string, unknown>, { roles: dirty });
-  return { lock };
-}
 
 /** The metric universe the UI may weight (exactly what the validator accepts). */
 export const WEIGHTABLE_METRICS: string[] = Object.keys(KNOWN_METRICS);

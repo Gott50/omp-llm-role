@@ -73,6 +73,9 @@ body {
   border-radius: 50%;
   background: var(--warn);
 }
+.tab.new { color: var(--muted); border-style: dashed; }
+.tab.new:hover { color: var(--accent); }
+input.desc { flex: 1; min-width: 0; }
 
 main {
   display: grid;

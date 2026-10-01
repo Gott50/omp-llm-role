@@ -181,7 +181,10 @@ export function deepMergeInto(target: Record<string, unknown>, patch: Record<str
   }
 }
 
-/** Set `value` at a dotted path, creating intermediate plain objects. */
+/** Set `value` at a dotted path, creating intermediate plain objects. A record
+ * value deep-merges into an existing record leaf instead of replacing it, so a
+ * flat dotted key (`roles.review.weights.general`) and a nested object
+ * (`roles: { review: {...} }`) in the same settings map both survive. */
 function setNested(target: Record<string, unknown>, path: string[], value: unknown): void {
   let node = target;
   for (let i = 0; i < path.length - 1; i++) {
@@ -190,7 +193,9 @@ function setNested(target: Record<string, unknown>, path: string[], value: unkno
     if (!isRecord(node[k])) node[k] = {};
     node = node[k] as Record<string, unknown>;
   }
-  node[path[path.length - 1]] = value;
+  const leaf = path[path.length - 1];
+  if (isRecord(value) && isRecord(node[leaf])) deepMergeInto(node[leaf] as Record<string, unknown>, value);
+  else node[leaf] = value;
 }
 
 /** Nearest ancestor dir (or cwd itself) containing a `.omp` or `.git` anchor; null when none. */

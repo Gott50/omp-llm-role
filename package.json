@@ -22,13 +22,17 @@
     "src",
     "web",
     "agents",
+    "skills",
     "llm-role-rank.ts",
     "update-roles.ts",
     "explore.ts",
-    "SPEC.md"
+    "create-role.ts",
+    "SPEC.md",
+    "agents-guide.md"
   ],
   "scripts": {
-    "explore": "node explore.ts"
+    "explore": "node explore.ts",
+    "create-role": "node create-role.ts"
   },
   "omp": {
     "extensions": ["./src/extension.ts"]
