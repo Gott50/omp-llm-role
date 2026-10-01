@@ -28,4 +28,17 @@ After your work is done — every time, no exceptions:
 - `llm-stats-fetched-rankings.json`, `openrouter-fetched-data.json`,
   `openrouter-endpoints-fetched-data.json` and `designarena-fetched-data.json`
   (daily caches, gitignored — regenerated on every run).
-- `.DS_Store`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`Gott50/omp-llm-role`), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
