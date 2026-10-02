@@ -113,8 +113,13 @@ effect on the next session.
   description, and `systemPrompt` as the body. `parseCreateAgentInput` accepts
   either the flag form (`--name … --purpose …`) or a plain-language request
   (`/create-agent i want an agent for writing`); the free-text form folds any
-  benchmark the request names into the weights (`extractBenchmarks`) and still
-  honours trailing flags (`--dry-run`, `--force`, `--scope`, `--lock`).
+  benchmark the request names into the weights (`extractBenchmarks`), resolves
+  any benchmark link it points at (`extractBenchmarkLinks` → the registry, or
+  the authoring step for an unknown provider), and still honours trailing flags
+  (`--dry-run`, `--force`, `--scope`, `--lock`, `--yes`). The resolved benchmark
+  labels are given to the architect (and, on the template path, listed in the
+  body's `<criteria>`), so the agent's rubric names the benchmark its model was
+  chosen on.
 - **The shipped skill** — the hand-driven workflow, for bodies that need real
   authoring rather than the archetype scaffold.
 

@@ -110,6 +110,42 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   suggested `modelRoles` block switches from `PROVIDER_BY_ORG` first-party guesses to the
   same catalog-resolved `openrouter/*` selectors the plugin emits (`PROVIDER_BY_ORG`
   retires from that path).
+- `src/benchmark-sources.ts` is the benchmark-source registry: the single source of
+  truth for which sources exist, what metric each feeds, and how to fetch/parse/join
+  each. `BENCHMARK_SOURCES` documents the shipped static sources (the llm-stats index
+  leaderboard, the writing evidence export, Design Arena, the six raw llm-stats
+  benchmarks); `resolveBenchmarkSource(link)` maps a link to a source (a static
+  pattern, then the generic llm-stats benchmark for `llm-stats.com/benchmarks/<id>` or
+  a bare id); `sourceForMetric(metric)` maps a metric back; `loadBenchmarkScores` is
+  the shared cache chain and `applyBenchmarkScores` the shared join. The writing
+  branch moves behind the registry entry (its cache, gating and non-fatal failure
+  preserved). A new source is one registry entry (or one declaration), not a new
+  branch in the engine.
+- **External metrics** are namespaced `<namespace>:<local>` and MUST be dot-free: the
+  flat dotted settings path splits on `.` (`setNested(patchObj, key.split("."), value)`),
+  so a dotted key mis-nests on read-back. `isKnownMetric` (`src/settings.ts`) is the
+  pure name check (`name in KNOWN_METRICS || /^[a-z0-9_-]+:[a-z0-9_-]+$/`); the registry
+  is the engine-side resolver, and `settings.ts` never imports it (no cycle). The
+  generic llm-stats benchmark's metric is `bench:<normalized-id>` while the source
+  retains the raw id for the fetch URL, so the source is persisted as a declaration.
+- **Declarative sources are data, not code**: a user-level `benchmark-sources.json`
+  under the agent dir declares `{ id, label, metric, urlPatterns, fetch, payloadPath,
+  idField, scoreField, scoreMax, join, fill }`; the plugin executes it
+  deterministically (fetch, walk, read, normalize `score / scoreMax`, join, apply).
+  A declaration whose metric is not `<namespace>:<local>` is rejected. Adding a
+  provider never executes untrusted code.
+- **`/create-agent` resolves benchmark links**: `extractBenchmarkLinks` pulls URLs from
+  the free text; the extension resolves each (a saved declaration, then the registry,
+  then the authoring step), warms the cache, reports coverage/leader, and folds the
+  resolved metric names into `extraBenchmarks`. An unknown link goes through the
+  authoring step (`src/benchmark-author.ts`: fetch the link, run an in-process
+  architect, validate, dry-run the coverage/leader, confirm via `ctx.ui.select` or
+  `--yes`, save the declaration). A link that cannot be resolved or authored fails
+  with a clear message — never a silent fallback to generic weights.
+- **The focus-share fit** (`applyFocusBenchmarks`) replaces the mean-weight fold: a
+  named benchmark takes `clamp(specialistShare, 0.25, 0.40)` of the non-price budget
+  (split across the named set), the archetype's remaining non-price weights are
+  rescaled to fill `1 − w_price − focusShare`, and both invariants hold exactly.
 - Verification after any engine change (existing convention): `node src/cli/llm-role-rank.ts --top 5`,
   check stderr `openrouter: matched N/<pool> models (throughput), M priced` plus the
   `openrouter endpoints: K/L model pages` line, and per-role eligible counts.
@@ -480,8 +516,13 @@ session start so enabling/disabling a role takes effect on the next session.
   **`/create-agent --name <n> --purpose "<text>" [flags]`**: creates the agent
   **and** its role in one command. The free-text form takes the text up to the
   first `--flag` as the purpose, folds any benchmark it names into the weights
-  (`extractBenchmarks`), and uses the architect's `identifier` as the name;
-  trailing flags still apply. Runs **omp's agent-creation architect**
+  (`extractBenchmarks`), records any benchmark link it points at
+  (`extractBenchmarkLinks`), and uses the architect's `identifier` as the name;
+  trailing flags still apply. Each link is resolved (a saved declaration, then
+  the registry, then the authoring step) and its metric folded into the weights
+  as a decisive focus share; an unknown link is authored into a source
+  declaration after a dry-run coverage/leader report and a confirmation
+  (`--yes` covers headless runs). Runs **omp's agent-creation architect**
   in-process (`src/agent-architect.ts`: the `/agents` hub's prompt shipped verbatim
   in `src/prompts/`, run through `createAgentSession` with no tools) to author the
   routing rule and the body, then adds the `model: "@<n>, @default"` and `tools:`
@@ -535,14 +576,25 @@ session start so enabling/disabling a role takes effect on the next session.
 8. **Agent creation** — `create-agent` fixtures: a purpose fits the expected archetype;
    a `--weights` set violating Σ(non-price) = 1 − w_price is refused; an existing agent
    file without `--force` is refused **and writes no role**; `--dry-run` writes neither
-   file; an architect `spec` replaces the description/body; `applyExtraBenchmarks` adds
-   new metrics, skips duplicates/unknown, and keeps both invariants. Live:
-   `/create-agent` in a session (RPC mode dispatches slash commands) → the architect
-   authors the body, the updater line `@<n>: (unset) -> <selector>` + `modelRoles.<n>`
-   land in `config.yml`, then a headless spawn whose record reads
-   `{"agent":"<n>","agentSource":"user","modelRole":"<n>"}` with `resolvedModel` equal
-   to the role's selector.
-9. **Agent removal** — `remove-agent` fixtures: the role's lock-file keys and the agent
+   file; an architect `spec` replaces the description/body; `applyFocusBenchmarks` gives
+   a named benchmark a decisive share, is a no-op for the archetype's own specialist set,
+   and keeps both invariants. Live: `/create-agent` in a session (RPC mode dispatches
+   slash commands) → the architect authors the body, the updater line
+   `@<n>: (unset) -> <selector>` + `modelRoles.<n>` land in `config.yml`, then a headless
+   spawn whose record reads `{"agent":"<n>","agentSource":"user","modelRole":"<n>"}` with
+   `resolvedModel` equal to the role's selector.
+9. **Benchmark sources** — `benchmark-sources` fixtures: `resolveBenchmarkSource` maps an
+   llm-stats benchmark page, a bare benchmark id, the writing leaderboard and a Design
+   Arena link, and returns `null` for an unknown host; `normalizeMetricKey` is dot-free;
+   `parseBenchmarkPayload` reads the llm-stats `entries[]` and writing evidence shapes and
+   rejects junk; `applyBenchmarkScores` fills uncovered models; `loadBenchmarkScores`
+   follows fresh → live → stale with a temp cache dir and an injected fetch; a declaration
+   executes (payload path, id/score fields, `scoreMax`, join) and a metric colliding with a
+   shipped key is rejected; `dryRunDeclaration` reports coverage/leader and rejects a
+   zero-join; `extractBenchmarkLinks` pulls URLs from prose. Live: a role weighting
+   `bench:<id>` fetches the source and ranks on it; the explorer's `/api/bootstrap` lists
+   the external metric with its derived metadata.
+10. **Agent removal** — `remove-agent` fixtures: the role's lock-file keys and the agent
    file are deleted (backup written); a shipped default role, a reserved name and an
    invalid name are refused; nothing-to-remove errors; `--dry-run` writes nothing; the
    updater drops `modelRoles.<n>` and the plugin-managed `task.disabledAgents` entry
@@ -556,3 +608,10 @@ First-party provider selectors (decision #12), non-OpenRouter scoring sources, a
 path), and auto-tuning `switchMargin`. Weight editing is the explorer's Export,
 `src/cli/create-role.ts` or `/create-agent` (all validate through `resolveSettings`);
 role/agent removal is `/remove-agent` (through `removeRoleSettings`).
+
+Benchmark sources: a generic scraper that auto-detects a payload with no user review
+(the declarative spec + authoring step is the mechanism), a UI for browsing/editing
+sources (the source file is edited by hand or by the authoring step; the explorer's
+role editor gains the external metrics already in use), changing the cardinal
+transform classes (external metrics are normalized to 0–1 at parse time), and
+re-ranking or re-fetching beyond the existing daily UTC cache chain.

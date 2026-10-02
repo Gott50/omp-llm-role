@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { applyExtraBenchmarks, createAgent, extractBenchmarks, formatBenchmarks, parseCreateAgentInput, type CreateAgentRequest } from "../src/agent-create.ts";
+import { applyFocusBenchmarks, createAgent, extractBenchmarkLinks, extractBenchmarks, formatBenchmarks, parseCreateAgentInput, type CreateAgentRequest } from "../src/agent-create.ts";
 import { isRecord } from "../src/guards.ts";
 import { fitArchetype } from "../src/role-archetypes.ts";
 import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
@@ -129,13 +129,27 @@ test("createAgent uses omp's architect spec for the description and body", () =>
   assert.equal(fm.tools, "read, grep, glob, find, write, edit");
 });
 
-test("applyExtraBenchmarks adds new metrics, skips duplicates/unknown, and keeps the invariants", () => {
+test("the template body names the benchmarks the role was ranked on", () => {
+  const { lockPath, agentsDir } = workspace();
+  const result = createAgent(request(lockPath, { benchmarkLabels: ["WritingBench (writing leaderboard)"] }));
+  assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+  const text = readFileSync(join(agentsDir, "changelog.md"), "utf8");
+  assert.match(text, /chosen on WritingBench \(writing leaderboard\)/);
+});
+
+test("applyFocusBenchmarks gives a named benchmark a decisive share and keeps the invariants", () => {
   const base = { general: 0.4, code: 0.2, price: 0.2, throughput: 0.2 };
 
-  const applied = applyExtraBenchmarks(base, ["writing", "code", "nope"]);
+  const applied = applyFocusBenchmarks(base, ["writing", "code", "nope"]);
   assert.deepEqual(applied.added, ["writing"]);
   assert.deepEqual(applied.duplicates, ["code"]);
   assert.deepEqual(applied.unknown, ["nope"]);
+
+  // The archetype's specialist share is 0.2 (code), so the focus budget floors at
+  // 0.25 and is split across the two focus metrics.
+  assert.equal(applied.weights.writing, 0.125);
+  assert.equal(applied.weights.code, 0.125);
+  assert.equal(applied.weights.price, 0.2);
 
   const sum = Object.values(applied.weights).reduce((total, weight) => total + weight, 0);
   assert.ok(Math.abs(sum - 1) < 1e-9, `weights sum to ${sum}`);
@@ -143,7 +157,6 @@ test("applyExtraBenchmarks adds new metrics, skips duplicates/unknown, and keeps
     .filter(([metric]) => metric !== "price")
     .reduce((total, [, weight]) => total + weight, 0);
   assert.ok(Math.abs(nonPrice - (1 - applied.weights.price)) < 1e-9, `non-price sum ${nonPrice}`);
-  assert.ok(applied.weights.writing > 0);
   // Rescaled weights are rounded to 4 decimals so the written role def stays readable.
   for (const [metric, weight] of Object.entries(applied.weights)) {
     assert.equal(weight, Math.round(weight * 1e4) / 1e4, `${metric} is not 4-decimal: ${weight}`);
@@ -156,7 +169,28 @@ test("applyExtraBenchmarks adds new metrics, skips duplicates/unknown, and keeps
   assert.deepEqual(errors, []);
 
   // An empty list is a no-op.
-  assert.deepEqual(applyExtraBenchmarks(base, []).weights, base);
+  assert.deepEqual(applyFocusBenchmarks(base, []).weights, base);
+});
+
+test("applyFocusBenchmarks is a no-op when the named set is the archetype's own specialists", () => {
+  // The archetype's only specialist is `writing` at 0.3, inside the focus band, so
+  // the focus share equals its archetype share and nothing moves.
+  const base = { general: 0.4, writing: 0.3, throughput: 0.1, price: 0.2 };
+  const applied = applyFocusBenchmarks(base, ["writing"]);
+  assert.deepEqual(applied.weights, base);
+  assert.deepEqual(applied.duplicates, ["writing"]);
+  assert.deepEqual(applied.added, []);
+});
+
+test("applyFocusBenchmarks accepts an external metric key", () => {
+  const base = { general: 0.4, code: 0.2, price: 0.2, throughput: 0.2 };
+  const applied = applyFocusBenchmarks(base, ["bench:alpacaeval-2_0"]);
+  assert.deepEqual(applied.added, ["bench:alpacaeval-2_0"]);
+  assert.equal(applied.weights["bench:alpacaeval-2_0"], 0.25);
+  const { errors } = resolveSettings({
+    roles: { x: { weights: applied.weights, required: ["general", "price", "throughput"] } },
+  });
+  assert.deepEqual(errors, []);
 });
 
 test("the raw llm-stats benchmarks are weightable", () => {
@@ -175,6 +209,21 @@ test("formatBenchmarks lists every weightable metric and marks the role's own", 
     assert.match(text, new RegExp(`\\b${metric}\\b`), `missing ${metric}`);
   }
   assert.match(text, /general\s+General index\s+<- in this role's weights/);
+
+  // An external metric in use is listed too, with its registry label.
+  const withExternal = formatBenchmarks(undefined, ["bench:alpacaeval-2_0"]);
+  assert.match(withExternal, /bench:alpacaeval-2_0/);
+});
+
+test("extractBenchmarkLinks pulls URLs out of prose, deduped and punctuation-stripped", () => {
+  assert.deepEqual(extractBenchmarkLinks("no links here"), []);
+  assert.deepEqual(extractBenchmarkLinks("see https://llm-stats.com/benchmarks/alpacaeval-2.0."), [
+    "https://llm-stats.com/benchmarks/alpacaeval-2.0",
+  ]);
+  assert.deepEqual(
+    extractBenchmarkLinks("a https://x.example/one and b https://x.example/one and c https://y.example/two"),
+    ["https://x.example/one", "https://y.example/two"],
+  );
 });
 
 test("parseCreateAgentInput treats a non-flag string as a free-text request", () => {
@@ -186,6 +235,7 @@ test("parseCreateAgentInput treats a non-flag string as a free-text request", ()
   assert.equal(parsed.request.purpose, raw);
   assert.equal(parsed.request.name, "");
   assert.deepEqual(parsed.request.extraBenchmarks, ["writing"]);
+  assert.deepEqual(parsed.request.benchmarkLinks, ["https://llm-stats.com/leaderboards/best-ai-for-writing"]);
 
   // The flag form is unchanged.
   const flags = parseCreateAgentInput('--name writer --purpose "write prose"');

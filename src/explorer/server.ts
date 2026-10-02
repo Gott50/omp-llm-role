@@ -17,11 +17,12 @@
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
+import { loadDeclaredSources } from "../benchmark-sources.ts";
 import { SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
 import { KNOWN_METRICS, type UniverseEntry } from "../settings.ts";
-import { METRIC_META, explainModel, rankRows } from "./explain.ts";
+import { explainModel, metricMetaFor, rankRows, weightableMetrics } from "./explain.ts";
 
 export type ExplorerOpts = {
   webDir: string;
@@ -125,12 +126,19 @@ function thinkingFactors(): Record<string, number> {
 
 function bootstrapPayload(opts: ExplorerOpts): object {
   const state = opts.getState();
+  // The metric universe the UI may weight: the shipped keys plus any external
+  // metric a resolved role weights, with a derived metadata entry for each.
+  const external = new Set<string>();
+  for (const def of Object.values(state.roles)) {
+    for (const metric of Object.keys(def.weights)) if (!(metric in KNOWN_METRICS)) external.add(metric);
+  }
+  const metrics = weightableMetrics([...external]);
   return {
     roles: state.roles,
     defaults: state.defaults,
     universe: state.universe,
-    metrics: Object.keys(KNOWN_METRICS),
-    metricMeta: METRIC_META,
+    metrics,
+    metricMeta: metricMetaFor(metrics, loadDeclaredSources()),
     levels: Object.keys(SUFFIX_LEVELS),
     thinkingFactors: thinkingFactors(),
     fetchedAt: state.rank.fetchedAt,

@@ -56,6 +56,15 @@ const METRIC_ABBR: Record<string, string> = {
   throughput: "tput",
 };
 
+/** Column header for a metric: the shipped abbreviation, or the local part of an
+ * external key (`bench:alpacaeval-2_0` -> `alpacaeval`). */
+function metricAbbr(metric: string): string {
+  const known = METRIC_ABBR[metric];
+  if (known !== undefined) return known;
+  const local = metric.includes(":") ? metric.slice(metric.indexOf(":") + 1) : metric;
+  return local.slice(0, 10);
+}
+
 function formatRankings(
   rankings: Record<string, Ranked[]>,
   roles: Record<string, RoleDef>,
@@ -139,7 +148,7 @@ function formatRankings(
         "$/M",
         "tok/s",
         "ctx",
-        ...metricKeys.map((k) => `${METRIC_ABBR[k]} ${Number(((def.weights[k] / qW) * 100).toFixed(1))}%`),
+        ...metricKeys.map((k) => `${metricAbbr(k)} ${Number(((def.weights[k] / qW) * 100).toFixed(1))}%`),
         ...(weightsWebsite ? ["agon"] : []),
       ],
     ];

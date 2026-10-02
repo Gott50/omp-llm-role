@@ -8,6 +8,7 @@
  * src/engine.ts so the numbers on screen are exactly the plugin's numbers.
  */
 
+import { sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
 import { CAPABILITY_FILL, cardinalMetric, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
@@ -50,6 +51,33 @@ export const METRIC_META: Record<string, MetricMeta> = {
   price: { label: "Price", kind: "price", unit: "$/M", formula: "billed blend 3:1 in:out, ×(3ρ+1+T)/(3ρ+1) at the role's thinking level", anchors: "OpenRouter standard route" },
   throughput: { label: "Throughput", kind: "throughput", unit: "tok/s", formula: "ln(v/10)/ln(30)", anchors: "10 tok/s→0, 300 tok/s→1, clamped" },
 };
+
+/**
+ * Metadata for one metric: the shipped table, or a derived entry for an external
+ * benchmark (identity transform, label from the registry's source). The derived
+ * entry keeps the explorer's picklists and formula legends registry-driven, so a
+ * new metric renders without a second hand-maintained table.
+ */
+export function metricMeta(metric: string, declared: readonly SourceDeclaration[] = []): MetricMeta {
+  const known = METRIC_META[metric];
+  if (known) return known;
+  const source = sourceForMetric(metric, declared);
+  return {
+    label: source?.label ?? metric,
+    kind: "percentile",
+    unit: "score 0-1",
+    formula: "identity (already 0-1)",
+    anchors: `external benchmark (${metric}); models outside the source get the capability fill ${source?.fill ?? 0}`,
+  };
+}
+
+/** The metadata table for a metric universe: the shipped entries plus a derived
+ * entry for every external metric in `metrics`. */
+export function metricMetaFor(metrics: readonly string[], declared: readonly SourceDeclaration[] = []): Record<string, MetricMeta> {
+  const out: Record<string, MetricMeta> = { ...METRIC_META };
+  for (const metric of metrics) if (!(metric in out)) out[metric] = metricMeta(metric, declared);
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Rank rows (table data with baseline deltas)
@@ -293,5 +321,9 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
 // Metric universe
 // ---------------------------------------------------------------------------
 
-/** The metric universe the UI may weight (exactly what the validator accepts). */
-export const WEIGHTABLE_METRICS: string[] = Object.keys(KNOWN_METRICS);
+/** The metric universe the UI may weight: the shipped keys plus any external
+ * metric present in the resolved roles' weights (exactly what the validator
+ * accepts). */
+export function weightableMetrics(extra: readonly string[] = []): string[] {
+  return [...Object.keys(KNOWN_METRICS), ...extra.filter((metric) => !(metric in KNOWN_METRICS))];
+}

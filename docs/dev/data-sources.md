@@ -167,6 +167,78 @@ counts; a snapshot of unknown sample age.
   all Qwen, all `self_reported`/`verified: false`), so `writing` is a sparse
   capability metric, never a `required` gate.
 
+## The benchmark-source registry (`src/benchmark-sources.ts`)
+
+The single source of truth for "which benchmark sources exist, what metric each
+feeds, and how to fetch, parse and join each". `BENCHMARK_SOURCES` lists the
+shipped static sources — the llm-stats index leaderboard, the writing evidence
+export, Design Arena, and the six raw llm-stats benchmark pass rates — each
+mapping to a `KNOWN_METRICS` key. A source whose data the engine already fetches
+(the index, Design Arena, the raw benchmarks) carries no `fetch`.
+
+- `resolveBenchmarkSource(link)` — pure: match a link against the static
+  patterns (scheme/`www.`/query/trailing slash stripped; `*` is a wildcard), then
+  fall back to the generic llm-stats benchmark for `llm-stats.com/benchmarks/<id>`
+  or a bare benchmark id. `null` for an unknown host.
+- `sourceForMetric(metric, declared)` — metric → source, for the engine's gating.
+- `parseBenchmarkPayload(source, payload)` — pure: the source's parser.
+- `loadBenchmarkScores(source, refresh)` — the shared cache → fetch → stale-cache
+  chain (below).
+- `applyBenchmarkScores(models, source, scores)` — join + set
+  `metrics[source.metric]`, capability-filling uncovered models at `source.fill`
+  (and mirroring the raw score into `source.rawField`, e.g. `writingBench`).
+
+### The generic llm-stats benchmark
+
+`GET https://api.zeroeval.com/leaderboard/benchmarks/<id>` returns
+`{ benchmark_id, benchmark_name, max_score, entries[] }`; each entry carries
+`model_id` (the bare llm-stats id, so the join is **direct**) and
+`normalized_score` (0-1). Any `llm-stats.com/benchmarks/<id>` link (or a bare
+benchmark id) resolves to a source whose metric is `bench:<normalized-id>`, cache
+file `bench-<normalized-id>-fetched-data.json`, transform `identity`, and a
+capability fill of 0.195. The raw id is preserved for the fetch URL (the real id
+`alpacaeval-2.0` normalizes to the metric `bench:alpacaeval-2_0`), so the source
+is persisted as a declaration (below) — the metric key alone cannot reconstruct
+the raw id.
+
+### Declarative sources (data, not code)
+
+A user-level file `benchmark-sources.json` under the agent dir (`agentDir()`)
+declares a provider the plugin has never seen:
+
+```json
+{
+  "sources": [
+    {
+      "id": "my-provider",
+      "label": "My Provider Writing Board",
+      "metric": "my-provider:writing",
+      "urlPatterns": ["myprovider.example/leaderboard/*"],
+      "fetch": { "url": "https://myprovider.example/api/leaderboard", "method": "GET" },
+      "payloadPath": "data.entries",
+      "idField": "model_id",
+      "scoreField": "score",
+      "scoreMax": 100,
+      "join": "direct",
+      "fill": 0.195
+    }
+  ]
+}
+```
+
+The plugin executes the declaration deterministically: fetch `fetch.url`, walk
+`payloadPath`, read `idField`/`scoreField`, normalize `score / scoreMax` to 0-1
+(clamped), join via `join`, apply with `fill`. No code execution. A declaration
+whose `metric` is not `<namespace>:<local>` (dot-free) is rejected — a shipped
+`KNOWN_METRICS` key is colon-free, so the external form can never collide with
+one. The declaration's cache file is `<id>-fetched-data.json`.
+
+`/create-agent` writes this file: a link the registry cannot resolve goes through
+the authoring step (`src/benchmark-author.ts`: fetch the link, run an in-process
+architect, validate, dry-run the coverage/leader, confirm), and a link that
+resolves to the generic llm-stats benchmark persists its declaration so the
+updater can re-fetch it from the metric key alone.
+
 ## Joins to the llm-stats id
 
 | Source | Join key | Rule |
@@ -175,15 +247,18 @@ counts; a snapshot of unknown sample age.
 | Design Arena (OR mirror) | permaslug → slug → bare id | `extractDesignElo` |
 | Design Arena (endpoint) | normalized id | `normalizeDesignId` both sides; first row wins on collision |
 | Writing leaderboard | direct | `records[].modelId` is the bare llm-stats id |
+| Generic llm-stats benchmark | direct | `entries[].model_id` is the bare llm-stats id |
+| Declared source | `join` | `direct`, `slug-suffix` (`org/model` → `model`) or `normalized` |
 
 ## Daily UTC caches
 
-All five caches resolve against the repo's **`cache/` dir** (`CACHE_DIR` in
-`src/engine.ts`), never the process cwd — the plugin runs with arbitrary cwd
-inside omp. Each is fresh while its `fetchedAt` is the current UTC day, and each
-follows the same chain: **fresh cache → live fetch (writes cache) → stale cache →
-no enrichment**. An empty/unusable payload is never cached, so the next run
-retries. The writers `mkdirSync` the dir, so a fresh checkout needs no setup.
+All caches resolve against the repo's **`cache/` dir** (`CACHE_DIR` in
+`src/engine.ts` and `src/benchmark-sources.ts`), never the process cwd — the
+plugin runs with arbitrary cwd inside omp. Each is fresh while its `fetchedAt` is
+the current UTC day, and each follows the same chain: **fresh cache → live fetch
+(writes cache) → stale cache → no enrichment**. An empty/unusable payload is
+never cached, so the next run retries. The writers `mkdirSync` the dir, so a
+fresh checkout needs no setup.
 
 | Cache file | Shape | Failure mode |
 |---|---|---|
@@ -192,6 +267,11 @@ retries. The writers `mkdirSync` the dir, so a fresh checkout needs no setup.
 | `cache/openrouter-endpoints-fetched-data.json` | `{ fetchedAt, source, slugCount, slugs }` | non-fatal (single-route fallback) |
 | `cache/designarena-fetched-data.json` | `{ fetchedAt, source, categories }` | non-fatal (OR mirror alone) |
 | `cache/writing-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (`writing` unfilled) |
+| `cache/bench-<id>-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (the external metric is unfilled) |
+| `cache/<declared-id>-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (the external metric is unfilled) |
+
+The last two are the registry's generic scores cache (`loadBenchmarkScores`),
+shared by the generic llm-stats benchmark and every declared source.
 
 `cache/` is gitignored (`.gitignore`). `--refresh` bypasses the fresh-cache
 check; the explorer's `POST /api/refresh` does the same.

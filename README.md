@@ -174,11 +174,19 @@ node --test tests/
 ## Add a specialist agent
 
 One command does all of it. Describe the agent in plain language — the architect
-names it and any benchmark you mention is folded into the weights:
+names it, any benchmark you mention is folded into the weights, and any
+benchmark link you point at is resolved:
 
 ```sh
 /create-agent i want an agent for writing. use the writing related Benchmarks in the Leaderboard https://llm-stats.com/leaderboards/best-ai-for-writing
 ```
+
+A link to any llm-stats benchmark page (`llm-stats.com/benchmarks/<id>`) resolves
+to that benchmark; a link to a provider the plugin has never seen is authored
+into a source declaration — the plugin fetches it, proposes a declaration, shows
+the coverage and leader, and asks you to confirm before it is saved. A named
+benchmark takes a decisive share of the weights, so it actually drives the
+ranking.
 
 The flag form is equivalent and gives you the name explicitly:
 
@@ -193,9 +201,10 @@ validated role into the settings lock file, and runs the updater in-process so
 `modelRoles.review` lands in `config.yml` — nothing to remember. Options:
 `--archetype <id>`, `--weights m=w,...`, `--required`, `--thinking`, `--tools`,
 `--benchmarks m,...` (extra metrics to fold in; `--list-benchmarks` prints the
-weightable set), `--scope user|project`, `--body`/`--body-file`, `--force`
-(overwrite an existing agent file), `--dry-run`, `--json`. In the free-text form
-the flags still apply after the request, e.g.
+weightable set, including any external benchmark in use), `--scope user|project`,
+`--body`/`--body-file`, `--force` (overwrite an existing agent file), `--yes`
+(accept a proposed benchmark source without prompting), `--dry-run`, `--json`. In
+the free-text form the flags still apply after the request, e.g.
 `/create-agent i want an agent for writing --dry-run`. There is no
 out-of-session CLI for this path — run `/create-agent` in an omp session.
 

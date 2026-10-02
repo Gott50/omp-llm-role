@@ -169,6 +169,18 @@ export const KNOWN_METRICS: Record<string, true> = {
 };
 
 /**
+ * True when `name` is a weightable metric: a shipped `KNOWN_METRICS` key, or an
+ * external benchmark key (`<namespace>:<local>`, both dot-free). The external
+ * form is dot-free by construction — the flat dotted settings path splits on `.`
+ * (`setNested(patchObj, key.split("."), value)`), so a dotted key mis-nests on
+ * read-back. This is a pure name check (no registry import), so `settings.ts`
+ * stays free of the engine-side registry and no import cycle forms.
+ */
+export function isKnownMetric(name: string): boolean {
+  return name in KNOWN_METRICS || /^[a-z0-9_-]+:[a-z0-9_-]+$/.test(name);
+}
+
+/**
  * Live-session coupling (SPEC §6 session-start semantics): after the day-gated
  * session-start write, a freshly started session whose conversation is still
  * empty had its active model resolved from the pre-write config. Reapply the
@@ -466,7 +478,7 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
     }
     let sum = 0;
     for (const [metric, w] of Object.entries(rdef.weights)) {
-      if (!(metric in KNOWN_METRICS)) errors.push(`role ${name}: unknown metric "${metric}"`);
+      if (!isKnownMetric(metric)) errors.push(`role ${name}: unknown metric "${metric}"`);
       if (typeof w !== "number" || !Number.isFinite(w) || w <= 0) errors.push(`role ${name}: weight ${metric} must be a number > 0`);
       else sum += w;
     }
@@ -492,7 +504,7 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
       // `required` is the eligibility gate (metric must be non-null to rank), not a
       // weight — the shipped defaults require `throughput` without weighting it, so
       // membership in the known-metric set is the check, not presence in `weights`.
-      if (!(k in KNOWN_METRICS)) errors.push(`role ${name}: required "${k}" is not a known metric`);
+      if (!isKnownMetric(k)) errors.push(`role ${name}: required "${k}" is not a known metric`);
     }
     if (rdef.filters !== undefined) {
       if (!isRecord(rdef.filters)) errors.push(`role ${name}: filters must be an object`);

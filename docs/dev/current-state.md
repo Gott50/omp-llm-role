@@ -1,11 +1,27 @@
-# Current state (2026-10-01)
+# Current state (2026-10-02)
 
 Dated snapshot of the ranking as of the date in the heading — matched/priced/
 eligible counts, per-role leaders, and the open defects. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The numbers below
-are the 2026-10-01 measurement and are not re-derived on read.
+are the 2026-10-02 measurement and are not re-derived on read.
+
+- Benchmark-source registry (2026-10-02): `/create-agent` now resolves a
+  benchmark link to a metric and ranks the new role on it. A link to any
+  llm-stats benchmark page (`llm-stats.com/benchmarks/<id>`) resolves to that
+  benchmark; a link to the writing leaderboard resolves to the existing
+  `writing` metric; a link to a provider the plugin has never seen is authored
+  into a declarative source spec (fetch → in-process architect → dry-run
+  coverage/leader → confirm → save). External metrics are namespaced
+  `<namespace>:<local>` (dot-free, so they never mis-nest in the flat dotted
+  settings path), fetched through the same daily cache chain, and rendered in
+  the explorer and the report without a second hand-maintained table. A named
+  benchmark takes a decisive focus share (`clamp(specialistShare, 0.25, 0.40)`)
+  instead of being diluted. Verified: a role weighting `bench:alpacaeval-2_0`
+  fetched the source (4 models covered, 396 imputed) and ranked on it; the
+  explorer's `/api/bootstrap` listed the external metric with its derived
+  metadata. Unit-tested in `tests/benchmark-sources.test.ts`.
 
 - Release (2026-10-02): `Gott50/omp-llm-role` is public and `main` is pushed
   (`cc120bb`). The git and marketplace install routes were re-verified against
@@ -281,14 +297,14 @@ are the 2026-10-01 measurement and are not re-derived on read.
 - Eligible per role: 143 (vision 75, designer 88, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.809), `smol` Muse Spark 1.1 (0.793, blocked
-  → DeepSeek), `slow` GLM-5.3 (0.818), `vision` Qwen3.8 Flash (0.732, blocked
-  → DeepSeek), `plan` Hy4 preview (0.759), `commit` Muse Spark 1.1 (0.793,
-  blocked → DeepSeek), `tiny` Muse Spark 1.1 (0.814, blocked → Ling Fin),
-  `task` DeepSeek-V4.1-Flash (0.755), `advisor` Muse Spark 1.3 (0.775,
-  blocked → Hy4), `designer`
-  DeepSeek-V4.1-Flash (0.775). The suffix pass moved `default` and `advisor`
-  onto their reachable leaders (Muse Spark 1.3 and GPT-5.6 Sol were blocked).
+  `default` DeepSeek-V4.1-Flash (0.810), `smol` Muse Spark 1.1 (0.740, blocked
+  → DeepSeek), `slow` GLM-5.3 (0.816), `vision` Qwen3.8 Flash (0.731, blocked
+  → DeepSeek), `plan` Qwen3.8 Flash (0.751), `commit` Muse Spark 1.1 (0.768,
+  blocked → DeepSeek), `tiny` Muse Spark 1.1 (0.779, blocked → Ling Fin),
+  `task` DeepSeek-V4.1-Flash (0.759), `advisor` Muse Spark 1.3 (0.788,
+  blocked → Hy4), `designer` DeepSeek-V4.1-Flash (0.787). The suffix pass moved
+  `default` and `advisor` onto their reachable leaders (Muse Spark 1.3 and
+  GPT-5.6 Sol were blocked).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)

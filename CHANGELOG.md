@@ -8,6 +8,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Benchmark links in `/create-agent`** — the command now resolves a benchmark
+  link to a metric and ranks the new role on it. A link to any llm-stats
+  benchmark page (`llm-stats.com/benchmarks/<id>`) resolves to that benchmark; a
+  link to the writing leaderboard resolves to the existing `writing` metric; a
+  link to a provider the plugin has never seen is authored into a declarative
+  source spec (fetch → in-process architect → dry-run coverage/leader → confirm
+  → save), so nothing is added to your config without your say-so. A named
+  benchmark takes a decisive share of the weights (the focus-share fit) instead
+  of being diluted, and the generated agent body names the benchmark its model
+  was chosen on. New `--yes` flag accepts a proposed source without prompting.
+- **Benchmark-source registry** (`src/benchmark-sources.ts`) — the single source
+  of truth for which benchmark sources exist, what metric each feeds, and how to
+  fetch/parse/join each. External metrics are namespaced `<namespace>:<local>`
+  (dot-free, so they never mis-nest in the flat dotted settings path), fetched
+  through the same daily cache chain as every other source, and rendered in the
+  explorer and the report without a second hand-maintained table. A user-level
+  `benchmark-sources.json` declares a provider as data, not code.
 - **`/create-agent` free-text form** — the command now accepts a plain-language
   request (`/create-agent i want an agent for writing. use the writing related
   Benchmarks in the Leaderboard <url>`) as well as the flag form. The architect's

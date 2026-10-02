@@ -51,3 +51,17 @@ test("required accepts a comma-separated string (omp /settings) or an array", ()
   assert.deepEqual(fromArray.errors, []);
   assert.deepEqual(fromArray.settings.roles.slow.required, ["general", "price", "throughput"]);
 });
+
+test("an external metric key is weightable, but a dotted one is rejected", () => {
+  // The flat dotted settings path splits on `.`, so a dotted metric key would
+  // mis-nest on read-back; the external form is `<namespace>:<local>`, dot-free.
+  const ok = resolveSettings({ roles: { x: { weights: { "bench:alpacaeval-2_0": 0.5, price: 0.5 }, required: [] } } });
+  assert.deepEqual(ok.errors, []);
+  assert.equal(ok.settings.roles.x.weights["bench:alpacaeval-2_0"], 0.5);
+
+  const dotted = resolveSettings({ roles: { x: { weights: { "bench:alpacaeval-2.0": 0.5, price: 0.5 }, required: [] } } });
+  assert.ok(dotted.errors.some((e) => e.includes("unknown metric")), dotted.errors.join("; "));
+
+  const required = resolveSettings({ roles: { x: { weights: { general: 0.5, price: 0.5 }, required: ["bench:alpacaeval-2_0"] } } });
+  assert.deepEqual(required.errors, []);
+});

@@ -24,7 +24,7 @@ const USER_PROMPT = readFileSync(new URL("./prompts/agent-creation-user.md", imp
 const IDENTIFIER_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+){1,5}$/;
 
 /** Strip a ```json fence or slice the outermost braces, mirroring omp. */
-function extractJsonObject(raw: string): string {
+export function extractJsonObject(raw: string): string {
   const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence?.[1]) return fence[1].trim();
   const start = raw.indexOf("{");
@@ -58,7 +58,7 @@ export function parseAgentSpec(raw: string): AgentSpec {
 }
 
 /** Last assistant text block, mirroring omp's `extractAssistantText`. */
-function extractAssistantText(messages: readonly unknown[]): string | null {
+export function extractAssistantText(messages: readonly unknown[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i] as { role?: string; content?: unknown } | undefined;
     if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
@@ -84,6 +84,9 @@ export type ArchitectOptions = {
   modelRegistry?: unknown;
   /** Streamed architect text, for a live progress line. */
   onText?: (text: string) => void;
+  /** Human labels of the benchmarks the role is ranked on; the architect is told
+   * to name them in the agent's rubric so the body matches the chosen model. */
+  benchmarks?: string[];
 };
 
 /**
@@ -116,7 +119,11 @@ export async function generateAgentSpec(opts: ArchitectOptions): Promise<AgentSp
     }
   });
   try {
-    await session.prompt(USER_PROMPT.replace("{{request}}", opts.description), { expandPromptTemplates: false });
+    const request =
+      opts.benchmarks !== undefined && opts.benchmarks.length > 0
+        ? `${opts.description}\n\nThis agent's model role is ranked on: ${opts.benchmarks.join(", ")}. Name that benchmark in the agent's rubric so the body matches the model that was chosen.`
+        : opts.description;
+    await session.prompt(USER_PROMPT.replace("{{request}}", request), { expandPromptTemplates: false });
     const raw = extractAssistantText(session.state.messages);
     if (raw === null) throw new Error("architect returned no text");
     return parseAgentSpec(raw);

@@ -21,6 +21,7 @@ rank compression (real magnitude gaps now count) and field-dependent scales.
 | benchmark, raw | `mrcr`, `aime`, `swe_bench`, `arc_agi`, `terminal_bench`, `tau_bench` | identity | pass rate 0–1, chance ≈ 0 |
 | throughput | `throughput` | `ln(v/10)/ln(30)` | 10→0, 300→1; clamped to [0,1] |
 | percentile / score | `website`, `writing` | identity | already 0–1 |
+| external benchmark | `bench:<id>`, `<ns>:<local>` | identity | normalized to 0–1 at parse time (`score / scoreMax`), so no new transform class |
 
 - `INDEX_METRICS` and `BENCHMARK_CHANCE` are the class tables; a metric in
   neither falls through to identity. `BENCHMARK_CHANCE` currently holds only
@@ -166,6 +167,34 @@ cost and silently scales λ by the same factor (`slow` at `:max` ran λ_eff
 `thinking[]`, so a `medium` pin writes bare at a bare price while the session
 default (`auto`) bills 1.86×.
 
+## External metrics and the focus-share fit
+
+A role may weight a metric the plugin does not ship. The key is
+`<namespace>:<local>` (dot-free — the flat dotted settings path splits on `.`),
+resolved by the benchmark-source registry (`src/benchmark-sources.ts`). The
+source normalizes its scores to 0–1 at parse time, so the cardinal transform is
+identity and no new transform class is needed. `isKnownMetric`
+(`src/settings.ts`) is the pure name check the validator uses; the registry is
+the engine-side resolver.
+
+`/create-agent` folds a named benchmark into the weights as a **decisive focus
+share** (`applyFocusBenchmarks`, `src/agent-create.ts`):
+
+- `backbone = { general, reasoning, price, throughput }`.
+- `specialistShare` = the archetype's weights outside the backbone;
+  `focusShare = clamp(specialistShare, 0.25, 0.40)`.
+- Each focus metric takes `focusShare / |focus|`; a metric already in the
+  archetype's weights is not double-counted (it takes the focus share and leaves
+  the rescaled pool).
+- The archetype's remaining non-price weights are rescaled to fill
+  `1 − w_price − focusShare`; `price` keeps the archetype's value.
+- Rounded to 4 decimals with the residual absorbed in the largest non-price
+  weight, so Σ = 1 and Σ(non-price) = 1 − w_price hold exactly.
+
+Naming the archetype's own specialist set is a no-op (the focus share equals its
+archetype share). A named metric already in the weights is reported as a
+duplicate; a name outside the known-metric set is unknown.
+
 ## Weight design rules
 
 The shipped weights (`DEFAULT_ROLES`) and the archetype sets
@@ -227,9 +256,11 @@ one." Three findings, each measured on that day's caches:
    `w_price` unless you mean to change λ).
 2. Check the metric's coverage; if it is sparse, weight it as a differentiator
    and never add it to `required`.
-3. If you add a metric, add it to `KNOWN_METRICS` (`src/settings.ts`) and
+3. If you add a shipped metric, add it to `KNOWN_METRICS` (`src/settings.ts`) and
    `METRIC_META` (`src/explorer/explain.ts`), and verify both `cardinalMetric`
-   and `inverseCardinal` handle its transform.
+   and `inverseCardinal` handle its transform. An external metric needs neither:
+   it is `<namespace>:<local>` (dot-free), the registry supplies its metadata
+   (`metricMeta`), and its transform is identity.
 4. Re-run the report (`node src/cli/llm-role-rank.ts --top 5`) and check the stderr
    match/eligible counts; the explorer's `Δ` column measures against the role's
    effective def.

@@ -25,8 +25,9 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 
 | File | Role / key exports |
 |---|---|
-| `src/engine.ts` | Ranking engine shared by CLI and plugin. Fetch/cache chain per source, cardinal transforms, value scoring. Exports `loadRankData`, `computeRankings`, `buildModels`, `rankRole`, `paretoFrontier`, `cardinalMetric`, `roleLambda`, `thinkingPriceFactor`, `CAPABILITY_FILL`, `SUFFIX_LEVELS`, `META_LEVELS`, `THINKING_TOKEN_OVERHEAD`, `normalizeDesignId`, `parseFindData`, `parseModelPage`, `buildOpenRouterEnrichment`, `applyOpenRouterData`, `applyDesignPercentiles`, `parseWritingEvidence`, `applyWritingScores`, `extractFlight`, `extractJsonArray`, the cache readers/writers, and the `Model`/`RoleDef`/`Ranked`/`RankData` types. |
-| `src/settings.ts` | Shipped defaults and the settings merge/validate path. Exports `DEFAULT_ROLES`, `DEFAULT_SETTINGS`, `SHIPPED_AGENTS`, `KNOWN_METRICS`, `PLUGIN_SETTINGS_PATH`, `ACTIVATE_DEFAULT_KEY`, `deriveSettingsSchema`, `readPluginSettingsMap`, `resolveSettings`, `roleUniverse`, `deepMergeInto`, and the `ResolvedSettings`/`PluginSettingSchema`/`UniverseEntry`/`RoleKind` types. |
+| `src/engine.ts` | Ranking engine shared by CLI and plugin. Fetch/cache chain per source, cardinal transforms, value scoring. Exports `loadRankData`, `computeRankings`, `buildModels`, `rankRole`, `paretoFrontier`, `cardinalMetric`, `roleLambda`, `thinkingPriceFactor`, `CAPABILITY_FILL`, `SUFFIX_LEVELS`, `META_LEVELS`, `THINKING_TOKEN_OVERHEAD`, `parseFindData`, `parseModelPage`, `buildOpenRouterEnrichment`, `applyOpenRouterData`, `applyDesignPercentiles`, `applyWritingScores`, `extractFlight`, `extractJsonArray`, the cache readers/writers, and the `Model`/`RoleDef`/`Ranked`/`RankData` types. Re-exports `normalizeDesignId` and `parseWritingEvidence` from the benchmark-source registry. |
+| `src/benchmark-sources.ts` | The benchmark-source registry: the single source of truth for which sources exist, what metric each feeds, and how to fetch/parse/join each. Exports `BENCHMARK_SOURCES` (the shipped static sources), `resolveBenchmarkSource`, `declaredSourceForLink`, `sourceForMetric`, `parseBenchmarkPayload`, `loadBenchmarkScores`, `applyBenchmarkScores`, `joinBenchmarkScores`, `normalizeMetricKey`, `externalMetricKey`, `normalizeDesignId`, `parseWritingEvidence`, `parseLlmStatsBenchmark`, the declarative-source surface (`SourceDeclaration`, `validateDeclaration`, `parseSourceDeclaration`, `loadDeclaredSources`, `saveDeclaredSource`, `declaredSourcesPath`, `declarationToSource`, `executeDeclaration`, `llmStatsBenchmarkDeclaration`, `genericBenchmarkSource`, `dryRunDeclaration`), the fetch helpers (`fetchJson`, `fetchText`), and the `BenchmarkSource`/`JoinRule`/`BenchmarkScores`/`DeclarationDryRun` types. Imports `engine.ts` for types only, so there is no runtime cycle. |
+| `src/settings.ts` | Shipped defaults and the settings merge/validate path. Exports `DEFAULT_ROLES`, `DEFAULT_SETTINGS`, `SHIPPED_AGENTS`, `KNOWN_METRICS`, `isKnownMetric` (a shipped key or an external `<ns>:<local>`), `PLUGIN_SETTINGS_PATH`, `ACTIVATE_DEFAULT_KEY`, `deriveSettingsSchema`, `readPluginSettingsMap`, `resolveSettings`, `roleUniverse`, `deepMergeInto`, and the `ResolvedSettings`/`PluginSettingSchema`/`UniverseEntry`/`RoleKind` types. |
 | `src/agent-pins.ts` | Agent → pinned-role derivation. Exports `parseAgentPin` (first `@<role>` in the `model:` frontmatter) and `discoverAgentPins` (scans the shipped, user and project agent dirs; project > user > plugin). Drives the `task.disabledAgents` sync. |
 | `src/availability.ts` | Key tier gate, catalog filter, variant resolution, provider-allowlist probe. Exports `fetchKeyMeta`, `tierGate`, `filterCatalog`, `rankingIdOf`, `currentRankingId`, `resolveVariant`, `enrichThinkingLevels`, `probeModel`, `catalogFromOmpModelsJson`, `THINKING_LEVELS`, and the `CatalogEntry`/`KeyMeta`/`Tier`/`ProbeVerdict` types. |
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains` + `task.disabledAgents`, plus the atomic writer. Exports `parseConfig`, `patchConfig`, `writeConfigAtomic`, `ConfigEditError`, and the `ConfigPatch` type. No runtime YAML dependency. |
@@ -37,8 +38,9 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) and its removal half. Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `mergeRemove`, `removeRoleSettings`, `timestamp`. Shared by the explorer's Export, `src/cli/create-role.ts`, `/create-agent` and `/remove-agent`. |
 | `src/role-archetypes.ts` | Purpose → weight archetype table (10 sets) + keyword fitting. Exports `ARCHETYPES`, `FALLBACK_ARCHETYPE`, `fitArchetype`, `archetypeById`, and the `Archetype`/`ArchetypeMatch` types. |
 | `src/agent-file.ts` | Agent `.md` rendering/placement. Exports `renderAgentFile`, `writeAgentFile`, `removeAgentFile`, `isReadOnlyTools`, `userAgentsDir`, `projectAgentsDir`, `READ_ONLY_TOOLS`, `RESERVED_AGENT_NAMES`, `AGENT_NAME_RE`, and the `AgentFileSpec`/`AgentWriteResult`/`AgentRemoveResult` types. |
-| `src/agent-architect.ts` | omp's agent-creation architect, run in-process (extension-only). Exports `generateAgentSpec`, `parseAgentSpec`, and the `ArchitectOptions` type. Imports `@oh-my-pi/pi-coding-agent` at the package root. |
-| `src/agent-create.ts` | `/create-agent` core: purpose → archetype → validated role → agent `.md`, plus the shared input parser and report formatter both hosts use. Exports `createAgent`, `parseCreateAgentInput` (flag form or free text), `parseCreateAgentArgs`, `tokenizeArgs`, `extractBenchmarks`, `applyExtraBenchmarks`, `formatBenchmarks`, `formatArchetypes`, `formatCreateAgentReport`, `CREATE_AGENT_USAGE`, and the request/result types. |
+| `src/agent-architect.ts` | omp's agent-creation architect, run in-process (extension-only). Exports `generateAgentSpec`, `parseAgentSpec`, `extractJsonObject`, `extractAssistantText`, and the `ArchitectOptions` type. Imports `@oh-my-pi/pi-coding-agent` at the package root. |
+| `src/benchmark-author.ts` | Benchmark-source authoring for an unknown link: fetch the link, run an in-process architect (`src/prompts/benchmark-source-architect.md`) to propose a declarative source spec, and validate it. Extension-only (imports `@oh-my-pi/pi-coding-agent`). Exports `authorBenchmarkSource`, `parseSourceDeclarationJson`, and the `BenchmarkAuthorOptions` type. |
+| `src/agent-create.ts` | `/create-agent` core: purpose → archetype → validated role → agent `.md`, plus the shared input parser and report formatter both hosts use. Exports `createAgent`, `parseCreateAgentInput` (flag form or free text), `parseCreateAgentArgs`, `tokenizeArgs`, `extractBenchmarks`, `extractBenchmarkLinks`, `applyFocusBenchmarks`, `formatBenchmarks`, `formatArchetypes`, `formatCreateAgentReport`, `CREATE_AGENT_USAGE`, and the request/result types. |
 | `src/agent-remove.ts` | `/remove-agent` core: delete an agent `.md` and its role, plus the shared flag parser and report formatter. Exports `removeAgent`, `parseRemoveAgentArgs`, `formatRemoveAgentReport`, `REMOVE_AGENT_USAGE`, and the request/result types. Refuses shipped default roles. |
 
 ### `src/explorer/`
@@ -47,13 +49,14 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 |---|---|
 | `src/explorer/boot.ts` | Shared explorer launcher: bind/port fallback, lock-file roles, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, and the `ExplorerHandle`/`ExplorerBootOpts` types. Used by `/explore-roles`. |
 | `src/explorer/server.ts` | Zero-dependency HTTP surface (static SPA + JSON API). Exports `createExplorerServer` and the `ExplorerOpts` type. Endpoints: `GET /api/bootstrap`, `POST /api/rank`, `POST /api/explain`, `POST /api/export`, `POST /api/refresh`. |
-| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets. Exports `rankRows`, `explainModel`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`, and the `RankRow`/`Explanation`/`Contribution`/`Closing`/`MetricMeta` types. |
+| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets. Exports `rankRows`, `explainModel`, `inverseCardinal`, `METRIC_META`, `metricMeta`, `metricMetaFor`, `weightableMetrics`, and the `RankRow`/`Explanation`/`Contribution`/`Closing`/`MetricMeta` types. |
 
 ### Assets and non-code
 
 | Path | Role |
 |---|---|
 | `src/prompts/agent-creation-architect.md`, `src/prompts/agent-creation-user.md` | omp's architect prompts, shipped verbatim; read by `src/agent-architect.ts` via `new URL("./prompts/…", import.meta.url)`. |
+| `src/prompts/benchmark-source-architect.md`, `src/prompts/benchmark-source-user.md` | The benchmark-source architect prompts; read by `src/benchmark-author.ts`. |
 | `web/index.html`, `web/app.js`, `web/style.css` | Explorer SPA — no framework, no build step, no external requests. Served by `src/explorer/server.ts`. |
 | `agents/designer.md` | The shipped `designer` subagent, discovered from the plugin's extension root (`<ext>/agents/*.md`). Opt-in: kept in `task.disabledAgents` until `roles.designer.enabled=true`. |
 | `skills/omp-llm-role-create-agent/SKILL.md` | Shipped skill, discovered from the plugin's `skills/` root. Hand-driven equivalent of `/create-agent`. |
@@ -68,7 +71,7 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 | `docs/agents/domain.md`, `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md` | Repo process docs (domain glossary, issue tracker, triage labels). |
 | `docs/dev/spec.md` | Normative spec (moved from the repo root). |
 | `docs/dev/architecture.md`, `docs/dev/data-sources.md` | This file and the data-source map. |
-| `tests/` | `node --test tests/` fixtures (tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, writing metric, thinking-price, openrouter-blend, agent disable, agent pins, settings schema, session model, role lock, role enable, probe gate, create-agent, create-role, **remove-agent**). |
+| `tests/` | `node --test tests/` fixtures (tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, writing metric, benchmark sources, thinking-price, openrouter-blend, agent disable, agent pins, settings schema, session model, role lock, role enable, probe gate, create-agent, create-role, **remove-agent**). |
 | `docs/llm-role-rankings.md` | Generated report (regenerate with `--out`); the README's worked example. |
 | `cache/*.json` | Daily UTC caches (gitignored; see [`data-sources.md`](data-sources.md)). |
 
@@ -122,10 +125,13 @@ Inside `loadRankData` the engine runs: `buildModels` (llm-stats rows) →
 OpenRouter enrichment (`parseFindData` → `loadEndpointPages` →
 `buildOpenRouterEnrichment` → `applyOpenRouterData`) → Design Arena
 (`loadDesignArenaBoards` → `buildDesignArenaIndex` → `mergeDesignElo` →
-`applyDesignPercentiles`) → writing (`loadWritingScores` → `applyWritingScores`).
-`computeRankings` then calls `rankRole` per role, which uses `cardinalMetric`,
-`roleLambda`, `thinkingPriceFactor` and `CAPABILITY_FILL`; `paretoFrontier`
-marks the report's `★` rows.
+`applyDesignPercentiles`) → writing (`loadBenchmarkScores` → `applyWritingScores`,
+both from the registry) → the external-metric loop (every metric a ranked role
+weights that the plugin does not ship: `sourceForMetric` → `loadBenchmarkScores`
+→ `applyBenchmarkScores`; `opts.roles === undefined` fetches every declared
+source). `computeRankings` then calls `rankRole` per role, which uses
+`cardinalMetric`, `roleLambda`, `thinkingPriceFactor` and `CAPABILITY_FILL`;
+`paretoFrontier` marks the report's `★` rows.
 
 ## Dual-runtime contract
 
@@ -198,8 +204,14 @@ before `catalogFromOmpModelsJson`.
 - `loadRankData(opts?: { refresh?; url?; roles? }): Promise<RankData>` — the
   per-source cache → fetch → stale-cache chain. `opts.roles` names the roles the
   caller will rank: a role-exclusive source is fetched only when some role
-  weights its metric — Design Arena (`website`) and the writing leaderboard
-  (`writing`). `undefined` = fetch all (what the explorer passes).
+  weights its metric — Design Arena (`website`), the writing leaderboard
+  (`writing`), and every external metric (a declared source or the generic
+  llm-stats benchmark). `undefined` = fetch all (what the explorer passes).
+- `src/benchmark-sources.ts` is the registry: `resolveBenchmarkSource(link)` maps
+  a link to a source, `sourceForMetric(metric)` maps a metric back, and
+  `loadBenchmarkScores`/`applyBenchmarkScores` are the shared cache chain and
+  join. A new source is one registry entry (or one declaration), not a new branch
+  in the engine.
 - `computeRankings(models, roles): Record<string, Ranked[]>` — cardinal
   fixed-anchor transforms + quality composite `q` + value `q − λ·priceEff` +
   eligibility (`required` non-null, billed price). `roles` comes from resolved
@@ -226,7 +238,11 @@ stderr `openrouter: matched N/<pool> models (throughput), M priced`, the
 - **Skill discovery**: `skills/omp-llm-role-create-agent/SKILL.md` is found from
   the plugin's `skills/` root.
 - **Architect prompts**: `src/prompts/*.md` are plugin assets read relative to
-  `src/agent-architect.ts`; they are not importable from omp.
+  `src/agent-architect.ts` / `src/benchmark-author.ts`; they are not importable
+  from omp.
+- **Declared benchmark sources**: `benchmark-sources.json` under the agent dir
+  (`agentDir()`), written by the `/create-agent` authoring step and read by the
+  engine's external-metric loop. Data, not code.
 - **Explorer SPA**: `web/` is served by `src/explorer/server.ts`; the extension
   resolves it as `new URL("../web", import.meta.url)`.
 - **Marketplace**: `.omp-plugin/marketplace.json` lists the repo itself
@@ -248,7 +264,11 @@ stderr `openrouter: matched N/<pool> models (throughput), M priced`, the
   `/settings` shallow-merges and does not flatten nested objects). The reader
   accepts both flat and nested; the writer emits flat.
 - **`required` is the eligibility gate, not a weight** — validation checks it
-  against `KNOWN_METRICS`, not against `weights`.
+  against `isKnownMetric`, not against `weights`.
+- **An external metric key is dot-free** (`<namespace>:<local>`) — the flat
+  dotted settings path splits on `.`, so a dotted key mis-nests on read-back.
+  `isKnownMetric` (`src/settings.ts`) is the pure name check; the registry is the
+  engine-side resolver (`sourceForMetric`), and `settings.ts` never imports it.
 - **`model:` is always the chain `@<role>, @default`** — a bare `@<role>` is a
   literal pattern when the role is absent and hard-fails.
 - **`thinking` is not written into agent frontmatter** — the role's `thinking`

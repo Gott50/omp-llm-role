@@ -16,10 +16,13 @@ import { fileURLToPath } from "node:url";
 import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, tokenizeArgs } from "./agent-create.ts";
 import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
 import { generateAgentSpec } from "./agent-architect.ts";
+import { authorBenchmarkSource } from "./benchmark-author.ts";
+import { declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, validateDeclaration, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
 import { loadRankData } from "./engine.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { isRecord } from "./guards.ts";
+import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "./settings.ts";
 import { runUpdater, type Deps } from "./updater.ts";
 
 /** SPA directory shipped beside this extension (repo `web/`). */
@@ -162,6 +165,104 @@ function notifyLines(ctx: ExtContext, line: string): void {
   if (!ctx.hasUI) console.error(line);
 }
 
+/** External metrics already weighted by a resolved role, for `--list-benchmarks`. */
+function externalMetricsInUse(): string[] {
+  const { settings } = resolveSettings(readPluginSettingsMap());
+  const out = new Set<string>();
+  for (const def of Object.values(settings.roles)) {
+    for (const metric of Object.keys(def.weights)) if (!(metric in KNOWN_METRICS)) out.add(metric);
+  }
+  return [...out];
+}
+
+/**
+ * Author a source declaration for a link the registry does not know: fetch ->
+ * architect -> validate -> dry-run (coverage/leader) -> confirm -> save. Returns
+ * the source, or null when the user cancels or the declaration is unusable.
+ */
+async function authorLink(ctx: ExtContext, link: string, yes: boolean): Promise<BenchmarkSource | null> {
+  notifyLines(ctx, `create-agent: ${link} is not a known benchmark source — authoring a declaration…`);
+  let declaration: SourceDeclaration;
+  try {
+    declaration = await authorBenchmarkSource({ link, cwd: ctx.cwd, model: ctx.models?.current(), modelRegistry: ctx.modelRegistry });
+  } catch (err) {
+    notifyLines(ctx, `create-agent: authoring failed: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+  const errors = validateDeclaration(declaration);
+  if (errors.length > 0) {
+    notifyLines(ctx, `create-agent: proposed source is invalid: ${errors.join("; ")}`);
+    return null;
+  }
+  let payload: unknown;
+  try {
+    payload = await fetchJson(declaration.fetch.url, declaration.fetch.method ?? "GET", declaration.fetch.body);
+  } catch (err) {
+    notifyLines(ctx, `create-agent: dry-run fetch failed: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+  const dry = dryRunDeclaration(declaration, payload);
+  if (!dry.ok) {
+    notifyLines(ctx, `create-agent: proposed source rejected: ${dry.errors.join("; ")}`);
+    return null;
+  }
+  notifyLines(
+    ctx,
+    [
+      "create-agent: proposed benchmark source",
+      `  ${declaration.label} (${declaration.metric})`,
+      `  fetch: ${declaration.fetch.url}`,
+      `  coverage: ${dry.covered} rows, leader ${dry.leader?.id ?? "?"} ${dry.leader?.score ?? ""}`,
+    ].join("\n"),
+  );
+  if (!yes && ctx.hasUI && ctx.ui.select) {
+    const answer = await ctx.ui.select(`Add benchmark source "${declaration.label}"?`, [
+      { label: "Add", description: "save the declaration and rank the role on it" },
+      { label: "Cancel" },
+    ]);
+    if (answer !== "Add") {
+      notifyLines(ctx, "create-agent: cancelled");
+      return null;
+    }
+  }
+  const saved = saveDeclaredSource(declaration);
+  if (!saved.ok) {
+    notifyLines(ctx, `create-agent: could not save the source: ${saved.error}`);
+    return null;
+  }
+  notifyLines(ctx, `create-agent: saved ${saved.path}`);
+  return declarationToSource(declaration);
+}
+
+/**
+ * Resolve the request's benchmark links to metric names, authoring a source for
+ * a link the registry does not know, and warming each source's cache. Returns
+ * null when the user cancels or a link cannot be resolved.
+ */
+async function resolveBenchmarkLinks(ctx: ExtContext, links: readonly string[], yes: boolean): Promise<{ metrics: string[]; labels: string[] } | null> {
+  const metrics: string[] = [];
+  const labels: string[] = [];
+  const declared = loadDeclaredSources();
+  for (const link of links) {
+    // A saved declaration wins, so a provider is authored once (US28); then the
+    // shipped registry; an unknown link goes through the authoring step.
+    let source = declaredSourceForLink(link, declared) ?? resolveBenchmarkSource(link);
+    if (source === null) {
+      source = await authorLink(ctx, link, yes);
+      if (source === null) return null;
+    }
+    const loaded = await loadBenchmarkScores(source, false);
+    if (loaded === null) {
+      notifyLines(ctx, `create-agent: ${source.metric} (${source.label}) — no data fetched; the role will rank on its other weights`);
+    } else {
+      notifyLines(ctx, `create-agent: ${source.metric} (${loaded.label}) — ${Object.keys(loaded.scores).length} rows`);
+    }
+    metrics.push(source.metric);
+    labels.push(loaded?.label ?? source.label);
+  }
+  return { metrics, labels };
+}
+
 export default function (pi: ExtensionAPI) {
   /** Loopback explorer owned by this session binding (null until launched). */
   let explorer: ExplorerHandle | null = null;
@@ -246,7 +347,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       if (parsed.listBenchmarks) {
-        notifyLines(ctx, formatBenchmarks());
+        notifyLines(ctx, formatBenchmarks(undefined, externalMetricsInUse()));
         return;
       }
       if (parsed.bodyFile !== undefined) {
@@ -258,7 +359,19 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // 1. omp's agent-creation architect authors the routing rule and the body
+      // 1. Resolve benchmark links first, so the architect can name the
+      //    benchmark the role is ranked on. A link the registry knows resolves
+      //    to its metric; an unknown link is authored into a source declaration
+      //    (fetch -> architect -> dry-run -> confirm -> save). The resolved
+      //    metric names are folded into `extraBenchmarks`.
+      if (parsed.request.benchmarkLinks !== undefined && parsed.request.benchmarkLinks.length > 0) {
+        const resolved = await resolveBenchmarkLinks(ctx, parsed.request.benchmarkLinks, parsed.yes);
+        if (resolved === null) return;
+        parsed.request.extraBenchmarks = [...(parsed.request.extraBenchmarks ?? []), ...resolved.metrics];
+        parsed.request.benchmarkLabels = resolved.labels;
+      }
+
+      // 2. omp's agent-creation architect authors the routing rule and the body
       //    (the same architect the `/agents` hub runs). `--body`/`--body-file`
       //    skip it; the plugin still adds the model/tools frontmatter.
       if (parsed.request.body === undefined) {
@@ -269,6 +382,7 @@ export default function (pi: ExtensionAPI) {
             cwd: ctx.cwd,
             model: ctx.models?.current(),
             modelRegistry: ctx.modelRegistry,
+            benchmarks: parsed.request.benchmarkLabels,
           });
         } catch (err) {
           notifyLines(ctx, `create-agent: architect failed: ${err instanceof Error ? err.message : err}`);
@@ -285,11 +399,11 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // 2. Ask for extra benchmarks. The list is every weightable metric, so the
+      // 3. Ask for extra benchmarks. The list is every weightable metric, so the
       //    user can see what is already in use and avoid duplicates. `--benchmarks`
       //    covers headless runs, where there is no prompt.
       if (ctx.hasUI && ctx.ui.input && parsed.request.extraBenchmarks === undefined) {
-        notifyLines(ctx, formatBenchmarks());
+        notifyLines(ctx, formatBenchmarks(undefined, externalMetricsInUse()));
         const answer = await ctx.ui.input(
           "Additional benchmarks",
           "comma-separated metric names to add to the weights, or empty",
@@ -302,7 +416,7 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // 3. Write the role + the agent file, then wire `modelRoles.<name>` in-process.
+      // 4. Write the role + the agent file, then wire `modelRoles.<name>` in-process.
       const result = createAgent(parsed.request);
       if (!result.ok) {
         notifyLines(ctx, `create-agent: ${result.errors.join("\n")}`);

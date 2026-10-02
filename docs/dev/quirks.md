@@ -71,6 +71,24 @@ the home for the things that only bite someone changing or debugging the code.
   a level cannot be returned to bare by omitting the key, so the editor disables
   `— (bare)` for those roles.
 
+## Benchmark sources
+
+- **An external metric key must be dot-free.** The flat dotted settings path
+  splits on `.` (`setNested(patchObj, key.split("."), value)`), so a metric key
+  containing `.` mis-nests on read-back — the real llm-stats id
+  `alpacaeval-2.0` would become `...weights.bench:alpacaeval-2: {0: w}` and
+  silently vanish. `normalizeMetricKey` maps `.` to `_`, so the metric is
+  `bench:alpacaeval-2_0` while the source keeps the raw id for the fetch URL.
+- **The raw id cannot be reconstructed from the metric key**, so a generic
+  llm-stats benchmark is persisted as a declaration in
+  `benchmark-sources.json`; the engine's `sourceForMetric` falls back to the
+  local part as the raw id only when no declaration exists (correct for a
+  dot-free id, wrong for a dotted one).
+- **`api.zeroeval.com/leaderboard/benchmarks/<id>` is case- and
+  separator-sensitive**: `alpacaeval-2.0` returns 200, `alpacaeval-2_0` and
+  `ALPACAEVAL-2.0` return 404. The declaration's `fetch.url` must carry the raw
+  id exactly as the site spells it.
+
 ## Runtime
 
 - **Node type-stripping does not typecheck**: property-name typos surface as

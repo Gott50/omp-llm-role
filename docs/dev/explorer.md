@@ -56,12 +56,14 @@ Endpoints:
 
 - `bootstrapPayload` ships `roles` (resolved), `defaults` (`DEFAULT_ROLES`),
   `universe` (kind/enabled/locked + effective def per known role), `metrics`
-  (`Object.keys(KNOWN_METRICS)`), `metricMeta` (`METRIC_META`), `levels`
-  (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors` (per-level billed-blend
-  multiplier from the engine's own `thinkingPriceFactor`, so the UI readout
-  cannot drift), `fetchedAt`, `modelCount`, `orMatched`, `orPriced`, `lockPath`.
-  Every request calls `getState()`, which re-reads the lock file — so a page
-  reload after Export shows the new roles, not the boot-time snapshot.
+  (`weightableMetrics`: the shipped keys plus any external metric a resolved role
+  weights), `metricMeta` (`metricMetaFor`: `METRIC_META` plus a derived entry per
+  external metric), `levels` (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors`
+  (per-level billed-blend multiplier from the engine's own `thinkingPriceFactor`,
+  so the UI readout cannot drift), `fetchedAt`, `modelCount`, `orMatched`,
+  `orPriced`, `lockPath`. Every request calls `getState()`, which re-reads the
+  lock file — so a page reload after Export shows the new roles, not the
+  boot-time snapshot.
 - `handleRank` baselines against `state.roles[role] ?? state.universe[role]?.def ??
   state.defaults[role]`: an enabled role against its resolved def, a disabled or
   lock-file-only role against its effective def, so selecting it still shows
@@ -81,6 +83,12 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   formula, anchors}`, `kind ∈ index | benchmark | throughput | price |
   percentile`. The UI's picklists and formula legends are built from it, so they
   cannot drift from the engine.
+- **`metricMeta(metric, declared?)`** — the shipped entry, or a derived entry for
+  an external metric (label from the registry's source, `kind: "percentile"`,
+  identity formula, the source's fill in the anchors). **`metricMetaFor(metrics,
+  declared?)`** merges the shipped table with a derived entry per external metric.
+- **`weightableMetrics(extra?)`** — the shipped keys plus any external metric in
+  `extra`; exactly what the validator accepts.
 - **`rankRows(def, models, baseline)`** — `rankRole(def, models)` +
   `paretoFrontier`, annotating each row with `baselineRank`/`delta`
   (`baselineRank − rank`; positive = moved up) against the effective role's
@@ -102,8 +110,6 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   unreachable/extrapolated notes), and `dominators` (models both cheaper and at
   least as good on `q`, top 3). It mirrors `rankRole`'s capability fill so the
   contributions sum exactly to `q`.
-- **`WEIGHTABLE_METRICS = Object.keys(KNOWN_METRICS)`** — exactly what the
-  validator accepts.
 
 ## Shared boot path (`src/explorer/boot.ts`)
 

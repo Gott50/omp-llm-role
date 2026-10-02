@@ -24,12 +24,19 @@ three steps in one shot:
 /create-agent --name <n> --purpose "<one sentence>"
 ```
 
-or, in plain language (the architect names it and any benchmark you mention is
-folded in):
+or, in plain language (the architect names it, any benchmark you mention is
+folded in, and any benchmark link you point at is resolved):
 
 ```
 /create-agent i want an agent for writing. use the writing related Benchmarks in the Leaderboard <url>
 ```
+
+A link to any llm-stats benchmark page (`llm-stats.com/benchmarks/<id>`) resolves
+to that benchmark; a link to a provider the plugin has never seen is authored
+into a declarative source spec (fetch → in-process architect → dry-run
+coverage/leader → confirm → save). A named benchmark takes a decisive share of
+the weights (the focus-share fit), so it drives the ranking instead of being
+diluted.
 
 It runs **omp's agent-creation architect** in-process to author the routing rule and
 the body (the same architect the `/agents` hub runs), then adds the `model: "@<n>,
@@ -38,8 +45,8 @@ archetype table (§2), asks for any extra benchmarks to fold in (listing every w
 metric so you can avoid duplicates), writes the validated role, and runs the updater
 in-process so `modelRoles.<n>` lands in `config.yml` — no second step. `--list-archetypes`
 and `--list-benchmarks` print the tables; `--archetype`/`--weights`/`--required`/
-`--thinking`/`--tools`/`--benchmarks`/`--scope`/`--body-file`/`--force` override each
-piece. There is no out-of-session CLI for this path — run `/create-agent` in an omp
+`--thinking`/`--tools`/`--benchmarks`/`--scope`/`--body-file`/`--force`/`--yes` override
+each piece. There is no out-of-session CLI for this path — run `/create-agent` in an omp
 session.
 
 Use this skill instead when the artifact needs authoring the command cannot infer: a
@@ -102,6 +109,11 @@ These are the same sets `/create-agent` fits automatically — the executable co
 
 Rules of thumb:
 
+- A named benchmark (via `--benchmarks` or a link) takes a decisive focus share
+  (`clamp(specialistShare, 0.25, 0.40)` of the non-price budget), so it drives
+  the ranking. An external metric key is `<namespace>:<local>` and MUST be
+  dot-free (the flat dotted settings path splits on `.`); the registry resolves
+  it and the explorer/report render it without a hand-maintained table.
 - A weighted metric with low coverage turns q into a coverage score — prefer a `filters`
   gate over requiring a sparse metric. `website`, `long_context` and `writing` are
   capability-filled (0.195), so they are safe to weight. `writing` (WritingBench, the
