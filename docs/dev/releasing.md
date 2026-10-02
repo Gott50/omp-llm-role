@@ -1,9 +1,9 @@
 # Releasing
 
 `version` in `package.json` is the release switch — bump it, commit, then
-publish through any channel (same tree, no build step). The repo is private
-until the visibility flip, so the public GitHub URLs below fail (404 / auth
-error) until then.
+publish through any channel (same tree, no build step). The repo is public
+(flipped 2026-10-02), so the git and marketplace URLs below resolve; the npm
+channel is not published yet — see Status.
 
 ## Channels
 
@@ -43,6 +43,21 @@ Install routes verified 2026-10-01 (omp 18.4.8): npm (local-registry
 simulation of the packed tarball), git (local git daemon), marketplace (local
 path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 `link` — every post-install session run wrote `modelRoles` +
-`retry.fallbackChains` and appended a history row. The public GitHub URLs
-(`github:Gott50/…`, `marketplace add Gott50/…`) fail until the repo is
-public (404 / auth error).
+`retry.fallbackChains` and appended a history row.
+
+## Status
+
+- **Repo public** (2026-10-02). `Gott50/omp-llm-role` was flipped from private
+  to public; `main` is pushed (`cc120bb`).
+- **git + marketplace verified against the real URLs** (2026-10-02, omp
+  18.4.10, throwaway `HOME`s): `omp plugin install github:Gott50/omp-llm-role`
+  and `omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins` both installed 1.0.0, and
+  each post-install session run wrote `modelRoles` + `retry.fallbackChains`
+  into that HOME's `config.yml` and landed the three daily caches in the
+  installed copy.
+- **npm not published.** `omp-llm-role` is unclaimed on the registry
+  (`npm view omp-llm-role version` → 404) and no npm credential exists on the
+  workstation (`~/.npmrc` absent, keychain empty). Publish needs an
+  interactive `npm login` (or an automation token) first; then
+  `npm publish` from the repo root and `npm view omp-llm-role version` → `1.0.0`.

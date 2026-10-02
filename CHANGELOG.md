@@ -40,6 +40,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Repository is public.** `Gott50/omp-llm-role` was flipped from private to
+  public, so the git (`omp plugin install github:Gott50/omp-llm-role`) and
+  marketplace (`omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins`) install routes now work
+  against the real URLs; both were re-verified end-to-end (omp 18.4.10,
+  throwaway HOMEs). The npm channel is not published yet.
 - The normative spec moved to `docs/dev/spec.md`; maintainer docs split into
   `docs/dev/` and the README is now user-only (issue #6).
 - **Project root cleanup.** The generated report moved to

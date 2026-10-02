@@ -7,6 +7,14 @@ copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The numbers below
 are the 2026-10-01 measurement and are not re-derived on read.
 
+- Release (2026-10-02): `Gott50/omp-llm-role` is public and `main` is pushed
+  (`cc120bb`). The git and marketplace install routes were re-verified against
+  the real URLs in throwaway HOMEs (omp 18.4.10): both installed 1.0.0, and each
+  post-install session run wrote `modelRoles` + `retry.fallbackChains` into that
+  HOME's `config.yml` and landed the three daily caches in the installed copy.
+  npm is not published yet (name unclaimed, no credential on the workstation) —
+  see Releasing.
+
 - `/create-agent` free-text form (2026-10-02): the command now accepts a
   plain-language request as well as flags. `parseCreateAgentInput` splits the
   text at the first `--flag`; the text before it is the purpose, the flags after
