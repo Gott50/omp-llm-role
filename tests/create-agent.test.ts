@@ -117,6 +117,7 @@ test("createAgent uses omp's architect spec for the description and body", () =>
 
   const result = createAgent(request(lockPath, { spec }));
   assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+  assert.equal(result.def.description, spec.whenToUse);
 
   const text = readFileSync(join(agentsDir, "changelog.md"), "utf8");
   const fm = frontmatter(text);
@@ -127,6 +128,20 @@ test("createAgent uses omp's architect spec for the description and body", () =>
   // ...but the plugin still adds the frontmatter omp's own writer omits.
   assert.equal(fm.model, "@changelog, @default");
   assert.equal(fm.tools, "read, grep, glob, find, write, edit");
+});
+
+test("without an architect spec the role description is the one-line purpose", () => {
+  const { lockPath } = workspace();
+  const result = createAgent(request(lockPath));
+  assert.ok(result.ok);
+  assert.equal(result.def.description, "write release notes and changelogs from git history");
+});
+
+test("a benchmark URL in the purpose does not bias the archetype fit", () => {
+  const { lockPath } = workspace();
+  const result = createAgent(request(lockPath, { purpose: "i want an agent for writing. use https://llm-stats.com/benchmarks/technical-debt" }));
+  assert.ok(result.ok);
+  assert.equal(result.archetype.id, "prose");
 });
 
 test("the template body names the benchmarks the role was ranked on", () => {

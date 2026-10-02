@@ -120,3 +120,41 @@ test("a role that left the managed set is pruned from modelRoles", async () => {
   assert.equal(parsed.modelRoles.designer, undefined);
   assert.ok(parsed.modelRoles.default !== undefined);
 });
+
+test("fallback chain prefers candidates priced at or below the chosen model", async () => {
+  // Ranking (value): model-a 0.8107 (chosen), model-b 0.2336, model-c 0.2122.
+  // model-c is cheaper than the chosen model-a, model-b is pricier, so the
+  // cost-aware ordering puts model-c first even though model-b ranks higher.
+  const models = [makeModel("model-a", 95, 10, 100), makeModel("model-b", 90, 20, 60), makeModel("model-c", 0, 1, 30)];
+  const settings = {
+    roles: {
+      default: { enabled: false },
+      smol: { enabled: false },
+      slow: { enabled: false },
+      vision: { enabled: false },
+      plan: { enabled: false },
+      commit: { enabled: false },
+      tiny: { enabled: false },
+      task: { enabled: false },
+      advisor: { enabled: false },
+      designer: { enabled: false },
+      testrole: { weights: { general: 0.5, throughput: 0.1, price: 0.4 }, required: ["general", "price", "throughput"], lambda: 0.05 },
+    },
+  };
+  const config = "modelRoles:\n  testrole: openrouter/org/model-a\n";
+  const dir = setupAgentDir(config, {
+    lastRunDay: null,
+    managedRoles: [],
+    roleLastSelector: {},
+    pluginWrittenChainKeys: [],
+    previousModelRoles: null,
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(models, settings), { force: true }));
+  assert.equal(result.aborted, undefined);
+  assert.equal(result.wrote, true);
+
+  const doc = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as {
+    retry: { fallbackChains: Record<string, string[]> };
+  };
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-c", "openrouter/org/model-b"]);
+});

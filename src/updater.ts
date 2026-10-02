@@ -369,8 +369,16 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       for (const d of decisions) {
         const plan = chainPlanByRole[d.role];
         const suffix = claims[plan.key] === 1 ? plan.suffix : undefined;
+        // Cost-aware ordering: prefer fallbacks priced at or below the chosen
+        // model (a fallback should not cost more than the primary), then fill any
+        // remaining depth with the next-best by value.
+        const after = plan.pool.slice(plan.chosenIdx + 1);
+        const chosenPrice = plan.pool[plan.chosenIdx].ranked.priceEff;
+        const cheaper = after.filter((p) => p.ranked.priceEff <= chosenPrice);
+        const pricier = after.filter((p) => p.ranked.priceEff > chosenPrice);
+        const chainPool = [...cheaper, ...pricier].slice(0, settings.fallbackChainDepth);
         chainUpserts[plan.key] = [
-          ...new Set(plan.pool.slice(plan.chosenIdx + 1, plan.chosenIdx + 1 + settings.fallbackChainDepth).map((p) => {
+          ...new Set(chainPool.map((p) => {
             const row = rowById.get(p.catalogId);
             const level = suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix)) ? `:${suffix}` : "";
             return `openrouter/${p.catalogId}${level}`;

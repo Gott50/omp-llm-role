@@ -279,14 +279,14 @@ const EMPTY_MATCHED: string[] = [];
 
 /** Resolve the archetype, then layer the caller's explicit overrides on top. */
 function resolveRole(request: CreateAgentRequest): { archetype: Archetype; matched: string[]; def: RoleDef } | { errors: string[] } {
-  const match = request.archetypeId === undefined ? fitArchetype(request.purpose) : { archetype: archetypeById(request.archetypeId), matched: EMPTY_MATCHED };
+  const match = request.archetypeId === undefined ? fitArchetype(stripBenchmarkLinks(request.purpose)) : { archetype: archetypeById(request.archetypeId), matched: EMPTY_MATCHED };
   if (match.archetype === null) {
     return { errors: [`unknown archetype "${request.archetypeId}" — one of ${ARCHETYPES.map((a) => a.id).join(", ")}`] };
   }
   const archetype = match.archetype;
   const weights = request.weights ?? archetype.weights;
   const required = request.required ?? archetype.required;
-  const def: RoleDef = { description: oneLine(request.purpose), weights, required };
+  const def: RoleDef = { description: request.spec?.whenToUse ?? oneLine(request.purpose), weights, required };
   const thinking = request.thinking ?? archetype.thinking;
   if (thinking !== undefined) def.thinking = thinking;
   if (request.image === true || (request.image === undefined && archetype.image === true)) def.filters = { image: true };
@@ -557,6 +557,12 @@ export function extractBenchmarkLinks(text: string): string[] {
     if (url !== "" && !found.includes(url)) found.push(url);
   }
   return found;
+}
+
+/** Remove benchmark links from a purpose before the archetype fit, so a URL
+ * path containing a generic keyword cannot bias the archetype. */
+function stripBenchmarkLinks(text: string): string {
+  return text.replace(/https?:\/\/[^\s<>"')\]]+/gi, " ").replace(/\s+/g, " ").trim();
 }
 
 /**

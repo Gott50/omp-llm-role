@@ -7,6 +7,14 @@ copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The numbers below
 are the 2026-10-02 measurement and are not re-derived on read.
 
+- Cleaner role descriptions + cost-aware fallback chains (2026-10-02, issue #9):
+  `/create-agent` writes the architect's `whenToUse` as the role's `description`
+  (the one-line purpose when no architect ran), and strips benchmark links from
+  the purpose before the archetype fit, so a pasted URL path cannot bias the
+  archetype. The fallback chain prefers candidates priced at or below the chosen
+  model (by `priceEff`), filling any remaining depth with the next-best by value.
+  Unit-tested in `tests/create-agent.test.ts` and `tests/chain-pruning.test.ts`.
+
 - Benchmark-source registry (2026-10-02): `/create-agent` now resolves a
   benchmark link to a metric and ranks the new role on it. A link to any
   llm-stats benchmark page (`llm-stats.com/benchmarks/<id>`) resolves to that

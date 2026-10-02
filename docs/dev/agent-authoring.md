@@ -110,7 +110,12 @@ effect on the next session.
   frontmatter omp's own writer omits. The architect supplies
   `{identifier, whenToUse, systemPrompt}`; the plugin uses `--name` for the file
   (or, in the free-text form, the architect's `identifier`), `whenToUse` as the
-  description, and `systemPrompt` as the body. `parseCreateAgentInput` accepts
+  description, and `systemPrompt` as the body. The role definition written to the
+  settings lock carries the same `whenToUse` as its `description` (the one-line
+  purpose when no architect ran), so the explorer and the report show the
+  architect's clean label rather than the raw prompt; benchmark links are
+  stripped from the purpose before the archetype fit, so a pasted URL path
+  cannot bias the archetype. `parseCreateAgentInput` accepts
   either the flag form (`--name … --purpose …`) or a plain-language request
   (`/create-agent i want an agent for writing`); the free-text form folds any
   benchmark the request names into the weights (`extractBenchmarks`), resolves

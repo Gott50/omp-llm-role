@@ -325,11 +325,13 @@ After decisions, for **every managed role** (switched, adopted, or kept):
 
 - key = chosen selector **without thinking suffix** (a chain key matches the active
   model id, never a level)
-- value = next `fallbackChainDepth` (default 2) tier-eligible candidates after the chosen
-  one, deduped, each carrying the role's thinking suffix when the role has one and that
-  entry's own catalog row advertises thinking support (§6 step 4 rule, applied per
-  target) — so a fallback runs at the role's effort instead of the session
-  `defaultThinkingLevel`. **Exception:** a key claimed by more than one managed role (two
+- value = the next `fallbackChainDepth` (default 2) tier-eligible candidates after the
+  chosen one, **preferring candidates priced at or below the chosen model** (by
+  `priceEff`); when fewer than `fallbackChainDepth` such candidates exist, the remainder
+  is filled with the next-best by value. Deduped, each carrying the role's thinking
+  suffix when the role has one and that entry's own catalog row advertises thinking
+  support (§6 step 4 rule, applied per target) — so a fallback runs at the role's effort
+  instead of the session `defaultThinkingLevel`. **Exception:** a key claimed by more than one managed role (two
   roles chosen onto the same model) gets level-free values — one model-scoped chain
   cannot serve two different role levels, so no role's suffix is imposed on another.
 

@@ -57,6 +57,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Cleaner role descriptions + cost-aware fallback chains** — `/create-agent`
+  now writes the architect's `whenToUse` as the role's `description` (the
+  one-line purpose when no architect ran), so the explorer and the report show a
+  clean label instead of the raw prompt; benchmark links are stripped from the
+  purpose before the archetype fit, so a pasted URL path cannot bias the
+  archetype. The fallback chain now prefers candidates priced at or below the
+  chosen model (filling any remaining depth with the next-best by value), so an
+  availability fallback no longer raises the bill (issue #9).
 - **Repository is public.** `Gott50/omp-llm-role` was flipped from private to
   public, so the git (`omp plugin install github:Gott50/omp-llm-role`) and
   marketplace (`omp plugin marketplace add Gott50/omp-llm-role` +
