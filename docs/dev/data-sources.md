@@ -201,6 +201,22 @@ capability fill of 0.195. The raw id is preserved for the fetch URL (the real id
 is persisted as a declaration (below) — the metric key alone cannot reconstruct
 the raw id.
 
+### The benchmark catalog (discovery)
+
+`GET https://api.zeroeval.com/leaderboard/benchmarks` (the same backend, no
+`/<id>`) returns the full catalog as a top-level JSON array of ~745 rows:
+`{ benchmark_id, name, description, categories[], modality, max_score, verified,
+model_count, is_community }`. `parseBenchmarkCatalog` narrows it to
+`{ id, name, description, categories, modelCount }`; `loadBenchmarkCatalog`
+follows the same daily cache chain (cache file
+`benchmark-catalog-fetched-data.json`). `/create-agent` uses it to discover the
+benchmarks relevant to a purpose: `discoverBenchmarks` filters by coverage
+(`modelCount >= 3`), ranks the survivors by IDF-weighted lexical overlap with the
+purpose (a category that names the purpose's skill is the strongest signal), caps
+the list at 40, and asks the configured `judge` role (one `noul` question per
+candidate) which are direct measures. A selected benchmark resolves to its
+shipped metric when one exists (`writingbench` → `writing`), else `bench:<id>`.
+
 ### Declarative sources (data, not code)
 
 A user-level file `benchmark-sources.json` under the agent dir (`agentDir()`)
@@ -268,6 +284,7 @@ fresh checkout needs no setup.
 | `cache/designarena-fetched-data.json` | `{ fetchedAt, source, categories }` | non-fatal (OR mirror alone) |
 | `cache/writing-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (`writing` unfilled) |
 | `cache/bench-<id>-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (the external metric is unfilled) |
+| `cache/benchmark-catalog-fetched-data.json` | `{ fetchedAt, source, entries }` | non-fatal (discovery skipped) |
 | `cache/<declared-id>-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (the external metric is unfilled) |
 
 The last two are the registry's generic scores cache (`loadBenchmarkScores`),

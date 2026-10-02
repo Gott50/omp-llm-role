@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Benchmark discovery in `/create-agent`** — when you give a purpose, the
+  command now finds the llm-stats catalog benchmarks relevant to it and ranks
+  the new role on them, instead of only the benchmarks you name. The relevance
+  decision is a typed judgment through omp's configured `judge` role (TypeSafe
+  jev or its fallback chain): the catalog is filtered by coverage, ranked by
+  lexical overlap with the purpose, and the judge picks the direct measures. A
+  discovered benchmark that maps to a shipped metric uses it (`WritingBench` →
+  `writing`); any other becomes a generic `bench:<id>` metric. Discovery is
+  non-fatal (a catalog or judge failure just skips it) and skippable with
+  `--no-discover`; an explicit `--benchmarks` list wins over it (issue #10).
 - **Benchmark links in `/create-agent`** — the command now resolves a benchmark
   link to a metric and ranks the new role on it. A link to any llm-stats
   benchmark page (`llm-stats.com/benchmarks/<id>`) resolves to that benchmark; a

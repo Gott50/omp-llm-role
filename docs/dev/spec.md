@@ -142,6 +142,17 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   architect, validate, dry-run the coverage/leader, confirm via `ctx.ui.select` or
   `--yes`, save the declaration). A link that cannot be resolved or authored fails
   with a clear message — never a silent fallback to generic weights.
+- **`/create-agent` discovers benchmarks**: when a purpose is given and neither
+  `--no-discover` nor an explicit `--benchmarks` list is set, the command fetches
+  the llm-stats benchmark catalog (`GET /leaderboard/benchmarks`, daily-cached),
+  filters it by coverage (`modelCount >= 3`), ranks the survivors by IDF-weighted
+  lexical overlap with the purpose (a category that names the purpose's skill is
+  the strongest signal), caps the list at 40, and asks omp's configured `judge`
+  role (one `noul` question per candidate, batched into a single judgment) which
+  are direct measures. A selected benchmark resolves to its shipped metric when
+  one exists (`writingbench` → `writing`), else `bench:<id>`, and is folded in as
+  a focus metric. Discovery is non-fatal: a catalog or judge failure skips it and
+  the role still ranks on its other weights.
 - **The focus-share fit** (`applyFocusBenchmarks`) replaces the mean-weight fold: a
   named benchmark takes `clamp(specialistShare, 0.25, 0.40)` of the non-price budget
   (split across the named set), the archetype's remaining non-price weights are
@@ -524,7 +535,10 @@ session start so enabling/disabling a role takes effect on the next session.
   the registry, then the authoring step) and its metric folded into the weights
   as a decisive focus share; an unknown link is authored into a source
   declaration after a dry-run coverage/leader report and a confirmation
-  (`--yes` covers headless runs). Runs **omp's agent-creation architect**
+  (`--yes` covers headless runs). Unless `--no-discover` or an explicit
+  `--benchmarks` list is given, it also discovers the catalog benchmarks relevant
+  to the purpose (coverage filter → IDF lexical rank → the configured `judge`
+  role) and folds them in. Runs **omp's agent-creation architect**
   in-process (`src/agent-architect.ts`: the `/agents` hub's prompt shipped verbatim
   in `src/prompts/`, run through `createAgentSession` with no tools) to author the
   routing rule and the body, then adds the `model: "@<n>, @default"` and `tools:`

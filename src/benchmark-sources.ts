@@ -105,6 +105,22 @@ export function externalMetricKey(namespace: string, localId: string): string {
   return `${normalizeMetricKey(namespace)}:${normalizeMetricKey(localId)}`;
 }
 
+/** Catalog benchmark id -> the shipped metric it feeds, when one exists. */
+export const SHIPPED_CATALOG_METRICS: Record<string, string> = {
+  writingbench: "writing",
+  gpqa: "gpqa",
+  aime: "aime",
+  "swe-bench-verified": "swe_bench",
+  "arc-agi-v2": "arc_agi",
+  "terminal-bench": "terminal_bench",
+  "tau-bench": "tau_bench",
+};
+
+/** The metric a catalog benchmark feeds: a shipped key, or the generic `bench:<id>`. */
+export function catalogMetric(benchmarkId: string): string {
+  return SHIPPED_CATALOG_METRICS[benchmarkId] ?? externalMetricKey("bench", benchmarkId);
+}
+
 // ---------------------------------------------------------------------------
 // Parsers
 // ---------------------------------------------------------------------------
@@ -144,6 +160,35 @@ export function parseLlmStatsBenchmark(v: unknown): Record<string, number> | nul
     const score: unknown = row.normalized_score;
     if (typeof id !== "string" || typeof score !== "number" || !Number.isFinite(score)) continue;
     out[id] = score;
+  }
+  return out;
+}
+
+/** One row of the llm-stats benchmark catalog (`GET /leaderboard/benchmarks`). */
+export type BenchmarkCatalogEntry = {
+  id: string;
+  name: string;
+  description: string;
+  categories: string[];
+  modelCount: number;
+};
+
+/** Pure: the catalog payload (a top-level array) -> entries; null when unusable. */
+export function parseBenchmarkCatalog(v: unknown): BenchmarkCatalogEntry[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: BenchmarkCatalogEntry[] = [];
+  for (const row of v) {
+    if (!isRecord(row)) continue;
+    const id = row.benchmark_id;
+    const name = row.name;
+    if (typeof id !== "string" || id === "" || typeof name !== "string") continue;
+    out.push({
+      id,
+      name,
+      description: typeof row.description === "string" ? row.description : "",
+      categories: Array.isArray(row.categories) ? row.categories.filter((c): c is string => typeof c === "string") : [],
+      modelCount: typeof row.model_count === "number" && Number.isFinite(row.model_count) ? row.model_count : 0,
+    });
   }
   return out;
 }
@@ -621,6 +666,63 @@ export async function loadBenchmarkScores(source: BenchmarkSource, refresh: bool
   if (stale) {
     console.error(`using stale cache ${path} (fetched ${stale.fetchedAt})`);
     return { scores: stale.scores, label: source.label };
+  }
+  return null;
+}
+
+type CatalogCacheFile = { fetchedAt: string; source: string; entries: BenchmarkCatalogEntry[] };
+
+/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
+function readCatalogCache(path: string, requireFresh: boolean): CatalogCacheFile | null {
+  let parsed: CatalogCacheFile;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8")) as CatalogCacheFile;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed?.entries)) return null;
+  if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
+  return parsed;
+}
+
+/** Pretty-printed for scannable diffs, mirroring the other caches. */
+function writeCatalogCache(path: string, fetchedAt: string, source: string, entries: BenchmarkCatalogEntry[]): void {
+  const cache: CatalogCacheFile = { fetchedAt, source, entries };
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(cache, null, 2));
+  console.error(`wrote ${path}`);
+}
+
+/**
+ * The catalog cache -> fetch -> stale-cache chain, mirroring `loadBenchmarkScores`:
+ * a fresh same-day cache wins; otherwise the catalog is fetched live and cached;
+ * a stale cache is the last resort. `null` only when all three fail. An unusable
+ * payload is never cached, so the next run retries.
+ */
+export async function loadBenchmarkCatalog(refresh: boolean, cacheDir = CACHE_DIR): Promise<BenchmarkCatalogEntry[] | null> {
+  const path = join(cacheDir, "benchmark-catalog-fetched-data.json");
+  if (!refresh) {
+    const cached = readCatalogCache(path, true);
+    if (cached) {
+      console.error(`using cache ${path} (fetched ${cached.fetchedAt})`);
+      return cached.entries;
+    }
+  }
+  try {
+    const payload = await fetchJson(LLM_STATS_BENCHMARK_URL);
+    const entries = parseBenchmarkCatalog(payload);
+    if (entries && entries.length > 0) {
+      writeCatalogCache(path, new Date().toISOString(), LLM_STATS_BENCHMARK_URL, entries);
+      return entries;
+    }
+    console.error("benchmark catalog: unexpected payload shape; skipping");
+  } catch (err) {
+    console.error(`benchmark catalog: fetch failed (${err instanceof Error ? err.message : err})`);
+  }
+  const stale = readCatalogCache(path, false);
+  if (stale) {
+    console.error(`using stale cache ${path} (fetched ${stale.fetchedAt})`);
+    return stale.entries;
   }
   return null;
 }

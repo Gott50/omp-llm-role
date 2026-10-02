@@ -19,6 +19,7 @@ import { metricMeta } from "./explorer/explain.ts";
 import { ARCHETYPES, archetypeById, fitArchetype, type Archetype } from "./role-archetypes.ts";
 import { writeRoleSettings } from "./role-settings.ts";
 import { isKnownMetric, KNOWN_METRICS, PLUGIN_SETTINGS_PATH } from "./settings.ts";
+import { catalogMetric, type BenchmarkCatalogEntry } from "./benchmark-sources.ts";
 
 /** The architect's output (omp's `/agents` hub contract): the routing rule and
  * the system prompt, plus the identifier omp would use for the file name. */
@@ -258,6 +259,100 @@ export function applyFocusBenchmarks(weights: Record<string, number>, metrics: r
   return { weights: next, added, duplicates, unknown };
 }
 
+/** A benchmark discovered for a purpose: the metric it feeds and its label. */
+export type DiscoveredBenchmark = { metric: string; label: string };
+
+/** Catalog benchmarks with fewer models than this are skipped (a 1-model
+ * benchmark would distort the ranking). */
+const MIN_CATALOG_MODELS = 3;
+
+/** Cap the candidate list handed to the judge (the catalog holds ~745). */
+const MAX_DISCOVERY_CANDIDATES = 40;
+
+/** Purpose tokens for the catalog prefilter: lowercased, length >= 3, deduped. */
+function purposeTokens(purpose: string): string[] {
+  return [...new Set(purpose.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3))];
+}
+
+/** The lowercased words of a catalog entry's name, description and categories. */
+function catalogWords(entry: BenchmarkCatalogEntry): string[] {
+  return `${entry.name} ${entry.description} ${entry.categories.join(" ")}`.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word !== "");
+}
+
+/** A purpose token matches a word exactly, or as a prefix when the token is at
+ * least 4 chars ("writing" matches "writingbench", "com" does not match
+ * "browsecomp"). */
+function tokenMatchesWord(token: string, word: string): boolean {
+  return word === token || (token.length >= 4 && word.startsWith(token));
+}
+
+/**
+ * Rank catalog candidates by lexical relevance to the purpose, most relevant
+ * first. A token's weight is inverse-document-frequency over the candidate set,
+ * so a specific token ("writing") outweighs a generic one ("agent"); a category
+ * that names the purpose's skill is the strongest signal. Ties break by id for
+ * determinism. The result is capped at `MAX_DISCOVERY_CANDIDATES` so the judge
+ * prompt stays bounded.
+ */
+function rankCatalogCandidates(purpose: string, candidates: readonly BenchmarkCatalogEntry[]): BenchmarkCatalogEntry[] {
+  const tokens = purposeTokens(purpose);
+  if (tokens.length === 0) return [];
+  const words = candidates.map(catalogWords);
+  const docFreq = new Map<string, number>();
+  for (const token of tokens) {
+    let count = 0;
+    for (const ws of words) if (ws.some((word) => tokenMatchesWord(token, word))) count++;
+    docFreq.set(token, count);
+  }
+  const total = candidates.length;
+  return candidates
+    .map((entry, i) => {
+      let score = 0;
+      for (const token of tokens) {
+        if (!words[i].some((word) => tokenMatchesWord(token, word))) continue;
+        score += Math.log(1 + total / (1 + (docFreq.get(token) ?? 0)));
+      }
+      if (entry.categories.some((category) => tokens.includes(category))) score += 100;
+      return { entry, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.entry.id.localeCompare(b.entry.id))
+    .slice(0, MAX_DISCOVERY_CANDIDATES)
+    .map((x) => x.entry);
+}
+
+/**
+ * Discover the catalog benchmarks relevant to `purpose`. `decide` is the
+ * injected relevance decision (the extension injects the judge-backed one; tests
+ * inject a stub) and returns the selected benchmark ids. Benchmarks with too few
+ * models are dropped, the survivors are lexically ranked against the purpose and
+ * capped (the catalog is alphabetical, so a blind cap would drop late-sorting
+ * benchmarks), a selected benchmark resolves to its shipped metric when one
+ * exists (else `bench:<id>`), and a metric already in `exclude` is skipped.
+ */
+export async function discoverBenchmarks(
+  purpose: string,
+  catalog: readonly BenchmarkCatalogEntry[],
+  decide: (purpose: string, candidates: readonly BenchmarkCatalogEntry[]) => Promise<readonly string[]>,
+  exclude: readonly string[] = [],
+): Promise<DiscoveredBenchmark[]> {
+  const candidates = catalog.filter((entry) => entry.modelCount >= MIN_CATALOG_MODELS);
+  if (candidates.length === 0) return [];
+  const ranked = rankCatalogCandidates(purpose, candidates);
+  if (ranked.length === 0) return [];
+  const selected = new Set(await decide(purpose, ranked));
+  const seen = new Set(exclude);
+  const out: DiscoveredBenchmark[] = [];
+  for (const entry of ranked) {
+    if (!selected.has(entry.id)) continue;
+    const metric = catalogMetric(entry.id);
+    if (seen.has(metric)) continue;
+    seen.add(metric);
+    out.push({ metric, label: entry.name });
+  }
+  return out;
+}
+
 /**
  * The weightable benchmarks, for the create flow's "list all benchmarks in use,
  * to avoid duplicates": the shipped `KNOWN_METRICS` keys plus any external
@@ -373,6 +468,7 @@ export const CREATE_AGENT_USAGE = [
   "  --thinking <level>     off|minimal|low|medium|high|xhigh|max|auto",
   "  --tools <a,b,...>      builtin tool allowlist (default: the archetype's)",
   "  --benchmarks <m,...>   extra benchmarks to fold into the weights (see --list-benchmarks)",
+  "  --no-discover          skip benchmark discovery (rank only on named benchmarks)",
   "  --list-benchmarks      print the weightable benchmarks and exit",
   "  --scope <user|project> where the agent file goes (default: user)",
   "  --image                require image input (filters.image)",
@@ -437,13 +533,13 @@ function parseList(spec: string): string[] {
 }
 
 export type ParsedCreateAgentArgs =
-  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean; freeText: boolean; yes: boolean }
+  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean; freeText: boolean; yes: boolean; noDiscover: boolean; explicitBenchmarks: boolean }
   | { ok: false; error: string };
 
 /** The flag half of the parse, without the required-name/purpose check (the
  * free-text form supplies those itself). */
 type ParsedFlags =
-  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean; yes: boolean }
+  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean; yes: boolean; noDiscover: boolean; explicitBenchmarks: boolean }
   | { ok: false; error: string };
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -461,6 +557,8 @@ function parseFlags(argv: string[]): ParsedFlags {
   let listBenchmarks = false;
   let help = false;
   let yes = false;
+  let noDiscover = false;
+  let explicitBenchmarks = false;
 
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -496,6 +594,10 @@ function parseFlags(argv: string[]): ParsedFlags {
       yes = true;
       continue;
     }
+    if (flag === "--no-discover") {
+      noDiscover = true;
+      continue;
+    }
     const value = argv[++i];
     if (value === undefined) return { ok: false, error: `${flag} requires a value\n\n${CREATE_AGENT_USAGE}` };
     if (flag === "--name") request.name = value;
@@ -508,8 +610,10 @@ function parseFlags(argv: string[]): ParsedFlags {
     } else if (flag === "--required") request.required = parseList(value);
     else if (flag === "--thinking") request.thinking = value as SuffixLevel;
     else if (flag === "--tools") request.tools = parseList(value);
-    else if (flag === "--benchmarks") request.extraBenchmarks = parseList(value);
-    else if (flag === "--scope") {
+    else if (flag === "--benchmarks") {
+      explicitBenchmarks = true;
+      request.extraBenchmarks = parseList(value);
+    } else if (flag === "--scope") {
       if (value !== "user" && value !== "project") return { ok: false, error: `--scope must be user or project, got "${value}"` };
       request.scope = value;
     } else if (flag === "--body") request.body = value;
@@ -518,7 +622,7 @@ function parseFlags(argv: string[]): ParsedFlags {
     else return { ok: false, error: `unknown flag "${flag}"\n\n${CREATE_AGENT_USAGE}` };
   }
 
-  return { ok: true, request, json, bodyFile, listArchetypes, listBenchmarks, help, yes };
+  return { ok: true, request, json, bodyFile, listArchetypes, listBenchmarks, help, yes, noDiscover, explicitBenchmarks };
 }
 
 /** Parse the flag form of `/create-agent` into a request. */

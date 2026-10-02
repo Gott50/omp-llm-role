@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { applyFocusBenchmarks, createAgent, extractBenchmarkLinks, extractBenchmarks, formatBenchmarks, parseCreateAgentInput, type CreateAgentRequest } from "../src/agent-create.ts";
+import { applyFocusBenchmarks, createAgent, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, formatBenchmarks, parseCreateAgentInput, type CreateAgentRequest } from "../src/agent-create.ts";
+import type { BenchmarkCatalogEntry } from "../src/benchmark-sources.ts";
 import { isRecord } from "../src/guards.ts";
 import { fitArchetype } from "../src/role-archetypes.ts";
 import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
@@ -307,4 +308,58 @@ test("fitArchetype scores by matched keyword length and falls back on no match",
   const unmatched = fitArchetype("do something entirely unrelated");
   assert.equal(unmatched.archetype.id, "general");
   assert.deepEqual(unmatched.matched, []);
+});
+
+test("discoverBenchmarks filters by coverage, ranks lexically, and maps metrics", async () => {
+  // Alphabetical order, so a blind cap would drop the writing benchmarks.
+  const catalog: BenchmarkCatalogEntry[] = [
+    { id: "aaa-generic", name: "AAA Generic", description: "unrelated", categories: ["misc"], modelCount: 10 },
+    { id: "creative-writing-v3", name: "Creative Writing v3", description: "prose", categories: ["misc"], modelCount: 15 },
+    { id: "tiny-writing", name: "Tiny Writing", description: "writing", categories: ["writing"], modelCount: 1 },
+    { id: "writingbench", name: "WritingBench", description: "", categories: ["writing"], modelCount: 16 },
+  ];
+  let seen: readonly BenchmarkCatalogEntry[] = [];
+  const decide = async (_purpose: string, candidates: readonly BenchmarkCatalogEntry[]) => {
+    seen = candidates;
+    return ["writingbench", "creative-writing-v3"];
+  };
+
+  const result = await discoverBenchmarks("write prose and creative writing", catalog, decide);
+  // The 1-model benchmark is dropped before the decision; the unrelated entry
+  // has no purpose-token overlap and is not handed to the judge either. The
+  // category-matching benchmark outranks the name-only one.
+  assert.deepEqual(seen.map((entry) => entry.id), ["writingbench", "creative-writing-v3"]);
+  assert.ok(seen.some((entry) => entry.id === "writingbench"));
+  assert.ok(!seen.some((entry) => entry.id === "aaa-generic"));
+  // A shipped metric resolves to its key; an unknown one to `bench:<id>`.
+  assert.deepEqual(result, [
+    { metric: "writing", label: "WritingBench" },
+    { metric: "bench:creative-writing-v3", label: "Creative Writing v3" },
+  ]);
+
+  // A metric already in `exclude` is skipped.
+  const excluded = await discoverBenchmarks("write prose and creative writing", catalog, decide, ["writing"]);
+  assert.deepEqual(excluded, [{ metric: "bench:creative-writing-v3", label: "Creative Writing v3" }]);
+
+  // No lexical overlap at all: nothing is handed to the judge.
+  let called = false;
+  const none = await discoverBenchmarks("quantum chromodynamics", catalog, async () => {
+    called = true;
+    return [];
+  });
+  assert.deepEqual(none, []);
+  assert.equal(called, false);
+});
+
+test("parseCreateAgentInput carries the discovery flags", () => {
+  const noDiscover = parseCreateAgentInput('--name writer --purpose "write prose" --no-discover');
+  assert.ok(noDiscover.ok, noDiscover.ok ? "" : noDiscover.error);
+  assert.equal(noDiscover.noDiscover, true);
+  assert.equal(noDiscover.explicitBenchmarks, false);
+
+  const explicit = parseCreateAgentInput('--name writer --purpose "write prose" --benchmarks writing');
+  assert.ok(explicit.ok, explicit.ok ? "" : explicit.error);
+  assert.equal(explicit.explicitBenchmarks, true);
+  assert.deepEqual(explicit.request.extraBenchmarks, ["writing"]);
+  assert.equal(explicit.noDiscover, false);
 });

@@ -7,6 +7,19 @@ copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The numbers below
 are the 2026-10-02 measurement and are not re-derived on read.
 
+- Benchmark discovery in `/create-agent` (2026-10-02, issue #10): when a purpose
+  is given, the command fetches the llm-stats benchmark catalog (745 rows,
+  daily-cached), filters by coverage (`modelCount >= 3`), ranks by IDF-weighted
+  lexical overlap with the purpose, and asks omp's configured `judge` role (one
+  `noul` question per candidate) which are direct measures. A discovered
+  benchmark resolves to its shipped metric (`writingbench` → `writing`) or
+  `bench:<id>`. Non-fatal and skippable (`--no-discover`); an explicit
+  `--benchmarks` list wins. Verified live (omp 18.4.12, RPC): a writing purpose
+  discovered `WritingBench (writing)`, `Creative Writing v3`, `COLLIE`,
+  `AlignBench`, `AlpacaEval 2.0` and folded them into the role weights in a
+  `--dry-run`. Unit-tested in `tests/benchmark-sources.test.ts` and
+  `tests/create-agent.test.ts`.
+
 - Cleaner role descriptions + cost-aware fallback chains (2026-10-02, issue #9):
   `/create-agent` writes the architect's `whenToUse` as the role's `description`
   (the one-line purpose when no architect ran), and strips benchmark links from

@@ -13,11 +13,12 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, tokenizeArgs } from "./agent-create.ts";
+import { createAgent, CREATE_AGENT_USAGE, discoverBenchmarks, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, tokenizeArgs, type DiscoveredBenchmark } from "./agent-create.ts";
 import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
 import { generateAgentSpec } from "./agent-architect.ts";
 import { authorBenchmarkSource } from "./benchmark-author.ts";
-import { declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, validateDeclaration, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
+import { declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
+import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
 import { loadRankData } from "./engine.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
@@ -263,6 +264,31 @@ async function resolveBenchmarkLinks(ctx: ExtContext, links: readonly string[], 
   return { metrics, labels };
 }
 
+/**
+ * Discover the catalog benchmarks relevant to `purpose` (non-fatal): a catalog
+ * fetch or judge failure just skips discovery, so the command still creates the
+ * role. Returns null when discovery could not run.
+ */
+async function discoverForPurpose(ctx: ExtContext, purpose: string, exclude: readonly string[]): Promise<DiscoveredBenchmark[] | null> {
+  let catalog: BenchmarkCatalogEntry[] | null;
+  try {
+    catalog = await loadBenchmarkCatalog(false);
+  } catch (err) {
+    notifyLines(ctx, `create-agent: benchmark catalog unavailable (${err instanceof Error ? err.message : err}) — skipping discovery`);
+    return null;
+  }
+  if (catalog === null) {
+    notifyLines(ctx, "create-agent: benchmark catalog unavailable — skipping discovery");
+    return null;
+  }
+  try {
+    return await discoverBenchmarks(purpose, catalog, (p, candidates) => judgeBenchmarkRelevance(p, candidates, ctx.cwd), exclude);
+  } catch (err) {
+    notifyLines(ctx, `create-agent: benchmark discovery failed (${err instanceof Error ? err.message : err}) — skipping`);
+    return null;
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   /** Loopback explorer owned by this session binding (null until launched). */
   let explorer: ExplorerHandle | null = null;
@@ -369,6 +395,18 @@ export default function (pi: ExtensionAPI) {
         if (resolved === null) return;
         parsed.request.extraBenchmarks = [...(parsed.request.extraBenchmarks ?? []), ...resolved.metrics];
         parsed.request.benchmarkLabels = resolved.labels;
+      }
+
+      // 1b. Discover the catalog benchmarks relevant to the purpose (unless
+      //     --no-discover or an explicit --benchmarks list was given). Non-fatal:
+      //     a catalog or judge failure just skips discovery.
+      if (!parsed.noDiscover && !parsed.explicitBenchmarks && parsed.request.purpose.trim() !== "") {
+        const discovered = await discoverForPurpose(ctx, parsed.request.purpose, parsed.request.extraBenchmarks ?? []);
+        if (discovered !== null && discovered.length > 0) {
+          parsed.request.extraBenchmarks = [...(parsed.request.extraBenchmarks ?? []), ...discovered.map((d) => d.metric)];
+          parsed.request.benchmarkLabels = [...(parsed.request.benchmarkLabels ?? []), ...discovered.map((d) => d.label)];
+          notifyLines(ctx, `create-agent: discovered benchmarks: ${discovered.map((d) => `${d.label} (${d.metric})`).join(", ")}`);
+        }
       }
 
       // 2. omp's agent-creation architect authors the routing rule and the body

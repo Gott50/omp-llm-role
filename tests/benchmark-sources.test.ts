@@ -5,13 +5,16 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   applyBenchmarkScores,
+  catalogMetric,
   declarationToSource,
   declaredSourceForLink,
   dryRunDeclaration,
   executeDeclaration,
   llmStatsBenchmarkDeclaration,
+  loadBenchmarkCatalog,
   loadBenchmarkScores,
   normalizeMetricKey,
+  parseBenchmarkCatalog,
   parseBenchmarkPayload,
   parseSourceDeclaration,
   resolveBenchmarkSource,
@@ -115,6 +118,66 @@ test("loadBenchmarkScores: fresh cache wins, a live fetch writes the cache, a st
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("parseBenchmarkCatalog keeps valid rows and rejects a non-array payload", () => {
+  const payload = [
+    { benchmark_id: "writingbench", name: "WritingBench", description: "d", categories: ["writing"], model_count: 12 },
+    { name: "no id" },
+    "not an object",
+    { benchmark_id: "gpqa", name: "GPQA", categories: "nope" },
+  ];
+  assert.deepEqual(parseBenchmarkCatalog(payload), [
+    { id: "writingbench", name: "WritingBench", description: "d", categories: ["writing"], modelCount: 12 },
+    { id: "gpqa", name: "GPQA", description: "", categories: [], modelCount: 0 },
+  ]);
+  assert.equal(parseBenchmarkCatalog({ benchmarks: [] }), null);
+});
+
+test("loadBenchmarkCatalog: fresh cache wins, a live fetch writes the cache, a stale cache is the last resort", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bench-cat-"));
+  const cachePath = join(dir, "benchmark-catalog-fetched-data.json");
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    // Fresh cache wins: no fetch.
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", entries: [{ id: "a", name: "A", description: "", categories: [], modelCount: 1 }] }));
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response(JSON.stringify([{ benchmark_id: "b", name: "B" }]));
+    }) as typeof fetch;
+    const fresh = await loadBenchmarkCatalog(false, dir);
+    assert.deepEqual(fresh?.map((e) => e.id), ["a"]);
+    assert.equal(calls, 0);
+
+    // A live fetch writes the cache.
+    const live = await loadBenchmarkCatalog(true, dir);
+    assert.deepEqual(live?.map((e) => e.id), ["b"]);
+    assert.equal(calls, 1);
+    assert.deepEqual(JSON.parse(readFileSync(cachePath, "utf8")).entries.map((e: { id: string }) => e.id), ["b"]);
+
+    // A stale cache is the last resort when the fetch fails.
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", entries: [{ id: "c", name: "C", description: "", categories: [], modelCount: 0 }] }));
+    globalThis.fetch = (async () => {
+      throw new Error("offline");
+    }) as typeof fetch;
+    const stale = await loadBenchmarkCatalog(false, dir);
+    assert.deepEqual(stale?.map((e) => e.id), ["c"]);
+
+    // An unusable payload is never cached: the stale cache still stands.
+    globalThis.fetch = (async () => new Response(JSON.stringify({ nope: true }))) as typeof fetch;
+    const junk = await loadBenchmarkCatalog(true, dir);
+    assert.deepEqual(junk?.map((e) => e.id), ["c"]);
+    assert.deepEqual(JSON.parse(readFileSync(cachePath, "utf8")).entries.map((e: { id: string }) => e.id), ["c"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalogMetric maps shipped ids and falls back to a dot-free bench key", () => {
+  assert.equal(catalogMetric("writingbench"), "writing");
+  assert.equal(catalogMetric("creative-writing-v3"), "bench:creative-writing-v3");
+  assert.equal(catalogMetric("alpacaeval-2.0"), "bench:alpacaeval-2_0");
 });
 
 test("executeDeclaration walks the payload path, normalizes scoreMax and joins", () => {

@@ -121,7 +121,11 @@ effect on the next session.
   benchmark the request names into the weights (`extractBenchmarks`), resolves
   any benchmark link it points at (`extractBenchmarkLinks` → the registry, or
   the authoring step for an unknown provider), and still honours trailing flags
-  (`--dry-run`, `--force`, `--scope`, `--lock`, `--yes`). The resolved benchmark
+  (`--dry-run`, `--force`, `--scope`, `--lock`, `--yes`, `--no-discover`). Unless
+  `--no-discover` or an explicit `--benchmarks` list is given, it also discovers
+  the catalog benchmarks relevant to the purpose (`discoverBenchmarks`: coverage
+  filter → IDF lexical rank → the configured `judge` role via
+  `src/benchmark-discovery.ts`) and folds them in. The resolved benchmark
   labels are given to the architect (and, on the template path, listed in the
   body's `<criteria>`), so the agent's rubric names the benchmark its model was
   chosen on.
