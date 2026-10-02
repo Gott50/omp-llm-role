@@ -29,6 +29,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The normative spec moved to `docs/dev/spec.md`; maintainer docs split into
   `docs/dev/` and the README is now user-only (issue #6).
 
+### Fixed
+
+- **Explorer reload after Export** — the explorer served the role universe it
+  read at boot, so enabling a role (e.g. `designer`) and reloading the page
+  showed it disabled again until the server restarted. Every request now
+  re-reads the lock file (`getState()`), so a reload reflects the Export.
+
 ## [1.0.0] - 2026-10-01
 
 First release. The plugin ranks today's LLM leaderboard into best-fit picks for

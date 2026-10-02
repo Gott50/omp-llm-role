@@ -152,8 +152,7 @@ test("export writes the lock file with a backup and stays valid", async () => {
   const server = createExplorerServer({
     webDir: join(process.cwd(), "web"),
     lockPath,
-    universe: {},
-    getSnapshot: () => ({ rank, roles: DEFAULT_ROLES, defaults: DEFAULT_ROLES }),
+    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES }),
     refresh: async () => {},
   });
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -204,8 +203,7 @@ test("a role absent from the shipped defaults ranks and exports", async () => {
   const server = createExplorerServer({
     webDir: join(process.cwd(), "web"),
     lockPath,
-    universe: {},
-    getSnapshot: () => ({ rank, roles: DEFAULT_ROLES, defaults: DEFAULT_ROLES }),
+    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES }),
     refresh: async () => {},
   });
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -332,6 +330,55 @@ test("startExplorer serves lock-file roles and releases its port on close", asyn
   const reuse = createServer();
   await new Promise<void>((resolve) => reuse.listen(handle.port, "127.0.0.1", resolve));
   await new Promise<void>((resolve) => reuse.close(() => resolve()));
+});
+
+// A page reload after Export must reflect the write: the bootstrap payload is
+// re-read from the lock file on every request, not frozen at boot. Regression:
+// enabling a role in the explorer and reloading showed it disabled until the
+// server was restarted.
+test("a bootstrap after Export reflects the new lock state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-reload-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+
+  const rank: RankData = { models: MODELS, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await startExplorer({
+    webDir: join(process.cwd(), "web"),
+    lockPath,
+    rank,
+    catalog: [],
+    reload: async () => rank,
+    port: 0,
+    open: false,
+    onLog: () => {},
+  });
+
+  try {
+    const before: unknown = await (await fetch(`${handle.url}/api/bootstrap`)).json();
+    assert.ok(isRecord(before));
+    assert.ok(isRecord(before.universe));
+    assert.ok(isRecord(before.universe.designer));
+    assert.equal(before.universe.designer.enabled, false);
+
+    const res = await fetch(`${handle.url}/api/export`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roles: { designer: { ...DEFAULT_ROLES.designer, enabled: true } } }),
+    });
+    const exported: unknown = await res.json();
+    assert.ok(isRecord(exported));
+    assert.equal(exported.ok, true);
+
+    const after: unknown = await (await fetch(`${handle.url}/api/bootstrap`)).json();
+    assert.ok(isRecord(after));
+    assert.ok(isRecord(after.universe));
+    assert.ok(isRecord(after.universe.designer));
+    assert.equal(after.universe.designer.enabled, true);
+    assert.ok(isRecord(after.roles));
+    assert.ok("designer" in after.roles);
+  } finally {
+    await handle.close();
+  }
 });
 
 test("startExplorer falls back to an ephemeral port when the preferred one is busy", async () => {

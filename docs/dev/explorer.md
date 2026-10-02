@@ -31,9 +31,15 @@ caller; no auth. Every handler is wrapped so a throw becomes a 500 JSON error
 type ExplorerOpts = {
   webDir: string;
   lockPath: string;
-  getSnapshot(): { rank: RankData; roles: Record<string, RoleDef>; defaults: Record<string, RoleDef> };
-  universe: Record<string, UniverseEntry>;   // every known role, disabled included
-  refresh(): Promise<void>;                  // re-runs loadRankData({ refresh: true }) and swaps the snapshot
+  // Fresh per call: rank (swapped by refresh) plus roles/universe re-read from
+  // the lock file, so a page reload after Export reflects the write.
+  getState(): {
+    rank: RankData;
+    roles: Record<string, RoleDef>;
+    universe: Record<string, UniverseEntry>;  // every known role, disabled included
+    defaults: Record<string, RoleDef>;
+  };
+  refresh(): Promise<void>;                   // re-runs loadRankData({ refresh: true }) and swaps rank
 };
 ```
 
@@ -55,8 +61,10 @@ Endpoints:
   (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors` (per-level billed-blend
   multiplier from the engine's own `thinkingPriceFactor`, so the UI readout
   cannot drift), `fetchedAt`, `modelCount`, `orMatched`, `orPriced`, `lockPath`.
-- `handleRank` baselines against `snap.roles[role] ?? universe[role]?.def ??
-  defaults[role]`: an enabled role against its resolved def, a disabled or
+  Every request calls `getState()`, which re-reads the lock file — so a page
+  reload after Export shows the new roles, not the boot-time snapshot.
+- `handleRank` baselines against `state.roles[role] ?? state.universe[role]?.def ??
+  state.defaults[role]`: an enabled role against its resolved def, a disabled or
   lock-file-only role against its effective def, so selecting it still shows
   deltas rather than an empty baseline.
 - `handleExport` calls `writeRoleSettings(opts.lockPath, body.roles)` and
@@ -113,7 +121,8 @@ launcher both hosts use, so `explore.ts` and `/explore-roles` cannot drift.
   project-anchor file out of the merge. `resolveSettings` → `settings.roles`
   (the resolved set = what the plugin does today); `roleUniverse(raw, roles)`
   adds the roles it knows but does not rank (shipped opt-ins, lock-file-only
-  roles).
+  roles). `getState()` re-runs this read on **every** request, so a page reload
+  after Export reflects the write instead of the state at boot.
 - `enrichThinkingLevels(rank.models, opts.catalog)` gates the thinking price
   factor on the omp catalog; `refresh()` re-runs `opts.reload(true)` and
   re-enriches.

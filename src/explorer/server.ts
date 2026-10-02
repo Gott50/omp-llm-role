@@ -26,9 +26,18 @@ import { METRIC_META, explainModel, rankRows } from "./explain.ts";
 export type ExplorerOpts = {
   webDir: string;
   lockPath: string;
-  getSnapshot(): { rank: RankData; roles: Record<string, RoleDef>; defaults: Record<string, RoleDef> };
-  /** Every known role (disabled included) with kind/enabled/locked + effective def. */
-  universe: Record<string, UniverseEntry>;
+  /**
+   * Fresh state per call: `rank` (swapped by `refresh`) plus `roles`/`universe`
+   * re-read from the lock file, so a page reload after Export reflects the write
+   * instead of a boot-time snapshot.
+   */
+  getState(): {
+    rank: RankData;
+    roles: Record<string, RoleDef>;
+    /** Every known role (disabled included) with kind/enabled/locked + effective def. */
+    universe: Record<string, UniverseEntry>;
+    defaults: Record<string, RoleDef>;
+  };
   /** Re-runs loadRankData({ refresh: true }) and swaps the snapshot. */
   refresh(): Promise<void>;
 };
@@ -115,19 +124,19 @@ function thinkingFactors(): Record<string, number> {
 }
 
 function bootstrapPayload(opts: ExplorerOpts): object {
-  const snap = opts.getSnapshot();
+  const state = opts.getState();
   return {
-    roles: snap.roles,
-    defaults: snap.defaults,
-    universe: opts.universe,
+    roles: state.roles,
+    defaults: state.defaults,
+    universe: state.universe,
     metrics: Object.keys(KNOWN_METRICS),
     metricMeta: METRIC_META,
     levels: Object.keys(SUFFIX_LEVELS),
     thinkingFactors: thinkingFactors(),
-    fetchedAt: snap.rank.fetchedAt,
-    modelCount: snap.rank.models.length,
-    orMatched: snap.rank.orMatched,
-    orPriced: snap.rank.orPriced,
+    fetchedAt: state.rank.fetchedAt,
+    modelCount: state.rank.models.length,
+    orMatched: state.rank.orMatched,
+    orPriced: state.rank.orPriced,
     lockPath: opts.lockPath,
   };
 }
@@ -139,13 +148,13 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   }
   const role = body.role;
   const def = body.def as unknown as RoleDef;
-  const snap = opts.getSnapshot();
+  const state = opts.getState();
   // Enabled roles baseline against their resolved def; a disabled or lock-file-only
   // role against its effective def (shipped defaults merged with its overrides) so
   // selecting it still shows deltas, not an empty baseline.
-  const baselineDef = snap.roles[role] ?? opts.universe[role]?.def ?? snap.defaults[role];
-  const baseline = baselineDef ? rankRole(baselineDef, snap.rank.models) : [];
-  const rows = rankRows(def, snap.rank.models, baseline);
+  const baselineDef = state.roles[role] ?? state.universe[role]?.def ?? state.defaults[role];
+  const baseline = baselineDef ? rankRole(baselineDef, state.rank.models) : [];
+  const rows = rankRows(def, state.rank.models, baseline);
   sendJson(res, 200, {
     eligible: rows.length,
     lambda: roleLambda(def),
@@ -161,7 +170,7 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
     throw new HttpError(400, "expected { role: string, def: object, modelId: string }");
   }
   const def = body.def as unknown as RoleDef;
-  const explanation = explainModel(def, opts.getSnapshot().rank.models, body.modelId, body.role);
+  const explanation = explainModel(def, opts.getState().rank.models, body.modelId, body.role);
   sendJson(res, 200, { ...explanation, errors: validateRole(body.role, def) });
 }
 
