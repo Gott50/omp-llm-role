@@ -141,6 +141,7 @@ with the offending role/key and no write.
 # in-session (omp)
 /refresh-roles                          # force a run now
 /explore-roles [--port N] [--no-open]   # interactive ranking UI
+/create-agent <request> [options]       # agent + role + wiring (free text or flags)
 /create-agent --name <n> --purpose <text> [options]   # agent + role + wiring
 /remove-agent --name <n> [--scope user|project] [--lock PATH] [--yes] [--dry-run]   # delete an agent and its role
 
@@ -172,7 +173,14 @@ node --test tests/
 
 ## Add a specialist agent
 
-One command does all of it:
+One command does all of it. Describe the agent in plain language — the architect
+names it and any benchmark you mention is folded into the weights:
+
+```sh
+/create-agent i want an agent for writing. use the writing related Benchmarks in the Leaderboard https://llm-stats.com/leaderboards/best-ai-for-writing
+```
+
+The flag form is equivalent and gives you the name explicitly:
 
 ```sh
 /create-agent --name review --purpose "review pull requests for correctness and security"
@@ -186,7 +194,9 @@ validated role into the settings lock file, and runs the updater in-process so
 `--archetype <id>`, `--weights m=w,...`, `--required`, `--thinking`, `--tools`,
 `--benchmarks m,...` (extra metrics to fold in; `--list-benchmarks` prints the
 weightable set), `--scope user|project`, `--body`/`--body-file`, `--force`
-(overwrite an existing agent file), `--dry-run`, `--json`. There is no
+(overwrite an existing agent file), `--dry-run`, `--json`. In the free-text form
+the flags still apply after the request, e.g.
+`/create-agent i want an agent for writing --dry-run`. There is no
 out-of-session CLI for this path — run `/create-agent` in an omp session.
 
 By hand, the same three artifacts:

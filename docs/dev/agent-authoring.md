@@ -108,8 +108,13 @@ effect on the next session.
   `src/prompts/`, run through `createAgentSession` with no tools) to author the
   routing rule and the body, then `src/agent-file.ts` adds the `model:`/`tools:`
   frontmatter omp's own writer omits. The architect supplies
-  `{identifier, whenToUse, systemPrompt}`; the plugin uses the user's `--name` for
-  the file, `whenToUse` as the description, and `systemPrompt` as the body.
+  `{identifier, whenToUse, systemPrompt}`; the plugin uses `--name` for the file
+  (or, in the free-text form, the architect's `identifier`), `whenToUse` as the
+  description, and `systemPrompt` as the body. `parseCreateAgentInput` accepts
+  either the flag form (`--name … --purpose …`) or a plain-language request
+  (`/create-agent i want an agent for writing`); the free-text form folds any
+  benchmark the request names into the weights (`extractBenchmarks`) and still
+  honours trailing flags (`--dry-run`, `--force`, `--scope`, `--lock`).
 - **The shipped skill** — the hand-driven workflow, for bodies that need real
   authoring rather than the archetype scaffold.
 

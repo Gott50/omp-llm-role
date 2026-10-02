@@ -313,8 +313,12 @@ export type CreatedAgent = Extract<CreateAgentResult, { ok: true }>;
 // ---------------------------------------------------------------------------
 
 export const CREATE_AGENT_USAGE = [
-  "Usage: /create-agent --name <name> --purpose <text> [options]",
+  "Usage: /create-agent <request>",
+  "       /create-agent --name <name> --purpose <text> [options]",
   "",
+  "  <request>              a natural-language request; the architect names the",
+  "                         agent and any benchmark it mentions is folded in",
+  "                         (trailing flags below still apply, e.g. --dry-run)",
   "  --name <name>          agent and role name ([A-Za-z0-9_-]+, not main/sub)",
   "  --purpose <text>       one sentence: what the agent is for (fits the weights)",
   "  --archetype <id>       force a weight archetype instead of fitting the purpose",
@@ -386,11 +390,16 @@ function parseList(spec: string): string[] {
 }
 
 export type ParsedCreateAgentArgs =
+  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean; freeText: boolean }
+  | { ok: false; error: string };
+
+/** The flag half of the parse, without the required-name/purpose check (the
+ * free-text form supplies those itself). */
+type ParsedFlags =
   | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean }
   | { ok: false; error: string };
 
-/** Parse the flags of `/create-agent` into a request. */
-export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
+function parseFlags(argv: string[]): ParsedFlags {
   const request: CreateAgentRequest = {
     name: "",
     purpose: "",
@@ -457,11 +466,63 @@ export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
     else return { ok: false, error: `unknown flag "${flag}"\n\n${CREATE_AGENT_USAGE}` };
   }
 
-  if (!help && !listArchetypes && !listBenchmarks) {
-    if (request.name === "") return { ok: false, error: `--name is required\n\n${CREATE_AGENT_USAGE}` };
-    if (request.purpose === "") return { ok: false, error: `--purpose is required\n\n${CREATE_AGENT_USAGE}` };
-  }
   return { ok: true, request, json, bodyFile, listArchetypes, listBenchmarks, help };
+}
+
+/** Parse the flag form of `/create-agent` into a request. */
+export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
+  const parsed = parseFlags(argv);
+  if (!parsed.ok) return parsed;
+  if (!parsed.help && !parsed.listArchetypes && !parsed.listBenchmarks) {
+    if (parsed.request.name === "") return { ok: false, error: `--name is required\n\n${CREATE_AGENT_USAGE}` };
+    if (parsed.request.purpose === "") return { ok: false, error: `--purpose is required\n\n${CREATE_AGENT_USAGE}` };
+  }
+  return { ...parsed, freeText: false };
+}
+
+/**
+ * Metric names a free-text request names explicitly. Whole-word, case-insensitive,
+ * with `_`/`-`/space interchangeable inside a name (`long_context` ↔ "long context").
+ * `price`/`throughput` are excluded: every archetype already weights them, so
+ * naming them adds nothing.
+ */
+export function extractBenchmarks(text: string): string[] {
+  const found: string[] = [];
+  for (const metric of Object.keys(KNOWN_METRICS)) {
+    if (metric === "price" || metric === "throughput") continue;
+    const pattern = metric.replace(/_/g, "[ _-]?");
+    if (new RegExp(`\\b${pattern}\\b`, "i").test(text)) found.push(metric);
+  }
+  return found;
+}
+
+/**
+ * Parse the raw text after `/create-agent`. Flag form (`--name … --purpose …`)
+ * when the first token is a flag; otherwise the text up to the first `--flag` is
+ * a natural-language request: it becomes the purpose, any benchmark it names is
+ * folded in, and the name is left empty for the architect's identifier to fill
+ * (the extension does that after `generateAgentSpec`). Trailing flags still work,
+ * so `/create-agent <request> --dry-run` previews without writing.
+ */
+export function parseCreateAgentInput(raw: string): ParsedCreateAgentArgs {
+  const text = raw.trim();
+  if (text === "") return { ok: false, error: `nothing to create\n\n${CREATE_AGENT_USAGE}` };
+  const tokens = tokenizeArgs(text);
+  const firstFlag = tokens.findIndex((token) => token.startsWith("-"));
+  if (firstFlag === 0) return parseCreateAgentArgs(tokens);
+
+  const purpose = (firstFlag === -1 ? tokens : tokens.slice(0, firstFlag)).join(" ").trim();
+  if (purpose === "") return { ok: false, error: `nothing to create\n\n${CREATE_AGENT_USAGE}` };
+  const parsed = parseFlags(firstFlag === -1 ? [] : tokens.slice(firstFlag));
+  if (!parsed.ok) return parsed;
+  if (parsed.help || parsed.listArchetypes || parsed.listBenchmarks) return { ...parsed, freeText: false };
+
+  parsed.request.purpose = purpose;
+  if (parsed.request.extraBenchmarks === undefined) {
+    const benchmarks = extractBenchmarks(purpose);
+    if (benchmarks.length > 0) parsed.request.extraBenchmarks = benchmarks;
+  }
+  return { ...parsed, freeText: true };
 }
 
 /** The archetype table, for `--list-archetypes`. */

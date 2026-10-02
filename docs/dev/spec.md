@@ -476,8 +476,12 @@ session start so enabling/disabling a role takes effect on the next session.
   browser. Roles come from the user-level lock file (`project: null`); a busy port falls
   back to an OS-assigned one; a repeat invocation re-notifies the running URL; the handle
   is closed on `session_shutdown`.
-- **`/create-agent --name <n> --purpose "<text>" [flags]`**: creates the agent
-  **and** its role in one command. Runs **omp's agent-creation architect**
+- **`/create-agent <request> [flags]`** (free text) or
+  **`/create-agent --name <n> --purpose "<text>" [flags]`**: creates the agent
+  **and** its role in one command. The free-text form takes the text up to the
+  first `--flag` as the purpose, folds any benchmark it names into the weights
+  (`extractBenchmarks`), and uses the architect's `identifier` as the name;
+  trailing flags still apply. Runs **omp's agent-creation architect**
   in-process (`src/agent-architect.ts`: the `/agents` hub's prompt shipped verbatim
   in `src/prompts/`, run through `createAgentSession` with no tools) to author the
   routing rule and the body, then adds the `model: "@<n>, @default"` and `tools:`

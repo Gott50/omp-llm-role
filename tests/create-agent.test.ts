@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { applyExtraBenchmarks, createAgent, formatBenchmarks, type CreateAgentRequest } from "../src/agent-create.ts";
+import { applyExtraBenchmarks, createAgent, extractBenchmarks, formatBenchmarks, parseCreateAgentInput, type CreateAgentRequest } from "../src/agent-create.ts";
 import { isRecord } from "../src/guards.ts";
 import { fitArchetype } from "../src/role-archetypes.ts";
 import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
@@ -175,6 +175,65 @@ test("formatBenchmarks lists every weightable metric and marks the role's own", 
     assert.match(text, new RegExp(`\\b${metric}\\b`), `missing ${metric}`);
   }
   assert.match(text, /general\s+General index\s+<- in this role's weights/);
+});
+
+test("parseCreateAgentInput treats a non-flag string as a free-text request", () => {
+  const raw =
+    "i want an agent for writing. use the writing related Benchmarks in the Leaderboard https://llm-stats.com/leaderboards/best-ai-for-writing";
+  const parsed = parseCreateAgentInput(raw);
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+  assert.equal(parsed.freeText, true);
+  assert.equal(parsed.request.purpose, raw);
+  assert.equal(parsed.request.name, "");
+  assert.deepEqual(parsed.request.extraBenchmarks, ["writing"]);
+
+  // The flag form is unchanged.
+  const flags = parseCreateAgentInput('--name writer --purpose "write prose"');
+  assert.ok(flags.ok, flags.ok ? "" : flags.error);
+  assert.equal(flags.freeText, false);
+  assert.equal(flags.request.name, "writer");
+  assert.equal(flags.request.purpose, "write prose");
+
+  // Trailing flags still apply, so a free-text request can be previewed.
+  const dry = parseCreateAgentInput("i want an agent for writing --dry-run --scope project");
+  assert.ok(dry.ok, dry.ok ? "" : dry.error);
+  assert.equal(dry.freeText, true);
+  assert.equal(dry.request.purpose, "i want an agent for writing");
+  assert.equal(dry.request.dryRun, true);
+  assert.equal(dry.request.scope, "project");
+
+  // Empty input is refused, not silently treated as a purpose.
+  assert.equal(parseCreateAgentInput("   ").ok, false);
+});
+
+test("extractBenchmarks matches whole words and underscore/space variants", () => {
+  assert.deepEqual(extractBenchmarks("an agent for writing"), ["writing"]);
+  assert.deepEqual(extractBenchmarks("weight long context and tool calling"), ["tool_calling", "long_context"]);
+  assert.deepEqual(extractBenchmarks("run swe bench and terminal bench"), ["swe_bench", "terminal_bench"]);
+  // "agent" is not the "agents" metric; price/throughput are never extracted.
+  assert.deepEqual(extractBenchmarks("a cheap agent for price and throughput"), []);
+});
+
+test("a free-text request creates the agent under the architect's identifier", () => {
+  const { lockPath, agentsDir } = workspace();
+  const parsed = parseCreateAgentInput("i want an agent for writing");
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+
+  // The extension fills the name from the architect's identifier.
+  parsed.request.lockPath = lockPath;
+  parsed.request.spec = {
+    identifier: "prose-writer",
+    whenToUse: "Use this agent when you need polished prose.",
+    systemPrompt: "You are a prose writer.",
+  };
+  parsed.request.name = parsed.request.spec.identifier;
+
+  const result = createAgent(parsed.request);
+  assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+  assert.equal(result.name, "prose-writer");
+  assert.equal(result.archetype.id, "prose");
+  assert.deepEqual(result.bench.duplicates, ["writing"]);
+  assert.ok(existsSync(join(agentsDir, "prose-writer.md")));
 });
 
 test("fitArchetype scores by matched keyword length and falls back on no match", () => {

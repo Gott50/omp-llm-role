@@ -13,7 +13,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentArgs, tokenizeArgs } from "./agent-create.ts";
+import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, tokenizeArgs } from "./agent-create.ts";
 import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
 import { generateAgentSpec } from "./agent-architect.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
@@ -232,7 +232,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("create-agent", {
     description: "Create an omp subagent (via omp's agent-creation architect) plus its model role",
     handler: async (args, ctx: ExtContext) => {
-      const parsed = parseCreateAgentArgs(tokenizeArgs(typeof args === "string" ? args : ""));
+      const parsed = parseCreateAgentInput(typeof args === "string" ? args : "");
       if (!parsed.ok) {
         notifyLines(ctx, parsed.error);
         return;
@@ -272,6 +272,15 @@ export default function (pi: ExtensionAPI) {
           });
         } catch (err) {
           notifyLines(ctx, `create-agent: architect failed: ${err instanceof Error ? err.message : err}`);
+          return;
+        }
+      }
+
+      // Free-text form: the architect's identifier is the agent/role name.
+      if (parsed.freeText && parsed.request.name === "") {
+        parsed.request.name = parsed.request.spec?.identifier ?? "";
+        if (parsed.request.name === "") {
+          notifyLines(ctx, "create-agent: free-text form needs --name when --body/--body-file is given");
           return;
         }
       }

@@ -8,6 +8,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`/create-agent` free-text form** — the command now accepts a plain-language
+  request (`/create-agent i want an agent for writing. use the writing related
+  Benchmarks in the Leaderboard <url>`) as well as the flag form. The architect's
+  identifier becomes the agent/role name, and any benchmark the request names
+  (whole-word, `_`/`-`/space interchangeable) is folded into the weights.
+  Trailing flags still apply, so `/create-agent <request> --dry-run` previews.
 - **Role universe in the explorer** — the explorer now lists every role the
   plugin knows (built-in + shipped + user-defined), not just the ranked ones,
   and each role has an enable/disable toggle that writes `roles.<name>.enabled`

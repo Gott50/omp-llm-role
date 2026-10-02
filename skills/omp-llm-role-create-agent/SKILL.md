@@ -24,6 +24,13 @@ three steps in one shot:
 /create-agent --name <n> --purpose "<one sentence>"
 ```
 
+or, in plain language (the architect names it and any benchmark you mention is
+folded in):
+
+```
+/create-agent i want an agent for writing. use the writing related Benchmarks in the Leaderboard <url>
+```
+
 It runs **omp's agent-creation architect** in-process to author the routing rule and
 the body (the same architect the `/agents` hub runs), then adds the `model: "@<n>,
 @default"` and `tools:` frontmatter omp's own writer omits. It fits the weights from the

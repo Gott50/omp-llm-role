@@ -7,6 +7,19 @@ copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The numbers below
 are the 2026-10-01 measurement and are not re-derived on read.
 
+- `/create-agent` free-text form (2026-10-02): the command now accepts a
+  plain-language request as well as flags. `parseCreateAgentInput` splits the
+  text at the first `--flag`; the text before it is the purpose, the flags after
+  it still apply (`--dry-run`, `--force`, `--scope`, `--lock`, …). The name is
+  left empty for the architect's `identifier` to fill (the extension sets it
+  after `generateAgentSpec`); `extractBenchmarks` folds any benchmark the request
+  names into the weights (whole-word, case-insensitive, `_`/`-`/space
+  interchangeable; `price`/`throughput` excluded). Verified: the user's request
+  `i want an agent for writing. use the writing related Benchmarks in the
+  Leaderboard <url>` parses as free text, extracts `writing`, fits the `prose`
+  archetype, and creates the agent under the architect's identifier; live RPC
+  dispatch (omp 18.4.10) reached the architect with no "unknown flag" error.
+
 - `/remove-agent` command (2026-10-02): the inverse of `/create-agent`. It deletes
   the role's lock-file keys (`removeRoleSettings`: flat dotted keys + any nested
   entry, backup + atomic write) and the agent `.md` from the user and/or project
