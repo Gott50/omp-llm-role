@@ -16,7 +16,7 @@
  *     the effort and prices it; a second pin would silently disagree with it.
  */
 
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeConfigAtomic } from "./config-edit.ts";
 import { agentDir } from "./state.ts";
@@ -106,4 +106,17 @@ export function writeAgentFile(path: string, text: string, force: boolean): Agen
   const result = writeConfigAtomic(path, text, mtimeBefore);
   if (result === "conflict") return { ok: false, error: `${path} changed while writing — refusing to overwrite` };
   return { ok: true, path };
+}
+
+export type AgentRemoveResult = { ok: true } | { ok: false; error: string };
+
+/** Delete an agent file. The caller checks existence first; a missing file is an
+ * error here so a race cannot silently report success. */
+export function removeAgentFile(path: string): AgentRemoveResult {
+  try {
+    unlinkSync(path);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }

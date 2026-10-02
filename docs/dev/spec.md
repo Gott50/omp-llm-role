@@ -13,7 +13,7 @@ best models: it ranks models per role (existing scoring), keeps only models the 
 OpenRouter key can actually run, and surgically rewrites the role selectors — with
 thinking suffixes, fallback chains, and a session-start daily trigger.
 
-Existing `llm-role-rank.ts` stays the scoring engine; the plugin is the actuator on top.
+Existing `src/cli/llm-role-rank.ts` stays the scoring engine; the plugin is the actuator on top.
 
 ## 2. Verified ground truth (2026-09-21)
 
@@ -47,12 +47,12 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 | 5 | Thinking suffixes | **Per-role `thinking` field** on the role def, shipped as defaults, overridable in settings |
 | 6 | Trigger | **session_start, UTC-day gated** (first omp session of the day refreshes; later sessions no-op) + manual `/refresh-roles` |
 | 7 | Switch policy | **Hysteresis**: switch only if current model ineligible or new best beats current score by `switchMargin` (default `0.02`; `0` = always take today's best). The margin is a flat band on `value`, so it can veto up to `switchMargin / λ` $/M of savings; a challenger inside the band that undercuts the incumbent's effective price by `priceSwitchFraction` (default `0.5`) is adopted anyway (2026-09-30, `switched-cost`) |
-| 8 | Settings home | **omp plugin settings** (`omp-plugins.lock.json` → `settings["omp-llm-role"]`); plugin deep-merges flat dotted keys and nested objects itself. `omp plugin config set` stores values as strings, so typed role defs are written by `create-role.ts` / `/create-agent` / the explorer's Export (all validate through `resolveSettings`) |
+| 8 | Settings home | **omp plugin settings** (`omp-plugins.lock.json` → `settings["omp-llm-role"]`); plugin deep-merges flat dotted keys and nested objects itself. `omp plugin config set` stores values as strings, so typed role defs are written by `src/cli/create-role.ts` / `/create-agent` / the explorer's Export (all validate through `resolveSettings`); `/remove-agent` deletes them through the same module |
 | 9 | Variant pick | **Exact dated slug**: resolution order exact id → newest dated → bare → `-latest` alias (last resort); never `:batch`; `:free` only on free-tier keys |
 | 10 | Deliverable | **This spec**; implementation in a later session on owner go |
 | 11 | `retry.fallbackChains` | **Auto-populate** #2/#3 per managed role; prune stale keys the plugin wrote |
 | 12 | Provider scope | **`openrouter/*` selectors only** (ranking price/throughput is OpenRouter-derived; the key is an OpenRouter key) |
-| 13 | Naming | Plugin `omp-llm-role`, slash commands `/refresh-roles` (role refresh) + `/explore-roles` (in-session ranking explorer) + `/create-agent` (agent + role + wiring in one command) |
+| 13 | Naming | Plugin `omp-llm-role`, slash commands `/refresh-roles` (role refresh) + `/explore-roles` (in-session ranking explorer) + `/create-agent` (agent + role + wiring in one command) + `/remove-agent` (delete an agent and its role) |
 | 14 | Provider routing | **Price-based load balancing model**: price and throughput are the 1/price²-weighted means over the stable standard-tier billed routes (OpenRouter's default routing), per-provider data from the model pages; single find route only as fallback |
 
 ## 4. Architecture
@@ -60,38 +60,36 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
 ```
 ~/Documents/omp-llm-role/
   package.json              # name: omp-llm-role, omp.extensions: ["./src/extension.ts"]
-  llm-role-rank.ts          # existing CLI (report) — refactored to export the engine
   src/
-    engine.ts               # extracted from llm-role-rank.ts: fetch/caches, cardinal
-                            # transforms, value scoring; computeRankings(models, rolesConfig)
+    engine.ts               # fetch/caches, cardinal transforms, value scoring;
+                            # computeRankings(models, rolesConfig)
     settings.ts             # defaults + dotted-key deep-merge of plugin settings map
     availability.ts         # key fetch, tier gate, catalog check, variant resolution
     config-edit.ts          # surgical YAML edit for modelRoles + retry.fallbackChains
     state.ts                # state + history files
     updater.ts              # orchestration: run(trigger, deps) → decisions
-    extension.ts            # Bun/omp entry: session_start day gate + /refresh-roles + /explore-roles + /create-agent
-    role-settings.ts        # the one validated role write path (validate → merge → backup → atomic write)
+    extension.ts            # Bun/omp entry: session_start day gate + /refresh-roles + /explore-roles + /create-agent + /remove-agent
+    role-settings.ts        # the one validated role write path (validate → merge → backup → atomic write for creation **and removal**)
     role-archetypes.ts      # purpose -> weight archetype table (10 sets) + keyword fitting
     agent-file.ts           # agent .md rendering/placement (frontmatter; body from omp's architect)
     agent-architect.ts      # omp's agent-creation architect, run in-process (extension-only)
-    agent-create.ts         # /create-agent core: archetype -> role -> agent .md (+ shared arg parser/report)
+    agent-create.ts         # /create-agent core: purpose -> archetype -> validated role -> agent .md (+ shared arg parser/report)
+    agent-remove.ts         # /remove-agent core: deletes agent .md and role definition
     explorer/boot.ts        # shared explorer launcher (in-process server: bind, port fallback, close)
     explorer/server.ts      # explorer HTTP surface (static SPA + JSON API)
     explorer/explain.ts     # pure explanation layer (rank rows, decomposition, targets)
-    cli.ts                  # node entry: update-roles.ts shim → headless run
-  explore.ts                # `node explore.ts` — headless shim over explorer/boot.ts
-  update-roles.ts           # `node update-roles.ts [--dry-run] [--json]` (thin shim)
-  create-role.ts            # `node create-role.ts --name <role> --weights m=w,...` (thin shim)
-  create-agent.ts           # `node create-agent.ts --name <n> --purpose <text>` (thin shim)
-  llm-role-rankings.md      # existing report output (value-ranking format)
-  *.json caches             # unchanged (daily UTC freshness)
+    cli/llm-role-rank.ts    # report CLI (per-role tables + suggested modelRoles)
+    cli/create-role.ts      # `node src/cli/create-role.ts --name <role> --weights m=w,...`
+  docs/llm-role-rankings.md # generated report (value-ranking format)
+  cache/*.json              # daily UTC caches (gitignored)
+```
 ```
 
 Runtimes: extension runs **inside omp (Bun)**; CLI entry runs under **Node ≥ 23.6 (type
 stripping)** — this machine has Node 26, no bun. Code must be dual-runtime safe: only
 `node:` builtins + global `fetch`; relative imports with explicit `.ts` extensions.
 
-### 4.1 Refactor contract (`llm-role-rank.ts` → `engine.ts`)
+### 4.1 Refactor contract (`src/cli/llm-role-rank.ts` → `engine.ts`)
 
 - `loadRankData(deps?)` — fetch/cache chain per source (fresh cache → live fetch →
   stale cache → none), returns models + match counts. Since 2026-09-30 the
@@ -108,11 +106,11 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   identity over an already-0-1 percentile/score) + quality composite
   `q` + value `q − λ·$/M` + eligibility (`required` non-null, billed price). `roles`
   comes from resolved settings (§7), not the hardcoded `ROLES`.
-- `llm-role-rank.ts` keeps its CLI, flags, report format, and suggested-YAML output; its
+- `src/cli/llm-role-rank.ts` keeps its CLI, flags, report format, and suggested-YAML output; its
   suggested `modelRoles` block switches from `PROVIDER_BY_ORG` first-party guesses to the
   same catalog-resolved `openrouter/*` selectors the plugin emits (`PROVIDER_BY_ORG`
   retires from that path).
-- Verification after any engine change (existing convention): `node llm-role-rank.ts --top 5`,
+- Verification after any engine change (existing convention): `node src/cli/llm-role-rank.ts --top 5`,
   check stderr `openrouter: matched N/<pool> models (throughput), M priced` plus the
   `openrouter endpoints: K/L model pages` line, and per-role eligible counts.
 
@@ -246,8 +244,8 @@ Same inputs → same output. Ranking ties break by: score desc → blended $/M a
 
 ### 6.2 Shipped default role set
 
-Exactly the current `ROLES` from `llm-role-rank.ts` (weights/required verbatim, see
-`llm-role-rankings.md` legend for metric meanings): `default, smol, slow, vision, plan,
+Exactly the current `ROLES` from `src/cli/llm-role-rank.ts` (weights/required verbatim, see
+`docs/llm-role-rankings.md` legend for metric meanings): `default, smol, slow, vision, plan,
 commit, tiny, task, advisor, designer`. No custom roles ship beyond these (decision #2).
 
 `designer` is the only non-built-in role and ships `enabled: false`: `resolveSettings`
@@ -274,6 +272,8 @@ refuses spawns until `roles.designer.enabled=true`, and the same holds for any a
 whose `model:` frontmatter pins a disabled role. The patch is surgical (other entries
 and their order preserved, self-checked) and the sync is not day-gated — enabling the
 role takes effect on the next session.
+
+**The `/remove-agent` command deletes the agent `.md` file and its role definition, refusing shipped default roles. The plugin now tracks `managedDisabledAgents` to clean up stale `task.disabledAgents` entries when an agent is removed.**
 
 ### 6.3 Role filters (schema capability)
 
@@ -320,8 +320,10 @@ itself** (`roles.slow.weights.code=0.2` and `roles: { slow: {...} }` both nest, 
 order); a single `config` key holding JSON is accepted as a power-user escape hatch for
 whole-object overrides. `omp plugin config set <pkg> <key> <value>` stores every value as
 a **string**, which the validator rejects for numbers/arrays/booleans, so typed role defs
-are written by `create-role.ts` or the explorer's Export (both go through
-`src/role-settings.ts`: validate → merge → backup → atomic write).
+are written by `src/cli/create-role.ts`, `/create-agent` or the explorer's Export (all
+go through `src/role-settings.ts`: validate → merge → backup → atomic write). Role
+removal goes through the same module (`removeRoleSettings`: delete the flat dotted keys
+and any nested entry, backup + atomic write).
 
 ```jsonc
 // logical shape (defaults shown for knobs; role weights default to §6.2)
@@ -413,9 +415,12 @@ per metric would need its own justification for each.
 Files (all under `~/.omp/agent/`, next to the config they describe):
 
 - `llm-role-state.json` — `{ lastRunDay, managedRoles, role→lastSelector,
-  pluginWrittenChainKeys[], previousModelRoles }`. `previousModelRoles` is the full
-  snapshot of the last `modelRoles` block before the plugin changed it (manual rollback
-  aid; no rollback command in scope).
+  pluginWrittenChainKeys[], managedDisabledAgents[], previousModelRoles }`.
+  `previousModelRoles` is the full snapshot of the last `modelRoles` block before the
+  plugin changed it (manual rollback aid; no rollback command in scope).
+  `managedDisabledAgents` is the set of agent names the plugin added to
+  `task.disabledAgents`; a later run removes a name whose agent file is gone (e.g.
+  `/remove-agent`) or whose role is no longer disabled.
 - `llm-role-history.jsonl` — append-only per run: `{ts, trigger, keyMeta{isFreeTier,
   limitRemaining, creditsRemaining}, decisions[{role, from, to, reason: adopted|switched|
   switched-cost|kept-margin|kept-eligible|no-current, scores}]}`.
@@ -467,11 +472,10 @@ session start so enabling/disabling a role takes effect on the next session.
 - **`/refresh-roles`**: synchronous forced run in-session; notification summarizes every
   decision (kept lines included when verbose).
 - **`/explore-roles [--port N] [--no-open]`**: boots the interactive ranking explorer
-  **in-process** (no `node explore.ts` subprocess; catalog from the live model registry),
-  notifies the URL and opens the browser. Roles come from the user-level lock file
-  (`project: null`); a busy port falls back to an OS-assigned one; a repeat invocation
-  re-notifies the running URL; the handle is closed on `session_shutdown`. `node
-  explore.ts` is the same server via `src/explorer/boot.ts`, for use without a session.
+  **in-process** (catalog from the live model registry), notifies the URL and opens the
+  browser. Roles come from the user-level lock file (`project: null`); a busy port falls
+  back to an OS-assigned one; a repeat invocation re-notifies the running URL; the handle
+  is closed on `session_shutdown`.
 - **`/create-agent --name <n> --purpose "<text>" [flags]`**: creates the agent
   **and** its role in one command. Runs **omp's agent-creation architect**
   in-process (`src/agent-architect.ts`: the `/agents` hub's prompt shipped verbatim
@@ -487,21 +491,23 @@ session start so enabling/disabling a role takes effect on the next session.
   without `--force`, a name outside `[A-Za-z0-9_-]+`, a reserved name, or a
   weight set violating Σ = 1 / Σ(non-price) = 1 − w_price aborts **before** either
   write. `--body-file` replaces the architect body. `--list-archetypes` prints the
-  archetype table. `node create-agent.ts` is the same code path without a session,
-  except it has no omp session: it uses the archetype template instead of the
-  architect and takes `--benchmarks` instead of prompting (it stops after the two
-  writes and points at `update-roles.ts`).
-- **Headless**: `node update-roles.ts [--dry-run] [--json]` — always runs (no day gate;
-  explicit invocation is consent), `--dry-run` prints decisions without writing, `--json`
-  emits the decisions payload for scripting.
-- **Role authoring**: `node create-role.ts --name <role> --weights m=w,...` writes a
+  archetype table.
+- **`/remove-agent --name <n> [--scope user|project] [--lock PATH] [--yes] [--dry-run]`**:
+  the inverse of `/create-agent`. Deletes the role's lock-file keys
+  (`removeRoleSettings`: backup + atomic write) and the agent `.md` from the user
+  and/or project scope, then runs the updater in-process so `modelRoles.<n>` and the
+  plugin-managed `task.disabledAgents` entry are dropped. Refuses a shipped default
+  role (`DEFAULT_ROLES`), a reserved name, and an invalid name; errors when there is
+  nothing to remove. Asks for confirmation in-session unless `--yes` (skipped when
+  there is no UI).
+- **Role authoring**: `node src/cli/create-role.ts --name <role> --weights m=w,...` writes a
   validated role def into the settings lock file (backup + atomic write); the shipped
   skill `omp-llm-role-create-agent` drives agent authoring + role creation + verification
   by hand (for bodies that need real authoring rather than the archetype scaffold).
 
 ## 11. Verification plan (implementation gate)
 
-1. **Refactor sanity** — `node llm-role-rank.ts --top 5`: stderr match/eligible counts
+1. **Refactor sanity** — `node src/cli/llm-role-rank.ts --top 5`: stderr match/eligible counts
    identical to pre-refactor run; report diff empty.
 2. **Tier gate fixtures** — unit: paid+credit → billed-only; free-tier key → `:free`-only;
    zero budget both branches → abort.
@@ -519,7 +525,7 @@ session start so enabling/disabling a role takes effect on the next session.
    preserved.
 7. **Live E2E** — `omp plugin link .` → new omp session → observe day-gated run;
    `/refresh-roles` → verify config.yml diff + notification; second same-day session →
-   no-op; `node update-roles.ts --dry-run` matches in-session decisions;
+   no-op; a forced `/refresh-roles` matches in-session decisions;
    `/explore-roles --no-open` → `curl` the notified port for `/api/bootstrap`, a repeat
    invocation keeps the same port, and the port is released when the session ends.
 8. **Agent creation** — `create-agent` fixtures: a purpose fits the expected archetype;
@@ -532,10 +538,17 @@ session start so enabling/disabling a role takes effect on the next session.
    land in `config.yml`, then a headless spawn whose record reads
    `{"agent":"<n>","agentSource":"user","modelRole":"<n>"}` with `resolvedModel` equal
    to the role's selector.
+9. **Agent removal** — `remove-agent` fixtures: the role's lock-file keys and the agent
+   file are deleted (backup written); a shipped default role, a reserved name and an
+   invalid name are refused; nothing-to-remove errors; `--dry-run` writes nothing; the
+   updater drops `modelRoles.<n>` and the plugin-managed `task.disabledAgents` entry
+   (state `managedDisabledAgents`). Live: `/remove-agent --name <n>` in a session
+   deletes both artifacts and the updater pass removes the config entries.
 
 ## 12. Out of scope
 
 First-party provider selectors (decision #12), non-OpenRouter scoring sources, a
 `/rollback` command (state snapshot only), marketplace publishing (link/install is the
 path), and auto-tuning `switchMargin`. Weight editing is the explorer's Export,
-`create-role.ts` or `/create-agent` (all validate through `resolveSettings`).
+`src/cli/create-role.ts` or `/create-agent` (all validate through `resolveSettings`);
+role/agent removal is `/remove-agent` (through `removeRoleSettings`).

@@ -4,9 +4,9 @@
  *
  * `omp plugin config set` stores every value as a string, and the plugin's
  * validator rejects a string weight/required/boolean, so role settings must be
- * written as typed JSON. The explorer's Export handler and the `create-role.ts`
- * CLI both go through here, so a role created either way is byte-identical and
- * validated by the plugin's own resolver.
+ * written as typed JSON. The explorer's Export handler and the
+ * `src/cli/create-role.ts` CLI both go through here, so a role created either
+ * way is byte-identical and validated by the plugin's own resolver.
  */
 
 import { copyFileSync, existsSync, readFileSync, statSync } from "node:fs";
@@ -58,6 +58,41 @@ export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): 
   return { lock };
 }
 
+/**
+ * Delete every flat dotted key (`roles.<name>.*`) and any nested `roles.<name>`
+ * entry for `names` from a parsed lock file, preserving `plugins` and every
+ * sibling settings key. Returns the new lock object plus the names that actually
+ * had keys (a name with no entry is a no-op, not an error).
+ */
+export function mergeRemove(existing: unknown, names: readonly string[]): { lock: object; removed: string[] } | { error: string } {
+  if (!isRecord(existing)) return { error: "lock file root is not an object" };
+  const lock = structuredClone(existing);
+  if (!isRecord(lock.settings)) return { lock, removed: [] };
+  const settings = lock.settings as Record<string, unknown>;
+  const plugin = settings["omp-llm-role"];
+  if (!isRecord(plugin)) return { lock, removed: [] };
+
+  const removed: string[] = [];
+  for (const name of names) {
+    const prefix = `roles.${name}.`;
+    let hit = false;
+    for (const key of Object.keys(plugin)) {
+      if (key === `roles.${name}` || key.startsWith(prefix)) {
+        delete plugin[key];
+        hit = true;
+      }
+    }
+    const nested = plugin.roles;
+    if (isRecord(nested) && name in nested) {
+      delete nested[name];
+      if (Object.keys(nested).length === 0) delete plugin.roles;
+      hit = true;
+    }
+    if (hit) removed.push(name);
+  }
+  return { lock, removed };
+}
+
 export type RoleWriteResult =
   | { ok: true; backupPath: string | null; roles: string[] }
   | { ok: false; errors: string[] };
@@ -68,6 +103,45 @@ export function timestamp(): string {
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   const hms = `${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
   return `${ymd}-${hms}`;
+}
+
+/** Read and parse the lock file. A missing file is `{}`; unparseable is an error. */
+function readLock(lockPath: string): { parsed: unknown } | { error: string } {
+  let text = "";
+  try {
+    text = readFileSync(lockPath, "utf8");
+  } catch {
+    text = "";
+  }
+  if (text.trim() === "") return { parsed: {} };
+  try {
+    return { parsed: JSON.parse(text) };
+  } catch {
+    return { error: `${lockPath} is not valid JSON — refusing to overwrite` };
+  }
+}
+
+/** Back up the lock file (when present) and write `lock` atomically, mtime-guarded.
+ * `names` is the affected role set, echoed back on the result. */
+function commitLock(lockPath: string, lock: object, names: string[], dryRun: boolean): RoleWriteResult {
+  if (dryRun) return { ok: true, backupPath: null, roles: names };
+
+  let mtimeBefore = 0;
+  try {
+    mtimeBefore = statSync(lockPath).mtimeMs;
+  } catch {
+    mtimeBefore = 0;
+  }
+
+  let backupPath: string | null = null;
+  if (existsSync(lockPath)) {
+    backupPath = `${lockPath}.bak-${timestamp()}`;
+    copyFileSync(lockPath, backupPath);
+  }
+
+  const result = writeConfigAtomic(lockPath, JSON.stringify(lock, null, 2) + "\n", mtimeBefore);
+  if (result === "conflict") return { ok: false, errors: ["lock file changed since load — reload and retry"] };
+  return { ok: true, backupPath, roles: names };
 }
 
 /**
@@ -85,39 +159,29 @@ export function writeRoleSettings(
   for (const [name, def] of Object.entries(dirty)) errors.push(...validateRole(name, def));
   if (errors.length > 0) return { ok: false, errors };
 
-  let text = "";
-  try {
-    text = readFileSync(lockPath, "utf8");
-  } catch {
-    text = "";
-  }
-  let parsed: unknown = {};
-  if (text.trim() !== "") {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return { ok: false, errors: [`${lockPath} is not valid JSON — refusing to overwrite`] };
-    }
-  }
+  const read = readLock(lockPath);
+  if ("error" in read) return { ok: false, errors: [read.error] };
 
-  const merged = mergeExport(parsed, dirty);
+  const merged = mergeExport(read.parsed, dirty);
   if ("error" in merged) return { ok: false, errors: [merged.error] };
-  if (opts.dryRun) return { ok: true, backupPath: null, roles: Object.keys(dirty) };
+  return commitLock(lockPath, merged.lock, Object.keys(dirty), opts.dryRun === true);
+}
 
-  let mtimeBefore = 0;
-  try {
-    mtimeBefore = statSync(lockPath).mtimeMs;
-  } catch {
-    mtimeBefore = 0;
-  }
+/**
+ * Delete `names` from the lock file (flat dotted keys and any nested entry),
+ * through the same backup + atomic mtime-guarded write as `writeRoleSettings`.
+ * A name with no entry is a no-op; the result's `roles` lists the names that
+ * actually had keys. `dryRun` stops before the backup and the write.
+ */
+export function removeRoleSettings(
+  lockPath: string,
+  names: readonly string[],
+  opts: { dryRun?: boolean } = {},
+): RoleWriteResult {
+  const read = readLock(lockPath);
+  if ("error" in read) return { ok: false, errors: [read.error] };
 
-  let backupPath: string | null = null;
-  if (existsSync(lockPath)) {
-    backupPath = `${lockPath}.bak-${timestamp()}`;
-    copyFileSync(lockPath, backupPath);
-  }
-
-  const result = writeConfigAtomic(lockPath, JSON.stringify(merged.lock, null, 2) + "\n", mtimeBefore);
-  if (result === "conflict") return { ok: false, errors: ["lock file changed since load — reload and retry"] };
-  return { ok: true, backupPath, roles: Object.keys(dirty) };
+  const merged = mergeRemove(read.parsed, names);
+  if ("error" in merged) return { ok: false, errors: [merged.error] };
+  return commitLock(lockPath, merged.lock, merged.removed, opts.dryRun === true);
 }

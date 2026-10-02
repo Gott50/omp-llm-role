@@ -32,8 +32,7 @@ The npm tarball ships exactly the `files` whitelist in `package.json`:
 
 ```
 src, web, agents, skills,
-llm-role-rank.ts, update-roles.ts, explore.ts, create-role.ts, create-agent.ts,
-docs/dev
+docs/dev, docs/llm-role-rankings.md
 ```
 
 Caches and tests stay out. Gate: `node --test tests/`.

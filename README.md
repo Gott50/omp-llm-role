@@ -6,6 +6,13 @@ opt-in `designer`) and ships an omp plugin that applies those picks to
 `~/.omp/agent/config.yml` daily. Every role weights price and throughput, so
 the pick is the cheapest model that can do the job, not the strongest one.
 
+## Example output
+
+The report is a full worked example — per-role top-10 tables (value, q, $/M,
+tok/s, ctx, weighted metric contributions, ★ Pareto marker) plus the suggested
+`modelRoles` block. See
+[docs/llm-role-rankings.md](docs/llm-role-rankings.md).
+
 ## Install
 
 Any one of three routes:
@@ -46,8 +53,6 @@ omp plugin install omp-llm-role@gott50-plugins
   unknown keys stay byte-identical, and a no-change run writes nothing.
   `~/.omp/agent/llm-role-state.json` snapshots the previous `modelRoles` block
   on every write as a rollback aid.
-- **Headless.** `node update-roles.ts` runs the same pipeline (always forces);
-  `--dry-run` computes without writing, `--json` emits the decisions payload.
 
 ## Roles
 
@@ -122,8 +127,8 @@ Per-role knobs (`roles.<name>.*`):
 **Typed writes.** `omp plugin config set <plugin> <key> <value>` stores every
 value as a **string**, which the validator rejects for numbers/arrays/booleans,
 so it is only usable for string-valued keys. Write typed role defs with
-`node create-role.ts` or the explorer's **Export** (both validate → merge →
-backup → atomic write); for a whole-object override use the `config` escape
+`node src/cli/create-role.ts` or the explorer's **Export** (both validate →
+merge → backup → atomic write); for a whole-object override use the `config` escape
 hatch, `omp plugin config set omp-llm-role config '<json>'` (JSON-parsed by the
 plugin). The lock file stores **flat dotted keys** (`roles.slow.weights.code`);
 the reader also accepts nested objects, so an existing nested lock file keeps
@@ -137,13 +142,11 @@ with the offending role/key and no write.
 /refresh-roles                          # force a run now
 /explore-roles [--port N] [--no-open]   # interactive ranking UI
 /create-agent --name <n> --purpose <text> [options]   # agent + role + wiring
+/remove-agent --name <n> [--scope user|project] [--lock PATH] [--yes] [--dry-run]   # delete an agent and its role
 
 # CLI
-node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]
-node update-roles.ts [--dry-run] [--json]
-node create-role.ts --name <role> --weights m=w,... [--required m,...] [--thinking <level>] [--description <text>] [--image] [--lambda N] [--lock PATH] [--dry-run] [--json]
-node create-agent.ts --name <name> --purpose <text> [options]
-node explore.ts [--port N] [--lock PATH] [--refresh] [--no-open]
+node src/cli/llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]
+node src/cli/create-role.ts --name <role> --weights m=w,... [--required m,...] [--thinking <level>] [--description <text>] [--image] [--lambda N] [--lock PATH] [--dry-run] [--json]
 node --test tests/
 ```
 
@@ -154,22 +157,17 @@ node --test tests/
   `--no-open` skips the browser.
 - `/create-agent` — create an agent **and** its role and wire them in one
   command (see *Add a specialist agent*).
-- `llm-role-rank.ts` — markdown report to stdout (per-role tables + suggested
+- `/remove-agent` — the inverse of `/create-agent`: deletes the agent `.md` and
+  its role, then runs the updater in-process so `modelRoles.<n>` is dropped;
+  refuses shipped default roles (see *Remove a specialist agent*).
+- `src/cli/llm-role-rank.ts` — markdown report to stdout (per-role tables + suggested
   `modelRoles`). `--top N` rows per role (default 10); `--json` machine payload;
   `--out FILE` write instead of stdout; `--refresh` bypass both caches; `--all`
   include opt-in roles (`designer`) — the default ranks the nine built-in roles
   only; `--url` override the llm-stats page URL.
-- `update-roles.ts` — headless pipeline (key + catalog via the `omp` CLI);
-  `--dry-run` prints decisions without writing, `--json` emits
-  `{wrote, aborted, decisions[]}`.
-- `create-role.ts` — add/update one role in the settings lock file (validated,
+- `src/cli/create-role.ts` — add/update one role in the settings lock file (validated,
   backup + atomic write); `--dry-run` validates without writing, `--json` prints
   the payload.
-- `create-agent.ts` — the same code path as `/create-agent` outside a session;
-  it stops after the role and agent writes and points at `update-roles.ts`.
-- `explore.ts` — headless/out-of-session shim over the same explorer launcher;
-  `--lock` defaults to `~/.omp/plugins/omp-plugins.lock.json`, `--refresh`
-  forces a refetch before serving.
 - `node --test tests/` — the unit suite.
 
 ## Add a specialist agent
@@ -188,30 +186,52 @@ validated role into the settings lock file, and runs the updater in-process so
 `--archetype <id>`, `--weights m=w,...`, `--required`, `--thinking`, `--tools`,
 `--benchmarks m,...` (extra metrics to fold in; `--list-benchmarks` prints the
 weightable set), `--scope user|project`, `--body`/`--body-file`, `--force`
-(overwrite an existing agent file), `--dry-run`, `--json`. Outside a session it
-is `node create-agent.ts --name … --purpose …` followed by
-`node update-roles.ts`.
+(overwrite an existing agent file), `--dry-run`, `--json`. There is no
+out-of-session CLI for this path — run `/create-agent` in an omp session.
 
 By hand, the same three artifacts:
 
 1. Define the role with the plugin's validated write path:
    ```sh
-   node ~/.omp/plugins/node_modules/omp-llm-role/create-role.ts --name review \
+   node ~/.omp/plugins/node_modules/omp-llm-role/src/cli/create-role.ts --name review \
      --weights reasoning=0.30,general=0.24,code=0.20,agents=0.10,price=0.10,throughput=0.06 \
      --required general,price,throughput --thinking high \
      --description "Code review: agentic depth with cost awareness"
    ```
 2. Author the agent that pins `model: "@review, @default"` (the routing), or pin
    an existing agent through `task: { agentModelOverrides: { <agent>: "@review" } }`.
-3. Wire it: `node update-roles.ts` (or `/refresh-roles` in a session).
+3. Wire it: `/refresh-roles` in a session.
 
 The shipped skill `omp-llm-role-create-agent` is the hand-driven equivalent, for
 when the body needs real authoring rather than the archetype scaffold.
 
+## Remove a specialist agent
+
+One command deletes an agent **and** its role:
+
+```sh
+/remove-agent --name review
+```
+
+It deletes the agent `.md` (user and/or project scope) and the role's lock-file
+keys, then runs the updater in-process so `modelRoles.review` is dropped from
+`config.yml` — nothing to remember. Options: `--scope user|project`,
+`--lock PATH`, `--yes` (skip the in-session confirmation), `--dry-run`. Shipped
+default roles (e.g. `designer`) cannot be deleted — the message points at the
+explorer's "Reset to shipped default". A role created any way (the explorer's
+"+ new role", `create-role.ts`, or `/create-agent`) is removable.
+
+By hand, the same two artifacts:
+
+1. Delete the role from the settings lock file (the explorer's Export, or edit
+   the lock file directly).
+2. Delete the agent file: `rm ~/.omp/agent/agents/review.md`.
+3. Wire it: `/refresh-roles` in a session.
+
 ## Explorer
 
-`/explore-roles` in omp (or `node explore.ts` outside it) boots a loopback-only
-web UI (`http://127.0.0.1:5177`) that answers "why is model X at rank 7 for
+`/explore-roles` in omp boots a loopback-only web UI
+(`http://127.0.0.1:5177`) that answers "why is model X at rank 7 for
 `@slow`?" and "what happens if I care more about price than agents?" without
 editing source and re-running the CLI.
 

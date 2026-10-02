@@ -11,15 +11,15 @@ runtime contract they must satisfy, and the invariants a change must not break.
 
 Every tracked source file, with its role and the symbols a caller depends on.
 
-### Root CLI shims (Node, type-stripping)
+### CLI entry points (`src/cli/`, Node, type-stripping)
+
+The two surfaces that have no omp command. Everything else is reached through
+the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 
 | File | Role |
 |---|---|
-| `llm-role-rank.ts` | Report surface. Thin CLI over `src/engine.ts`: parses `--top/--json/--out/--refresh/--all/--url`, calls `loadRankData` + `computeRankings`, renders the per-role markdown tables and the suggested `modelRoles` YAML (resolved through `resolveVariant`). No exports; `main()` runs at import. |
-| `update-roles.ts` | Headless updater shim: `node update-roles.ts [--dry-run] [--json]`. Builds a `Deps` from the `omp` CLI (`omp token openrouter`, `omp models ls --json`) and calls `runUpdater("cli", deps, { force: true, dryRun })`. Always forces (explicit invocation is consent). |
-| `explore.ts` | Explorer CLI shim: `node explore.ts [--port N] [--lock PATH] [--refresh] [--no-open]`. Loads rank data + catalog and calls `startExplorer` from `src/explorer/boot.ts`. Keeps the process alive on the listening handle. |
-| `create-role.ts` | `node create-role.ts --name <role> --weights m=w,...` — writes one validated role into the settings lock file through `writeRoleSettings`. |
-| `create-agent.ts` | `node create-agent.ts --name <n> --purpose <text>` — the same code path as `/create-agent` minus the omp session: uses the archetype template instead of the architect, stops after the two writes and points at `update-roles.ts`. |
+| `src/cli/llm-role-rank.ts` | Report surface. Thin CLI over `src/engine.ts`: parses `--top/--json/--out/--refresh/--all/--url`, calls `loadRankData` + `computeRankings`, renders the per-role markdown tables and the suggested `modelRoles` YAML (resolved through `resolveVariant`). No exports; `main()` runs at import. |
+| `src/cli/create-role.ts` | `node src/cli/create-role.ts --name <role> --weights m=w,...` — writes one validated role into the settings lock file through `writeRoleSettings`. |
 
 ### `src/` core
 
@@ -30,21 +30,22 @@ Every tracked source file, with its role and the symbols a caller depends on.
 | `src/agent-pins.ts` | Agent → pinned-role derivation. Exports `parseAgentPin` (first `@<role>` in the `model:` frontmatter) and `discoverAgentPins` (scans the shipped, user and project agent dirs; project > user > plugin). Drives the `task.disabledAgents` sync. |
 | `src/availability.ts` | Key tier gate, catalog filter, variant resolution, provider-allowlist probe. Exports `fetchKeyMeta`, `tierGate`, `filterCatalog`, `rankingIdOf`, `currentRankingId`, `resolveVariant`, `enrichThinkingLevels`, `probeModel`, `catalogFromOmpModelsJson`, `THINKING_LEVELS`, and the `CatalogEntry`/`KeyMeta`/`Tier`/`ProbeVerdict` types. |
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains` + `task.disabledAgents`, plus the atomic writer. Exports `parseConfig`, `patchConfig`, `writeConfigAtomic`, `ConfigEditError`, and the `ConfigPatch` type. No runtime YAML dependency. |
-| `src/state.ts` | State/history/lock files under the agent dir, and agent-dir resolution. Exports `agentDir`, `loadState`, `saveState`, `appendHistory`, `acquireLock`, `releaseLock`, `freshState`, and the `PluginState` type. |
-| `src/updater.ts` | Orchestration: rank → tier gate → probe → hysteresis → chains → agent-disable sync → config write. Exports `runUpdater`, the `Deps`/`Decision`/`RunResult`/`Trigger`/`DecisionReason` types. |
-| `src/extension.ts` | omp extension entry (default export). Registers `session_start` (awaited day-gated run), `/refresh-roles`, `/explore-roles` (in-process explorer), `/create-agent`, and `session_shutdown`. Owns `extDeps` (the extension's `Deps`) and the live-session model hook. |
+| `src/state.ts` | State/history/lock files under the agent dir, and agent-dir resolution. Exports `agentDir`, `loadState`, `saveState`, `appendHistory`, `acquireLock`, `releaseLock`, `freshState`, and the `PluginState` type (which carries `managedDisabledAgents` — the `task.disabledAgents` names the plugin added). |
+| `src/updater.ts` | Orchestration: rank → tier gate → probe → hysteresis → chains → agent-disable sync → config write. Exports `runUpdater`, the `Deps`/`Decision`/`RunResult`/`Trigger`/`DecisionReason` types. `agentDisablePatch` also removes a previously-managed `task.disabledAgents` name whose agent file is gone. |
+| `src/extension.ts` | omp extension entry (default export). Registers `session_start` (awaited day-gated run), `/refresh-roles`, `/explore-roles` (in-process explorer), `/create-agent`, `/remove-agent`, and `session_shutdown`. Owns `extDeps` (the extension's `Deps`) and the live-session model hook. |
 | `src/guards.ts` | The package's one type guard: `isRecord`. |
-| `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write). Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `timestamp`. Shared by the explorer's Export, `create-role.ts` and `/create-agent`. |
+| `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) and its removal half. Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `mergeRemove`, `removeRoleSettings`, `timestamp`. Shared by the explorer's Export, `src/cli/create-role.ts`, `/create-agent` and `/remove-agent`. |
 | `src/role-archetypes.ts` | Purpose → weight archetype table (10 sets) + keyword fitting. Exports `ARCHETYPES`, `FALLBACK_ARCHETYPE`, `fitArchetype`, `archetypeById`, and the `Archetype`/`ArchetypeMatch` types. |
-| `src/agent-file.ts` | Agent `.md` rendering/placement. Exports `renderAgentFile`, `writeAgentFile`, `isReadOnlyTools`, `userAgentsDir`, `projectAgentsDir`, `READ_ONLY_TOOLS`, `RESERVED_AGENT_NAMES`, `AGENT_NAME_RE`, and the `AgentFileSpec`/`AgentWriteResult` types. |
+| `src/agent-file.ts` | Agent `.md` rendering/placement. Exports `renderAgentFile`, `writeAgentFile`, `removeAgentFile`, `isReadOnlyTools`, `userAgentsDir`, `projectAgentsDir`, `READ_ONLY_TOOLS`, `RESERVED_AGENT_NAMES`, `AGENT_NAME_RE`, and the `AgentFileSpec`/`AgentWriteResult`/`AgentRemoveResult` types. |
 | `src/agent-architect.ts` | omp's agent-creation architect, run in-process (extension-only). Exports `generateAgentSpec`, `parseAgentSpec`, and the `ArchitectOptions` type. Imports `@oh-my-pi/pi-coding-agent` at the package root. |
 | `src/agent-create.ts` | `/create-agent` core: purpose → archetype → validated role → agent `.md`, plus the shared flag parser and report formatter both hosts use. Exports `createAgent`, `parseCreateAgentArgs`, `tokenizeArgs`, `applyExtraBenchmarks`, `formatBenchmarks`, `formatArchetypes`, `formatCreateAgentReport`, `CREATE_AGENT_USAGE`, and the request/result types. |
+| `src/agent-remove.ts` | `/remove-agent` core: delete an agent `.md` and its role, plus the shared flag parser and report formatter. Exports `removeAgent`, `parseRemoveAgentArgs`, `formatRemoveAgentReport`, `REMOVE_AGENT_USAGE`, and the request/result types. Refuses shipped default roles. |
 
 ### `src/explorer/`
 
 | File | Role / key exports |
 |---|---|
-| `src/explorer/boot.ts` | Shared explorer launcher: bind/port fallback, lock-file roles, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, and the `ExplorerHandle`/`ExplorerBootOpts` types. Used by both `explore.ts` and `/explore-roles`. |
+| `src/explorer/boot.ts` | Shared explorer launcher: bind/port fallback, lock-file roles, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, and the `ExplorerHandle`/`ExplorerBootOpts` types. Used by `/explore-roles`. |
 | `src/explorer/server.ts` | Zero-dependency HTTP surface (static SPA + JSON API). Exports `createExplorerServer` and the `ExplorerOpts` type. Endpoints: `GET /api/bootstrap`, `POST /api/rank`, `POST /api/explain`, `POST /api/export`, `POST /api/refresh`. |
 | `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets. Exports `rankRows`, `explainModel`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`, and the `RankRow`/`Explanation`/`Contribution`/`Closing`/`MetricMeta` types. |
 
@@ -60,30 +61,31 @@ Every tracked source file, with its role and the symbols a caller depends on.
 | `.omp-plugin/marketplace.json` | Self-hosted omp marketplace catalog (`gott50-plugins`). Its `plugins[0].version` must be bumped with `package.json`. |
 | `LICENSE` | MIT. |
 | `package-lock.json` | Lockfile for the dev-only `yaml` dependency. |
-| `.gitignore` | Excludes the five daily caches, `node_modules/` and `.DS_Store`. |
+| `.gitignore` | Excludes `cache/`, `node_modules/` and `.DS_Store`. |
 | `AGENTS.md` | Repo working agreement (update README/SPEC and commit after work). |
 | `skills-lock.json` | Lock for the local `.agents/skills/` collection. |
 | `.agents/skills/` | Local dev-skill collection (Matt Pocock skills); not part of the plugin's shipped surface. |
 | `docs/agents/domain.md`, `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md` | Repo process docs (domain glossary, issue tracker, triage labels). |
 | `docs/dev/spec.md` | Normative spec (moved from the repo root). |
 | `docs/dev/architecture.md`, `docs/dev/data-sources.md` | This file and the data-source map. |
-| `tests/` | `node --test tests/` fixtures (tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, writing metric, thinking-price, openrouter-blend, agent disable, agent pins, settings schema, session model, role lock, role enable, probe gate, create-agent, create-role). |
-| `llm-role-rankings.md` | Generated report (regenerate with `--out`). |
-| `llm-stats-fetched-rankings.json`, `openrouter-fetched-data.json`, `openrouter-endpoints-fetched-data.json`, `designarena-fetched-data.json`, `writing-fetched-data.json` | Daily UTC caches (gitignored; see [`data-sources.md`](data-sources.md)). |
+| `tests/` | `node --test tests/` fixtures (tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, writing metric, thinking-price, openrouter-blend, agent disable, agent pins, settings schema, session model, role lock, role enable, probe gate, create-agent, create-role, **remove-agent**). |
+| `docs/llm-role-rankings.md` | Generated report (regenerate with `--out`); the README's worked example. |
+| `cache/*.json` | Daily UTC caches (gitignored; see [`data-sources.md`](data-sources.md)). |
 
 ## Data flow
 
 One pipeline, driven by `runUpdater(trigger, deps, opts)` in `src/updater.ts`.
-Both hosts (the omp extension and the Node CLI shim) inject the same `Deps`, so
-they share this code path.
+The omp extension injects the production `Deps`; tests inject fakes.
 
-1. **Trigger.** `session_start` (awaited, day-gated) or `/refresh-roles` /
-   `update-roles.ts` (forced). `runUpdater` loads `loadState()` and the raw
+1. **Trigger.** `session_start` (awaited, day-gated) or `/refresh-roles`
+   (forced). `runUpdater` loads `loadState()` and the raw
    settings (`deps.getSettings?.() ?? readPluginSettingsMap()`), then
    `resolveSettings(raw)`; any validation error aborts with no write.
 2. **Agent-disable sync.** `agentDisablePatch` computes the
-   `task.disabledAgents` adds/removes from `roleUniverse` + `discoverAgentPins`.
-   This sync is **not** day-gated: on a same-day session it is the only write.
+   `task.disabledAgents` adds/removes from `roleUniverse` + `discoverAgentPins`,
+   plus a removal for any name in `state.managedDisabledAgents` whose agent file
+   is gone (e.g. `/remove-agent`) or whose role is no longer disabled. This sync
+   is **not** day-gated: on a same-day session it is the only write.
 3. **Rank.** `deps.getRankData?.() ?? loadRankData({ roles: settings.roles })`.
    `loadRankData` runs the per-source cache → fetch → stale-cache chain and
    returns `RankData` (models + match counts). A throw aborts (llm-stats is
@@ -110,8 +112,8 @@ they share this code path.
    `patchConfig` (surgical, self-checked), `writeConfigAtomic` (mtime-guarded
    tmp+rename, 3 conflict retries). Zero changes → no write, no mtime change.
 10. **State + history.** `saveState` (day gate, managed roles, last selectors,
-    plugin-written chain keys, previous `modelRoles` snapshot) and
-    `appendHistory` (one row per completed run).
+    plugin-written chain keys, managed `task.disabledAgents` names, previous
+    `modelRoles` snapshot) and `appendHistory` (one row per completed run).
 11. **Live-session coupling.** When `default` actually changed and
     `activateDefaultOnEmptySession` is set, `deps.applySessionModel?.(selector,
     previous)` hands the new selector to the host (extension only).
@@ -147,8 +149,8 @@ Rules every module must satisfy:
 
 The one deliberate exception is `src/agent-architect.ts`: it imports
 `@oh-my-pi/pi-coding-agent` (the **package root** only — subpath imports do not
-resolve in the compiled binary) and is therefore **extension-only**. The CLI and
-the tests import `src/agent-create.ts`, which never imports the architect.
+resolve in the compiled binary) and is therefore **extension-only**. The tests
+import `src/agent-create.ts`, which never imports the architect.
 
 ## Injected `Deps`
 
@@ -158,10 +160,8 @@ has no host coupling:
 ```ts
 type Deps = {
   getToken(): Promise<string>;          // extension: modelRegistry.getApiKeyForProvider("openrouter")
-                                        // CLI: `omp token openrouter`
   getCatalog(): Promise<CatalogEntry[]>;// extension: ctx.modelRegistry.getAvailable()
-                                        // CLI: `omp models ls --json`
-  notify(lines: string[]): void;        // extension: ctx.ui.notify (+ stderr when !hasUI); CLI: stdout
+  notify(lines: string[]): void;        // extension: ctx.ui.notify (+ stderr when !hasUI)
   nowUtcDay(): string;
   // DI seams for tests; production defaults to the engine and the lock-file settings.
   getRankData?(): Promise<RankData>;
@@ -185,13 +185,15 @@ before `catalogFromOmpModelsJson`.
   `runUpdater("session-start", extDeps(pi, ctx))`), `/refresh-roles`
   (`runUpdater("manual", …, { force: true })`), `/explore-roles` (in-process
   `startExplorer`), `/create-agent` (architect → `createAgent` → in-process
-  `runUpdater`), `session_shutdown` (closes the explorer handle).
-- **CLI**: `update-roles.ts` (updater), `llm-role-rank.ts` (report),
-  `explore.ts` (explorer), `create-role.ts` / `create-agent.ts` (authoring).
+  `runUpdater`), `/remove-agent` (`removeAgent` → in-process `runUpdater`),
+  `session_shutdown` (closes the explorer handle).
+- **CLI**: `src/cli/llm-role-rank.ts` (report), `src/cli/create-role.ts`
+  (authoring). The updater and explorer have no CLI shim — they run through
+  `/refresh-roles` and `/explore-roles`.
 
 ## Engine refactor contract
 
-`src/engine.ts` is the shared engine; `llm-role-rank.ts` is a thin CLI over it.
+`src/engine.ts` is the shared engine; `src/cli/llm-role-rank.ts` is a thin CLI over it.
 
 - `loadRankData(opts?: { refresh?; url?; roles? }): Promise<RankData>` — the
   per-source cache → fetch → stale-cache chain. `opts.roles` names the roles the
@@ -202,11 +204,11 @@ before `catalogFromOmpModelsJson`.
   fixed-anchor transforms + quality composite `q` + value `q − λ·priceEff` +
   eligibility (`required` non-null, billed price). `roles` comes from resolved
   settings, not a hardcoded table.
-- `llm-role-rank.ts` keeps its CLI, flags, report format and suggested-YAML
+- `src/cli/llm-role-rank.ts` keeps its CLI, flags, report format and suggested-YAML
   output; its suggested `modelRoles` block resolves through the same
   catalog/variant logic the plugin uses (`openrouter/<id>` selectors).
 
-Verification after any engine change: `node llm-role-rank.ts --top 5`, then check
+Verification after any engine change: `node src/cli/llm-role-rank.ts --top 5`, then check
 stderr `openrouter: matched N/<pool> models (throughput), M priced`, the
 `openrouter endpoints: K/L model pages` line, and the per-role eligible counts.
 
@@ -217,10 +219,8 @@ stderr `openrouter: matched N/<pool> models (throughput), M priced`, the
   set `deriveSettingsSchema()` produces; a test asserts the two match. omp's
   `/settings` → Plugins tab renders and writes these keys directly.
 - **npm tarball**: ships exactly the `files` whitelist in `package.json`
-  (`src`, `web`, `agents`, `skills`, the five CLI scripts, and the spec entry).
-  Caches and tests stay out. Note: the spec was moved to [`spec.md`](spec.md),
-  so the whitelist's spec entry no longer matches a file — the spec is not in
-  the tarball until that entry is updated.
+  (`src`, `web`, `agents`, `skills`, `docs/dev`, `docs/llm-role-rankings.md`).
+  Caches and tests stay out.
 - **Agent discovery**: `agents/designer.md` is found from the plugin's extension
   root (`<ext>/agents/*.md`); a user/project copy overrides it.
 - **Skill discovery**: `skills/omp-llm-role-create-agent/SKILL.md` is found from
@@ -237,9 +237,10 @@ stderr `openrouter: matched N/<pool> models (throughput), M priced`, the
 
 ## Invariants a maintainer must not break
 
-- **One write path per artifact.** Roles go through `writeRoleSettings`; the
-  config through `patchConfig` + `writeConfigAtomic`; agent files through
-  `writeAgentFile`. Nothing else writes those files.
+- **One write path per artifact.** Roles go through `writeRoleSettings` (and
+  `removeRoleSettings` for deletion); the config through `patchConfig` +
+  `writeConfigAtomic`; agent files through `writeAgentFile` (and
+  `removeAgentFile` for deletion). Nothing else writes those files.
 - **Surgical config edits.** Only managed role lines, managed chain keys and the
   plugin-managed `task.disabledAgents` names change; comments, blank lines and
   unknown keys stay byte-identical. A no-change run writes nothing.

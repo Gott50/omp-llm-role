@@ -14,6 +14,7 @@ import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createAgent, CREATE_AGENT_USAGE, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentArgs, tokenizeArgs } from "./agent-create.ts";
+import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
 import { generateAgentSpec } from "./agent-architect.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
 import { loadRankData } from "./engine.ts";
@@ -191,9 +192,9 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // In-process explorer: no `node explore.ts` subprocess, catalog from the live
-  // model registry. Same server the CLI boots (src/explorer/boot.ts), so the
-  // UI's numbers are the plugin's numbers in both hosts.
+  // In-process explorer: no subprocess, catalog from the live model registry.
+  // Same server src/explorer/boot.ts exposes, so the UI's numbers are the
+  // plugin's numbers.
   pi.registerCommand("explore-roles", {
     description: "Open the interactive model-role ranking explorer (loopback web UI)",
     handler: async (args, ctx: ExtContext) => {
@@ -299,6 +300,46 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       notifyLines(ctx, formatCreateAgentReport(result, "ranking the new role…"));
+      if (result.dryRun) return;
+      try {
+        await runUpdater("manual", extDeps(pi, ctx), { force: true });
+      } catch (err) {
+        ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
+      }
+    },
+  });
+
+  // The inverse of /create-agent: delete the agent .md and its role, then run
+  // the updater in-process so `modelRoles.<name>` and the plugin-managed
+  // `task.disabledAgents` entry are dropped in the same command.
+  pi.registerCommand("remove-agent", {
+    description: "Remove an agent and its model role (deletes the agent .md and the role)",
+    handler: async (args, ctx: ExtContext) => {
+      const parsed = parseRemoveAgentArgs(tokenizeArgs(typeof args === "string" ? args : ""));
+      if (!parsed.ok) {
+        notifyLines(ctx, parsed.error);
+        return;
+      }
+      if (parsed.help) {
+        notifyLines(ctx, REMOVE_AGENT_USAGE);
+        return;
+      }
+      if (!parsed.yes && ctx.hasUI && ctx.ui.select) {
+        const answer = await ctx.ui.select(`Remove agent "${parsed.request.name}" and its role?`, [
+          { label: "Remove", description: "delete the agent file and the role" },
+          { label: "Cancel" },
+        ]);
+        if (answer !== "Remove") {
+          notifyLines(ctx, "remove-agent: cancelled");
+          return;
+        }
+      }
+      const result = removeAgent(parsed.request);
+      if (!result.ok) {
+        notifyLines(ctx, `remove-agent: ${result.errors.join("\n")}`);
+        return;
+      }
+      notifyLines(ctx, formatRemoveAgentReport(result, "cleaning up config.yml…"));
       if (result.dryRun) return;
       try {
         await runUpdater("manual", extDeps(pi, ctx), { force: true });

@@ -1,15 +1,14 @@
 /**
  * `/create-agent` core: purpose -> archetype -> validated role -> agent `.md`,
- * in one call. Shared by the omp extension command and the `create-agent.ts` CLI,
- * so both produce byte-identical artifacts.
+ * in one call. The omp extension command is the only host; the tests drive this
+ * module directly.
  *
  * The three writes are ordered so a failure leaves nothing half-made: every check
  * (name, weight math, existing agent file, the plugin's own validator via
  * `writeRoleSettings`) runs before either file is touched.
  *
  * Wiring `modelRoles.<name>` is the caller's job: the extension command runs the
- * updater in-process right after (the same path `/refresh-roles` takes), and the
- * CLI points at `update-roles.ts`.
+ * updater in-process right after (the same path `/refresh-roles` takes).
  */
 
 import { existsSync } from "node:fs";
@@ -310,8 +309,7 @@ export type CreatedAgent = Extract<CreateAgentResult, { ok: true }>;
 // ---------------------------------------------------------------------------
 // Argument parsing and report formatting, shared by the `/create-agent` omp
 // command (which receives the raw text typed after the command name) and the
-// `create-agent.ts` CLI (which receives argv). One parser, so the two hosts
-// cannot drift.
+// tests (which pass argv). One parser, so the two cannot drift.
 // ---------------------------------------------------------------------------
 
 export const CREATE_AGENT_USAGE = [
@@ -391,7 +389,7 @@ export type ParsedCreateAgentArgs =
   | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean }
   | { ok: false; error: string };
 
-/** Parse the flags of `/create-agent` / `create-agent.ts` into a request. */
+/** Parse the flags of `/create-agent` into a request. */
 export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
   const request: CreateAgentRequest = {
     name: "",

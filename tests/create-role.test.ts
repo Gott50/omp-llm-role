@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { isRecord } from "../src/guards.ts";
 import { readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 
-const CLI = join(process.cwd(), "create-role.ts");
+const CLI = join(process.cwd(), "src/cli/create-role.ts");
 
 /** Temp dir with a lock file that already carries a plugins block. */
 function seedLock(dir: string): string {

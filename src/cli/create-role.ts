@@ -10,7 +10,7 @@
  * and what the explorer shows.
  *
  * Usage:
- *   node create-role.ts --name <role> --weights general=0.3,code=0.2,price=0.25,throughput=0.25 \
+ *   node src/cli/create-role.ts --name <role> --weights general=0.3,code=0.2,price=0.25,throughput=0.25 \
  *     [--required general,price,throughput] [--thinking auto] [--description "..."] \
  *     [--image] [--lambda 0.01] [--lock PATH] [--dry-run] [--json]
  *
@@ -19,8 +19,8 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { RoleDef, SuffixLevel } from "./src/engine.ts";
-import { writeRoleSettings } from "./src/role-settings.ts";
+import type { RoleDef, SuffixLevel } from "../engine.ts";
+import { writeRoleSettings } from "../role-settings.ts";
 
 type CreateRoleArgs = {
   name: string;
@@ -36,7 +36,7 @@ type CreateRoleArgs = {
 };
 
 const USAGE = [
-  "Usage: node create-role.ts --name <role> --weights <metric=w,...> [options]",
+  "Usage: node src/cli/create-role.ts --name <role> --weights <metric=w,...> [options]",
   "",
   "  --name <role>          role name ([A-Za-z0-9_-]+, not main/sub)",
   "  --weights <m=w,...>    metric weights; must sum to 1.0 (±0.01)",
@@ -156,7 +156,7 @@ function main(): void {
   console.log(`create-role: wrote roles.${args.name} to ${args.lockPath}`);
   if (result.backupPath) console.log(`  backup: ${result.backupPath}`);
   console.log(`  next: author the agent that pins model: "@${args.name}, @default" — or run /create-agent,`);
-  console.log(`        then tune it in the explorer: node explore.ts`);
+  console.log(`        then tune it in the explorer: /explore-roles`);
 }
 
 main();

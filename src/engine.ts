@@ -15,14 +15,14 @@
  *
  * Both datasets are cached daily (UTC) next to this module's repo root; the
  * cache is reused while from the current UTC day. Callers:
- *   - llm-role-rank.ts (CLI report)
+ *   - src/cli/llm-role-rank.ts (CLI report)
  *   - src/updater.ts    (plugin actuator)
  *
  * Dual-runtime rule: only `node:` builtins + global fetch; relative imports
  * with explicit `.ts` extensions (runs under Node type-stripping and Bun).
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,20 +32,22 @@ const DEFAULT_URL = "https://llm-stats.com/leaderboards/llm-leaderboard";
 // keeps using the same root-level cache files as before the extraction.
 const ENGINE_DIR = dirname(fileURLToPath(import.meta.url)); // <repo>/src
 const REPO_ROOT = dirname(ENGINE_DIR); // <repo>
-const CACHE_PATH = join(REPO_ROOT, "llm-stats-fetched-rankings.json");
-const OPENROUTER_CACHE_PATH = join(REPO_ROOT, "openrouter-fetched-data.json");
+/** Daily UTC caches live in one gitignored dir, not scattered at the repo root. */
+const CACHE_DIR = join(REPO_ROOT, "cache");
+const CACHE_PATH = join(CACHE_DIR, "llm-stats-fetched-rankings.json");
+const OPENROUTER_CACHE_PATH = join(CACHE_DIR, "openrouter-fetched-data.json");
 const OPENROUTER_FIND_URL =
   "https://openrouter.ai/api/frontend/v1/models/find?active=true&fmt=cards&order=top-weekly";
-const OPENROUTER_ENDPOINTS_CACHE_PATH = join(REPO_ROOT, "openrouter-endpoints-fetched-data.json");
+const OPENROUTER_ENDPOINTS_CACHE_PATH = join(CACHE_DIR, "openrouter-endpoints-fetched-data.json");
 /** Model pages are ~1-2 MB of RSC flight each; fetched with a small worker pool. */
 const OPENROUTER_PAGE_CONCURRENCY = 8;
-const DESIGN_ARENA_CACHE_PATH = join(REPO_ROOT, "designarena-fetched-data.json");
+const DESIGN_ARENA_CACHE_PATH = join(CACHE_DIR, "designarena-fetched-data.json");
 const DESIGN_ARENA_URL = "https://www.designarena.ai/api/leaderboard";
 /** Minimum battles for an endpoint Elo to be trusted over the OR mirror's snapshot. */
 const DESIGN_MIN_BATTLES = 300;
 /** The writing leaderboard's canonical machine-readable export (CC BY 4.0, hourly):
  * the WritingBench ranking the page's JSON-LD `#ranking` ItemList mirrors. */
-const WRITING_CACHE_PATH = join(REPO_ROOT, "writing-fetched-data.json");
+const WRITING_CACHE_PATH = join(CACHE_DIR, "writing-fetched-data.json");
 const WRITING_URL = "https://llm-stats.com/research/best-ai-for-writing/evidence.json";
 /** Fill for sparse capability metrics, keyed by metric name. A model missing one of
  * these metrics is scored at the fill instead of 0, so absence is not a coverage
@@ -950,6 +952,7 @@ export function writeCache(path: string, fetchedAt: string, source: string, rows
     // Rows arrive in the site's leaderboard order; rank = array position.
     rankings: rows.map((r, i) => ({ rank: i + 1, ...r })),
   };
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(cache, null, 2));
   console.error(`wrote ${path}`);
 }
@@ -997,6 +1000,7 @@ export function readOrCache(path: string, requireFresh: boolean): OrCacheFile | 
 /** Pretty-printed with sorted keys for scannable diffs; throughput and price are re-derived from data on read. */
 export function writeOrCache(path: string, fetchedAt: string, data: object, modelCount: number): void {
   const cache: OrCacheFile = { fetchedAt, source: OPENROUTER_FIND_URL, modelCount, data };
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, sortedStringify(cache));
   console.error(`wrote ${path}`);
 }
@@ -1024,6 +1028,7 @@ function writeEndpointsCache(path: string, fetchedAt: string, slugs: OpenRouterE
     slugCount: Object.keys(slugs).length,
     slugs,
   };
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, sortedStringify(cache));
   console.error(`wrote ${path}`);
 }
@@ -1044,6 +1049,7 @@ function readDesignArenaCache(path: string, requireFresh: boolean): DesignArenaC
 /** Pretty-printed with sorted keys for scannable diffs, mirroring the OpenRouter cache. */
 function writeDesignArenaCache(path: string, fetchedAt: string, categories: Record<string, DesignArenaEntry[]>): void {
   const cache: DesignArenaCacheFile = { fetchedAt, source: DESIGN_ARENA_URL, categories };
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, sortedStringify(cache));
   console.error(`wrote ${path}`);
 }
@@ -1064,6 +1070,7 @@ function readWritingCache(path: string, requireFresh: boolean): WritingCacheFile
 /** Pretty-printed with sorted keys for scannable diffs, mirroring the other caches. */
 function writeWritingCache(path: string, fetchedAt: string, scores: Record<string, number>): void {
   const cache: WritingCacheFile = { fetchedAt, source: WRITING_URL, scores };
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, sortedStringify(cache));
   console.error(`wrote ${path}`);
 }

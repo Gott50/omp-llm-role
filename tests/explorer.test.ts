@@ -251,8 +251,8 @@ test("a role absent from the shipped defaults ranks and exports", async () => {
   }
 });
 
-// The shared launcher behind both `node explore.ts` and the omp
-// `/explore-roles` command: the roles it serves come from the lock file (not
+// The shared launcher behind the omp `/explore-roles` command: the roles it
+// serves come from the lock file (not
 // the shipped defaults), a busy preferred port falls back to a free one, and
 // close() releases the port.
 test("startExplorer serves lock-file roles and releases its port on close", async () => {

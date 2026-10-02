@@ -20,11 +20,21 @@ export type PluginState = {
   managedRoles: string[];
   roleLastSelector: Record<string, string>;
   pluginWrittenChainKeys: string[];
+  /** Agent names the plugin added to `task.disabledAgents`; lets a later run
+   *  remove an entry whose agent file is gone (e.g. `/remove-agent`). */
+  managedDisabledAgents: string[];
   previousModelRoles: Record<string, string> | null;
 };
 
 export function freshState(): PluginState {
-  return { lastRunDay: null, managedRoles: [], roleLastSelector: {}, pluginWrittenChainKeys: [], previousModelRoles: null };
+  return {
+    lastRunDay: null,
+    managedRoles: [],
+    roleLastSelector: {},
+    pluginWrittenChainKeys: [],
+    managedDisabledAgents: [],
+    previousModelRoles: null,
+  };
 }
 
 /**
@@ -70,6 +80,7 @@ export function loadState(dir = agentDir()): PluginState {
     managedRoles: stringArray(parsed.managedRoles),
     roleLastSelector: stringRecord(parsed.roleLastSelector),
     pluginWrittenChainKeys: stringArray(parsed.pluginWrittenChainKeys),
+    managedDisabledAgents: stringArray(parsed.managedDisabledAgents),
     previousModelRoles: isRecord(parsed.previousModelRoles) ? stringRecord(parsed.previousModelRoles) : null,
   };
 }

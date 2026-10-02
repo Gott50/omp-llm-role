@@ -110,10 +110,32 @@ effect on the next session.
   frontmatter omp's own writer omits. The architect supplies
   `{identifier, whenToUse, systemPrompt}`; the plugin uses the user's `--name` for
   the file, `whenToUse` as the description, and `systemPrompt` as the body.
-- **`node create-agent.ts`** — the same code path without a session; no architect,
-  so the archetype template body is used.
 - **The shipped skill** — the hand-driven workflow, for bodies that need real
   authoring rather than the archetype scaffold.
+
+## Removal
+
+The `/remove-agent` command deletes an agent **and** its role definition:
+
+```sh
+/remove-agent --name review
+```
+
+It deletes the agent `.md` file (user and/or project scope) and the role's
+lock-file keys (`removeRoleSettings`), then runs the updater in-process so
+`modelRoles.review` is dropped from `config.yml` and the plugin-managed
+`task.disabledAgents` entry is cleaned up. Shipped default roles (e.g.
+`designer`) cannot be deleted — the message points at the explorer's "Reset to
+shipped default". `--scope user|project` restricts the agent-file removal
+(default: both); `--yes` skips the in-session confirmation; `--dry-run`
+validates without writing.
+
+By hand, the same two artifacts:
+
+1. Delete the role from the settings lock file (the explorer's Export, or edit
+   the lock file directly).
+2. Delete the agent file: `rm ~/.omp/agent/agents/review.md`.
+3. Wire it: `/refresh-roles` in a session.
 
 ## Pitfalls
 

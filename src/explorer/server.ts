@@ -10,7 +10,7 @@
  *   POST /api/export       -> { roles } -> validated, backed-up lock-file write
  *   POST /api/refresh      -> refetch the dataset, return the bootstrap payload
  *
- * Bound to loopback by the caller (explore.ts); no auth. Every handler is
+ * Bound to loopback by the caller; no auth. Every handler is
  * wrapped so a throw becomes a 500 JSON error.
  */
 

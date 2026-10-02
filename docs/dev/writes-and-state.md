@@ -61,7 +61,7 @@ they describe. Agent-dir resolution: `OMP_LLM_ROLE_AGENT_DIR` (test hook) →
 
 | File | Shape | Purpose |
 |---|---|---|
-| `llm-role-state.json` | `{ lastRunDay, managedRoles, roleLastSelector, pluginWrittenChainKeys, previousModelRoles }` | day gate, managed-role set, last selectors, plugin-owned chain keys, pre-write `modelRoles` snapshot |
+| `llm-role-state.json` | `{ lastRunDay, managedRoles, roleLastSelector, pluginWrittenChainKeys, previousModelRoles, managedDisabledAgents }` | day gate, managed-role set, last selectors, plugin-owned chain keys, pre-write `modelRoles` snapshot, **managed `task.disabledAgents` names** |
 | `llm-role-history.jsonl` | one JSON row per completed run: `{ ts, trigger, keyMeta{isFreeTier, limitRemaining, creditsRemaining}, decisions[] }` | append-only decision log |
 | `.llm-role-refresh.lock` | `O_EXCL` create, holds `"<pid> <iso>"` | serializes concurrent session starts; stale (> 60 s) locks are unlinked and retried once |
 
@@ -75,6 +75,12 @@ they describe. Agent-dir resolution: `OMP_LLM_ROLE_AGENT_DIR` (test hook) →
   run but no longer does (disabled via `enabled: false` / `weights: null`, or
   removed from settings) has its `modelRoles.<role>` line deleted, so a stale
   pin cannot keep routing `@<role>`.
+- `managedDisabledAgents` is the set of agent names the plugin added to
+  `task.disabledAgents`; a later run removes a name whose agent file is gone
+  (e.g. `/remove-agent`) or whose role is no longer disabled.
+- Role removal (`/remove-agent`) goes through `removeRoleSettings` in
+  `src/role-settings.ts` — the same validate/backup/atomic-write path as
+  `writeRoleSettings`, deleting the role's flat dotted keys and any nested entry.
 - `loadState` starts fresh (and logs) on an unreadable or unexpected-shape state
   file; `saveState` / `appendHistory` `mkdir -p` the dir first.
 
@@ -82,7 +88,7 @@ they describe. Agent-dir resolution: `OMP_LLM_ROLE_AGENT_DIR` (test hook) →
 
 `runUpdater` (`src/updater.ts`) is day-gated on `state.lastRunDay === today(UTC)`:
 the first session of each UTC day ranks and writes; later same-day sessions
-no-op. `/refresh-roles` and `node update-roles.ts` pass `force` and always run.
+no-op. `/refresh-roles` passes `force` and always runs.
 A concurrent second starter loses the lock and finds the day already stamped →
 no-op. Session-start runs are **awaited** before the first prompt is dispatched
 (a deferred timer would be cleared when a short-lived session exits before it
@@ -104,6 +110,7 @@ exactly while the role its `model:` frontmatter chain pins is disabled:
 - An agent pinning a role the plugin does not know (its `@role, @default` chain
   falls back) is left alone; other `task.disabledAgents` entries and their order
   are preserved.
+- **A previously-managed name whose agent file is gone (e.g. `/remove-agent`) or whose role is no longer disabled is removed** from `task.disabledAgents`.
 
 **This sync is not day-gated.** It runs on every session start (and on every
 forced run), so enabling/disabling a shipped role takes effect on the next
@@ -117,7 +124,6 @@ session, not the next day. Two consequences a maintainer must know:
 - **The non-day-gated sync appends no history row.** The day-gated branch
   returns before the history append; only a full ranking run writes
   `llm-role-history.jsonl`.
-
 ## Error handling
 
 `runUpdater` wraps the whole run; `ConfigEditError` and any other throw become

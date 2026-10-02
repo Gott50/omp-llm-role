@@ -22,7 +22,7 @@ home — if it is here, it is not in the README.
 ## The docs
 
 - **[architecture.md](architecture.md)** — the module map and entry points:
-  `llm-role-rank.ts` (CLI report), `src/engine.ts` (shared ranking engine),
+  `src/cli/llm-role-rank.ts` (CLI report), `src/engine.ts` (shared ranking engine),
   `src/updater.ts` (orchestration), `src/extension.ts` (omp extension), the
   explorer, and how a run flows from fetch to config write.
 - **[data-sources.md](data-sources.md)** — every source the engine reads

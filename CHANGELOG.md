@@ -23,11 +23,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   exposes the plugin's settings to omp's `/settings` → Plugins tab, and the
   plugin's write path emits flat dotted keys so the UI shows real values
   (issue #5).
+- **`/remove-agent`** — the inverse of `/create-agent`: deletes an agent `.md`
+  and its model role in one command. It removes the role's lock-file keys
+  (backup + atomic write), deletes the agent file from the user and/or project
+  scope, then runs the updater in-process so `modelRoles.<name>` and the
+  plugin-managed `task.disabledAgents` entry are dropped. Shipped default roles
+  are refused (use the explorer's "Reset to shipped default"). The plugin now
+  tracks the `task.disabledAgents` names it added (`managedDisabledAgents` in
+  state) so a removed agent leaves no stale entry.
 
 ### Changed
 
 - The normative spec moved to `docs/dev/spec.md`; maintainer docs split into
   `docs/dev/` and the README is now user-only (issue #6).
+- **Project root cleanup.** The generated report moved to
+  `docs/llm-role-rankings.md` (linked from the README as a worked example); the
+  two CLI entry points moved to `src/cli/` (`llm-role-rank.ts`,
+  `create-role.ts`); the daily caches moved into the gitignored `cache/` dir.
+
+### Removed
+
+- The `update-roles.ts`, `explore.ts` and `create-agent.ts` CLI shims — they
+  duplicated the `/refresh-roles`, `/explore-roles` and `/create-agent`
+  commands. Use the commands instead.
 
 ### Fixed
 

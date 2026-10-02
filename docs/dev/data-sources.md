@@ -28,7 +28,7 @@ payload; there is no public JSON API.
 - **Build**: `buildModels(rows)` maps each row to a `Model`; `metrics` carries
   the index/benchmark values, with `price`/`throughput`/`website`/`writing`
   left `null` for later enrichment.
-- **Cache**: `llm-stats-fetched-rankings.json` —
+- **Cache**: `cache/llm-stats-fetched-rankings.json` —
   `{ fetchedAt, source, modelCount, rankings[] }` (pretty-printed; each row
   gains a `rank` = array position). Fresh while `fetchedAt` is the current UTC
   day. **Fatal** on failure: no fresh cache and no usable fetch aborts the run.
@@ -56,7 +56,7 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
   `endpoint_price` blended to $/M at 3:1 in:out) and keeps the full `data`
   object verbatim for the cache; it also extracts the Design Arena mirror
   (`extractDesignElo`, see below).
-- **Cache**: `openrouter-fetched-data.json` —
+- **Cache**: `cache/openrouter-fetched-data.json` —
   `{ fetchedAt, source, modelCount, data }` where `data` is the verbatim
   `find?fmt=cards` response data (sorted keys). Throughput/price maps are
   re-derived from it on every run. An empty/unusable payload is never cached.
@@ -75,7 +75,7 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
   (`OPENROUTER_PAGE_CONCURRENCY`), one retry per page, permanent 404/410 gives
   up. A page that fails is absent and that model keeps the single-route
   fallback.
-- **Cache**: `openrouter-endpoints-fetched-data.json` —
+- **Cache**: `cache/openrouter-endpoints-fetched-data.json` —
   `{ fetchedAt, source, slugCount, slugs }` where `slugs` maps each fetched
   model slug to its narrowed per-provider route records.
 
@@ -138,7 +138,7 @@ counts; a snapshot of unknown sample age.
   `m.metrics.website` = percentile `(i + 0.5) / n` within the design-covered
   population (role-independent). Models without Design Arena data get
   `CAPABILITY_FILL.website` (0.195).
-- **Cache**: `designarena-fetched-data.json` —
+- **Cache**: `cache/designarena-fetched-data.json` —
   `{ fetchedAt, source, categories }` where `categories` maps the two board keys
   to their rows. An empty board is never cached.
 - **Gating**: fetched only when a ranked role weights `website` (i.e. `designer`
@@ -156,7 +156,7 @@ counts; a snapshot of unknown sample age.
 - **Metric**: `applyWritingScores(models, scores)` sets `m.writingBench` and
   `m.metrics.writing` (identity transform — already 0–1); models outside the
   ranking get `CAPABILITY_FILL.writing` (0.195). Role-independent.
-- **Cache**: `writing-fetched-data.json` —
+- **Cache**: `cache/writing-fetched-data.json` —
   `{ fetchedAt, source, scores }` where `scores` maps the bare llm-stats id to
   its WritingBench score. An unusable payload or an empty record set is never
   cached.
@@ -178,22 +178,22 @@ counts; a snapshot of unknown sample age.
 
 ## Daily UTC caches
 
-All five caches resolve against the **repo root** (`REPO_ROOT` in
+All five caches resolve against the repo's **`cache/` dir** (`CACHE_DIR` in
 `src/engine.ts`), never the process cwd — the plugin runs with arbitrary cwd
 inside omp. Each is fresh while its `fetchedAt` is the current UTC day, and each
 follows the same chain: **fresh cache → live fetch (writes cache) → stale cache →
 no enrichment**. An empty/unusable payload is never cached, so the next run
-retries.
+retries. The writers `mkdirSync` the dir, so a fresh checkout needs no setup.
 
 | Cache file | Shape | Failure mode |
 |---|---|---|
-| `llm-stats-fetched-rankings.json` | `{ fetchedAt, source, modelCount, rankings[] }` | **fatal** (no data at all) |
-| `openrouter-fetched-data.json` | `{ fetchedAt, source, modelCount, data }` | non-fatal (affected models unranked) |
-| `openrouter-endpoints-fetched-data.json` | `{ fetchedAt, source, slugCount, slugs }` | non-fatal (single-route fallback) |
-| `designarena-fetched-data.json` | `{ fetchedAt, source, categories }` | non-fatal (OR mirror alone) |
-| `writing-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (`writing` unfilled) |
+| `cache/llm-stats-fetched-rankings.json` | `{ fetchedAt, source, modelCount, rankings[] }` | **fatal** (no data at all) |
+| `cache/openrouter-fetched-data.json` | `{ fetchedAt, source, modelCount, data }` | non-fatal (affected models unranked) |
+| `cache/openrouter-endpoints-fetched-data.json` | `{ fetchedAt, source, slugCount, slugs }` | non-fatal (single-route fallback) |
+| `cache/designarena-fetched-data.json` | `{ fetchedAt, source, categories }` | non-fatal (OR mirror alone) |
+| `cache/writing-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (`writing` unfilled) |
 
-All five are gitignored (`.gitignore`). `--refresh` bypasses the fresh-cache
+`cache/` is gitignored (`.gitignore`). `--refresh` bypasses the fresh-cache
 check; the explorer's `POST /api/refresh` does the same.
 
 ## `CAPABILITY_FILL`

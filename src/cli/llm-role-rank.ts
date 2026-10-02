@@ -18,19 +18,19 @@
  *   the stable standard-tier providers — the sole sources; models without
  *   OpenRouter data are not ranked.
  *
- * Usage: node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]
+ * Usage: node src/cli/llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--url URL]
  *
- * Caches the fetched leaderboard in llm-stats-fetched-rankings.json and the full
- * OpenRouter find response in openrouter-fetched-data.json; both are reused while
- * from the current UTC day; --refresh forces a refetch.
+ * Caches the fetched leaderboard in cache/llm-stats-fetched-rankings.json and the
+ * full OpenRouter find response in cache/openrouter-fetched-data.json; both are
+ * reused while from the current UTC day; --refresh forces a refetch.
  */
 
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
-import { catalogFromOmpModelsJson, enrichThinkingLevels, resolveVariant, type CatalogEntry } from "./src/availability.ts";
-import { computeRankings, loadRankData, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "./src/engine.ts";
-import { DEFAULT_ROLES as ROLES } from "./src/settings.ts";
+import { catalogFromOmpModelsJson, enrichThinkingLevels, resolveVariant, type CatalogEntry } from "../availability.ts";
+import { computeRankings, loadRankData, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "../engine.ts";
+import { DEFAULT_ROLES as ROLES } from "../settings.ts";
 
 const execFileP = promisify(execFile);
 
@@ -230,7 +230,7 @@ async function main(): Promise<void> {
     else if (args[i] === "--all") all = true;
     else if (args[i] === "--url") url = args[++i];
     else if (args[i] === "--help" || args[i] === "-h") {
-      console.log("Usage: node llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]");
+      console.log("Usage: node src/cli/llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]");
       process.exit(0);
     }
   }

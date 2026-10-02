@@ -40,7 +40,7 @@ export type RunResult = {
   aborted?: string;
 };
 
-export type Trigger = "session-start" | "manual" | "cli";
+export type Trigger = "session-start" | "manual";
 
 /** A ranked model resolved to a concrete catalog id. */
 type Candidate = { ranked: Ranked; catalogId: string };
@@ -110,16 +110,33 @@ const CONFLICT_ABORT = `omp-llm-role: config.yml kept changing underneath (${CON
  * disabled exactly while the role its `model:` chain pins is disabled. An agent
  * whose pinned role is unknown (the `@role, @default` chain falls back) or that
  * pins no role is left alone, as are unrelated entries.
+ *
+ * `previouslyManaged` is the set the plugin added on a previous run (state
+ * `managedDisabledAgents`): a name no longer in the desired add-set — its agent
+ * file was removed (`/remove-agent`) or its role is no longer disabled — is
+ * removed, so the plugin never leaves a stale entry behind. The returned
+ * `agentDisableAdds` is the new managed set.
  */
-function agentDisablePatch(raw: Record<string, unknown>, settings: ResolvedSettings): Pick<ConfigPatch, "agentDisableAdds" | "agentDisableRemoves"> {
+function agentDisablePatch(
+  raw: Record<string, unknown>,
+  settings: ResolvedSettings,
+  previouslyManaged: readonly string[],
+): Pick<ConfigPatch, "agentDisableAdds" | "agentDisableRemoves"> {
   const universe = roleUniverse(raw, settings.roles);
   const agentDisableAdds: string[] = [];
   const agentDisableRemoves: string[] = [];
+  const desired = new Set<string>();
   for (const pin of discoverAgentPins()) {
     const entry = universe[pin.role];
     if (entry === undefined) continue; // unknown role — the chain falls back, leave the agent alone
     if (entry.enabled) agentDisableRemoves.push(pin.agent);
-    else agentDisableAdds.push(pin.agent);
+    else {
+      agentDisableAdds.push(pin.agent);
+      desired.add(pin.agent);
+    }
+  }
+  for (const name of previouslyManaged) {
+    if (!desired.has(name) && !agentDisableRemoves.includes(name)) agentDisableRemoves.push(name);
   }
   return { agentDisableAdds, agentDisableRemoves };
 }
@@ -174,7 +191,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
     const dir = agentDir();
     const configPath = join(dir, "config.yml");
-    const agentDisables = agentDisablePatch(raw, settings);
+    const agentDisables = agentDisablePatch(raw, settings, state.managedDisabledAgents);
+    const nextManagedDisabled = agentDisables.agentDisableAdds;
 
     // The settings-derived agent sync is not day-gated: enabling/disabling a
     // shipped role must take effect on the next session, not the next day.
@@ -183,7 +201,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const res = writePatch(configPath, dir, { roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [], ...agentDisables });
       if (res.status === "locked") return { decisions: [], wrote: false }; // another session is syncing — benign
       if (res.status === "conflict") return abort([CONFLICT_ABORT]);
-      if (res.status === "written" && notifyAll) deps.notify(["omp-llm-role: task.disabledAgents updated"]);
+      if (res.status === "written") {
+        state.managedDisabledAgents = nextManagedDisabled;
+        saveState(state, dir);
+        if (notifyAll) deps.notify(["omp-llm-role: task.disabledAgents updated"]);
+      }
       return { decisions: [], wrote: res.status === "written" };
     }
 
@@ -385,6 +407,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
       state.lastRunDay = today;
       state.managedRoles = [...decisions.map((d) => d.role), ...lockedRoles];
+      state.managedDisabledAgents = nextManagedDisabled;
       for (const d of decisions) state.roleLastSelector[d.role] = d.to;
       if (settings.writeFallbackChains) state.pluginWrittenChainKeys = [...referenced];
       if (wrote) state.previousModelRoles = previousRoles;

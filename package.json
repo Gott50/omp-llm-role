@@ -23,17 +23,12 @@
     "web",
     "agents",
     "skills",
-    "llm-role-rank.ts",
-    "update-roles.ts",
-    "explore.ts",
-    "create-role.ts",
-    "create-agent.ts",
-    "docs/dev"
+    "docs/dev",
+    "docs/llm-role-rankings.md"
   ],
   "scripts": {
-    "explore": "node explore.ts",
-    "create-role": "node create-role.ts",
-    "create-agent": "node create-agent.ts"
+    "rank": "node src/cli/llm-role-rank.ts",
+    "create-role": "node src/cli/create-role.ts"
   },
   "omp": {
     "extensions": ["./src/extension.ts"],

@@ -32,9 +32,8 @@ metric so you can avoid duplicates), writes the validated role, and runs the upd
 in-process so `modelRoles.<n>` lands in `config.yml` — no second step. `--list-archetypes`
 and `--list-benchmarks` print the tables; `--archetype`/`--weights`/`--required`/
 `--thinking`/`--tools`/`--benchmarks`/`--scope`/`--body-file`/`--force` override each
-piece. Outside a session it is `node <plugin>/create-agent.ts …` (then
-`node <plugin>/update-roles.ts` to wire it); the CLI has no omp session, so it uses the
-archetype template instead of the architect.
+piece. There is no out-of-session CLI for this path — run `/create-agent` in an omp
+session.
 
 Use this skill instead when the artifact needs authoring the command cannot infer: a
 structured `output:` schema, a read-only `<critical>` contract with the tools to match,
@@ -117,7 +116,7 @@ a string weight/required/boolean — do NOT use it for role settings. Write the 
 def with the plugin's own validated path:
 
 ```sh
-node <plugin>/create-role.ts --name <name> \
+node <plugin>/src/cli/create-role.ts --name <name> \
   --weights general=0.30,code=0.20,price=0.25,throughput=0.25 \
   --required general,price,throughput --thinking auto \
   --description "<one-line purpose>"
@@ -125,20 +124,19 @@ node <plugin>/create-role.ts --name <name> \
 
 It validates through `resolveSettings`, backs up the lock file, and writes atomically.
 `--dry-run` validates and prints without touching the file; `--json` prints the payload.
-(If you went through `/create-agent` or `create-agent.ts`, the role and the agent file
-are already written — go straight to §4.)
+(If you went through `/create-agent`, the role and the agent file are already
+written — go straight to §4.)
 
 ## 4. Verify
 
-1. **Role ranked**: `node <plugin>/update-roles.ts --dry-run` → a `kept`/`switched` line
+1. **Role ranked**: `/refresh-roles` in an omp session → a `kept`/`switched` line
    for the role (or `no changes`).
 2. **Routing**: spawn the agent headlessly and read the spawn record — it MUST carry
    `"agent":"<name>"` and `"modelRole":"<name>"`, with `resolvedModel` = the role's
    selector, not the parent's.
-3. **Explorer**: `/explore-roles` in an omp session (in-process server) — or
-   `node <plugin>/explore.ts` outside omp — → the role is a tab; tune weights/required/
-   thinking/description and Export (writes the lock file, backup first). The explorer's
-   numbers are the plugin's own.
+3. **Explorer**: `/explore-roles` in an omp session → the role is a tab; tune
+   weights/required/thinking/description and Export (writes the lock file, backup
+   first). The explorer's numbers are the plugin's own.
 
 ## Pitfalls
 

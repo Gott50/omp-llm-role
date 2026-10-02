@@ -16,7 +16,6 @@ explorer never reimplements `value = q − λ·$/M`.
 | `src/explorer/boot.ts` | Shared launcher: bind/port fallback, lock-file roles, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, `ExplorerHandle`, `ExplorerBootOpts`. |
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write). Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `timestamp`. |
 | `web/app.js` | The SPA: renders and edits role defs, calls the API. No framework, no build step, no external requests. |
-| `explore.ts` | CLI shim over `startExplorer` (catalog via `omp models ls`). |
 | `src/extension.ts` | `/explore-roles`: in-process `startExplorer` (catalog from the live model registry), closed on `session_shutdown`. |
 
 ## HTTP surface (`src/explorer/server.ts`)
@@ -109,7 +108,7 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
 ## Shared boot path (`src/explorer/boot.ts`)
 
 `startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHandle>` — the one
-launcher both hosts use, so `explore.ts` and `/explore-roles` cannot drift.
+launcher `/explore-roles` uses.
 
 - `EXPLORER_DEFAULT_PORT = 5177`; `listen` binds `127.0.0.1` and resolves the
   actual port. A permanent `error` listener is attached before `listen`, so a
@@ -127,15 +126,14 @@ launcher both hosts use, so `explore.ts` and `/explore-roles` cannot drift.
   factor on the omp catalog; `refresh()` re-runs `opts.reload(true)` and
   re-enriches.
 - `unref` (extension only) detaches the server from the event loop so a
-  short-lived `omp -p` run cannot hang; the CLI must NOT set it (the listening
-  handle is what keeps `node explore.ts` alive).
+  short-lived `omp -p` run cannot hang.
 - `open` launches the default browser on macOS (`execFile("open", [url])`).
 - `close()` calls `closeAllConnections()` then `server.close()`.
 
 ## Export path (`src/role-settings.ts`)
 
 The one validated role write path, shared by the explorer's Export,
-`create-role.ts` and `/create-agent`.
+`src/cli/create-role.ts` and `/create-agent`.
 
 - `validateRole(name, def)` → `resolveSettings({ roles: { [name]: def } }).errors`
   (`resolveSettings` clones its input, so it is safe per call).

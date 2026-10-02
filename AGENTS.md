@@ -32,22 +32,20 @@ After your work is done — every time, no exceptions:
    entry, and the regenerated report together as one commit. Short imperative
    message (e.g. `Use OpenRouter pricing instead of llm-stats`).
 
-## Before committing (when `llm-role-rank.ts` changed)
+## Before committing (when `src/cli/llm-role-rank.ts` changed)
 
-- Run `node llm-role-rank.ts --top 5` and sanity-check stderr: OpenRouter
+- Run `node src/cli/llm-role-rank.ts --top 5` and sanity-check stderr: OpenRouter
   match/priced counts and eligible counts. Node type-stripping does not
   typecheck — typos surface as `undefined` at runtime, so a dropped count is
   your only signal.
-- Regenerate the report: `node llm-role-rank.ts --all --out llm-role-rankings.md`
+- Regenerate the report: `node src/cli/llm-role-rank.ts --all --out docs/llm-role-rankings.md`
   (`--all` + the default `--top 10` matches the committed report's shape — it
   includes the opt-in `designer` role, which the default run excludes). It is a
   committed artifact — commit the refreshed version with your change.
 
 ## Never commit
 
-- `llm-stats-fetched-rankings.json`, `openrouter-fetched-data.json`,
-  `openrouter-endpoints-fetched-data.json` and `designarena-fetched-data.json`
-  (daily caches, gitignored — regenerated on every run).
+- `cache/` (daily UTC caches, gitignored — regenerated on every run).
 
 ## Agent skills
 

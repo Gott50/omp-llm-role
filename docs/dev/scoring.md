@@ -230,6 +230,6 @@ one." Three findings, each measured on that day's caches:
 3. If you add a metric, add it to `KNOWN_METRICS` (`src/settings.ts`) and
    `METRIC_META` (`src/explorer/explain.ts`), and verify both `cardinalMetric`
    and `inverseCardinal` handle its transform.
-4. Re-run the report (`node llm-role-rank.ts --top 5`) and check the stderr
+4. Re-run the report (`node src/cli/llm-role-rank.ts --top 5`) and check the stderr
    match/eligible counts; the explorer's `Δ` column measures against the role's
    effective def.

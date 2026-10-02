@@ -2,7 +2,6 @@
  * Shared in-process launcher for the ranking explorer. Both entry points feed
  * it today's ranking data plus an omp catalog and get back a loopback server:
  *
- *   - `explore.ts` (the `node explore.ts` CLI shim, catalog via `omp models ls`)
  *   - the omp extension's `/explore-roles` command (catalog via the session's
  *     model registry, so no subprocess)
  *
@@ -44,8 +43,7 @@ export type ExplorerBootOpts = {
   open?: boolean;
   /**
    * Detach the server from the event loop. The omp extension sets this so a
-   * short-lived `omp -p` run cannot hang on the server; the CLI must NOT (the
-   * listening handle is what keeps `node explore.ts` alive).
+   * short-lived `omp -p` run cannot hang on the server.
    */
   unref?: boolean;
   onLog?(line: string): void;
@@ -110,8 +108,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     },
   });
   // Optional detach (extension only): never hold the host process open on the
-  // server's account, so a short-lived `omp -p` run cannot hang. The CLI leaves
-  // the handle referenced — it is what keeps `node explore.ts` alive.
+  // server's account, so a short-lived `omp -p` run cannot hang.
   if (opts.unref === true && typeof server.unref === "function") server.unref();
 
   let port: number;

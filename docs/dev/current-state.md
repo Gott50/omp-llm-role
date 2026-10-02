@@ -2,10 +2,23 @@
 
 Dated snapshot of the ranking as of the date in the heading — matched/priced/
 eligible counts, per-role leaders, and the open defects. It is refreshed by
-regenerating the report (`node llm-role-rank.ts --out llm-role-rankings.md`) and
+regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The numbers below
 are the 2026-10-01 measurement and are not re-derived on read.
+
+- `/remove-agent` command (2026-10-02): the inverse of `/create-agent`. It deletes
+  the role's lock-file keys (`removeRoleSettings`: flat dotted keys + any nested
+  entry, backup + atomic write) and the agent `.md` from the user and/or project
+  scope, then runs the updater in-process so `modelRoles.<n>` is dropped. It
+  refuses a shipped default role (`DEFAULT_ROLES`), a reserved name and an invalid
+  name, and errors when there is nothing to remove; `--dry-run` writes nothing.
+  The plugin now tracks the `task.disabledAgents` names it added
+  (`managedDisabledAgents` in state) so a removed agent leaves no stale entry.
+  Verified live (omp 18.4.10, temp lock + `OMP_LLM_ROLE_AGENT_DIR`): a dry run
+  reported the role and agent file and wrote nothing; a real run deleted both
+  (backup written) and the in-process updater wrote `config.yml`. The
+  `task.disabledAgents` cleanup is unit-tested (`tests/remove-agent.test.ts`).
 
 - Designer agent opt-in (2026-10-01): the shipped `designer` agent is now
   **disabled by default**, matching the opt-in role. omp has no per-agent
@@ -39,10 +52,7 @@ are the 2026-10-01 measurement and are not re-derived on read.
   `modelRoles.<n>` lands in `config.yml` in the same command. All-or-nothing: a name
   outside `[A-Za-z0-9_-]+`, a reserved name, an existing agent file without `--force`, or
   weights violating Σ = 1 / Σ(non-price) = 1 − w_price abort before either write.
-  `node create-agent.ts` is the same code path outside a session, except it has no omp
-  session: it uses the archetype template instead of the architect and takes
-  `--benchmarks` instead of prompting (it stops after the two writes and points at
-  `update-roles.ts`). Verified live (omp 18.4.8, `--mode rpc` — print mode does not
+  Verified live (omp 18.4.8, `--mode rpc` — print mode does not
   dispatch slash commands): `/create-agent --name sqlanalyst --purpose "analyze data and
   write SQL queries for the analytics warehouse"` fitted the `data` archetype (matched
   analy, data, sql), wrote the role and the agent file, and the same command's updater
@@ -65,7 +75,7 @@ are the 2026-10-01 measurement and are not re-derived on read.
   never `required` gates; no shipped role weights them, so the report is unchanged.
 
 - Explorer in the plugin (2026-10-01): `/explore-roles` boots the ranking UI
-  **in-process** inside omp — no `node explore.ts` subprocess, catalog from
+  **in-process** inside omp — catalog from
   `ctx.modelRegistry.getAvailable()` — notifies the URL and opens the browser.
   A busy preferred port falls back to a free one; a second invocation in the
   same session re-notifies the running URL instead of rebinding; the handle is
@@ -79,7 +89,7 @@ are the 2026-10-01 measurement and are not re-derived on read.
 
 - Agent + role creation (2026-10-01): the plugin ships the
   `omp-llm-role-create-agent` skill (discovered from the plugin's `skills/` root;
-  verified via `read skill://omp-llm-role-create-agent`), `create-role.ts` (typed,
+  verified via `read skill://omp-llm-role-create-agent`), `src/cli/create-role.ts` (typed,
   validated role write into the settings lock file), the `/create-agent` command
   (agent + role + wiring in one shot), and an explorer `+ new role`
   button + description editor. Roles with no shipped default are fully editable
@@ -91,13 +101,13 @@ are the 2026-10-01 measurement and are not re-derived on read.
   plumbing — fetch/cache/parse plus `applyWritingScores` in `src/engine.ts`,
   gated on a ranked role weighting `writing`. The role and its agent are **user
   artifacts**, produced through the plugin's own surfaces and verified as a
-  user-flow e2e rather than committed as repo code: `node create-role.ts --name
+  user-flow e2e rather than committed as repo code: `node src/cli/create-role.ts --name
   writing --weights general=0.24,reasoning=0.16,long_context=0.10,writing=0.26,
   price=0.14,throughput=0.10 --required general,price,throughput --thinking auto`
   wrote `roles.writing` into `~/.omp/plugins/omp-plugins.lock.json` (Σ 1.0,
   backup first), the agent was authored at the **user** path
   `~/.omp/agent/agents/writing.md` pinning `model: "@writing, @default"`, and
-  `node update-roles.ts` logged `@writing: (unset) ->
+  `/refresh-roles` logged `@writing: (unset) ->
   openrouter/qwen/qwen3-235b-a22b-thinking-2507:auto` and wrote the key into
   `config.yml`. Verified live from a clean slate (role deleted from the lock, key
   dropped from the config): the explorer ranks it (Qwen3-235B-A22B-Thinking-2507
@@ -108,7 +118,7 @@ are the 2026-10-01 measurement and are not re-derived on read.
   contributions sum exactly to `q` (0.635161) after `explainModel` learned to
   mirror `rankRole`'s capability fill. `writing` is sparse (15/400, all Qwen) and
   capability-filled at 0.195 — a stated assumption, see Scoring.
-- Not in the report (2026-10-01): `llm-role-rankings.md` is generated over
+- Not in the report (2026-10-01): `docs/llm-role-rankings.md` is generated over
   `DEFAULT_ROLES` only, so the `writing` metric and the `writing` role cannot
   appear in it and AGENTS.md's report-refresh step is a no-op for them. The
   explorer is the surface for user-created roles; regenerate the report only for

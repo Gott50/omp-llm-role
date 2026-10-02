@@ -1,5 +1,5 @@
 /**
- * Purpose -> weight archetypes for `/create-agent` and the `create-agent.ts` CLI.
+ * Purpose -> weight archetypes for `/create-agent`.
  *
  * This table is the executable source of truth; the same sets appear as prose in
  * `skills/omp-llm-role-create-agent/SKILL.md`, which an agent reads when it

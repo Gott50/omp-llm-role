@@ -9,8 +9,8 @@
  * resolve, so the prompt is a plugin asset rather than an omp import.
  *
  * This module is extension-only: it imports `@oh-my-pi/pi-coding-agent`, which
- * only resolves inside omp. The CLI (`create-agent.ts`) and the tests import
- * `src/agent-create.ts` instead, which never imports this file.
+ * only resolves inside omp. The tests import `src/agent-create.ts` instead,
+ * which never imports this file.
  */
 
 import { readFileSync } from "node:fs";
