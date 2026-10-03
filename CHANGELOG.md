@@ -6,8 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-01
+
+First release. The plugin ranks today's LLM leaderboard into best-fit picks for
+each omp model role and applies them to `~/.omp/agent/config.yml` daily.
+Published to git + marketplace on 2026-10-01 and to npm on 2026-10-03 (all three
+install routes verified end-to-end).
+
 ### Added
 
+- Ranking engine (`src/engine.ts`) shared by the CLI report and the plugin:
+  llm-stats + OpenRouter ingestion, cardinal transforms, value scoring
+  (`q − λ·$/M`), the Pareto frontier, and hysteresis.
+- omp plugin (`src/extension.ts`): a day-gated `session_start` refresh plus the
+  `/refresh-roles`, `/explore-roles` and `/create-agent` commands.
+- Surgical `config.yml` patch for `modelRoles` + `retry.fallbackChains`, with
+  atomic write and stale-chain pruning.
+- OpenRouter key tier gate and catalog filter; variant resolution
+  (exact → dated → bare → `-latest`).
+- Interactive explorer (`/explore-roles`, `node explore.ts`): per-role ranking
+  tables, per-model decomposition, weight/required/thinking tuning, Export.
+- `create-role.ts` / `create-agent.ts` and the shipped
+  `omp-llm-role-create-agent` skill: add a role, or an agent + role + wiring.
+- Shipped `designer` role and agent (opt-in), the Design Arena `website`
+  metric, and the writing leaderboard `writing` metric.
+- npm / git / marketplace install routes and the self-hosted
+  `.omp-plugin/marketplace.json` catalog.
 - **Benchmark discovery in `/create-agent`** — when you give a purpose, the
   command now finds the llm-stats catalog benchmarks relevant to it and ranks
   the new role on them, instead of only the benchmarks you name. The relevance
@@ -75,12 +99,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   archetype. The fallback chain now prefers candidates priced at or below the
   chosen model (filling any remaining depth with the next-best by value), so an
   availability fallback no longer raises the bill (issue #9).
-- **Repository is public.** `Gott50/omp-llm-role` was flipped from private to
-  public, so the git (`omp plugin install github:Gott50/omp-llm-role`) and
-  marketplace (`omp plugin marketplace add Gott50/omp-llm-role` +
-  `omp plugin install omp-llm-role@gott50-plugins`) install routes now work
-  against the real URLs; both were re-verified end-to-end (omp 18.4.10,
-  throwaway HOMEs). The npm channel is not published yet.
+- **Repository is public, all install routes live.** `Gott50/omp-llm-role` was
+  flipped from private to public (2026-10-02), so the git
+  (`omp plugin install github:Gott50/omp-llm-role`) and marketplace
+  (`omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins`) install routes work against
+  the real URLs, and `omp-llm-role` was published to npm (2026-10-03) so
+  `omp plugin install omp-llm-role` works too. All three were verified
+  end-to-end against the real URLs (omp 18.4.12, throwaway HOMEs).
 - The normative spec moved to `docs/dev/spec.md`; maintainer docs split into
   `docs/dev/` and the README is now user-only (issue #6).
 - **Project root cleanup.** The generated report moved to
@@ -100,31 +126,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read at boot, so enabling a role (e.g. `designer`) and reloading the page
   showed it disabled again until the server restarted. Every request now
   re-reads the lock file (`getState()`), so a reload reflects the Export.
-
-## [1.0.0] - 2026-10-01
-
-First release. The plugin ranks today's LLM leaderboard into best-fit picks for
-each omp model role and applies them to `~/.omp/agent/config.yml` daily.
-
-### Added
-
-- Ranking engine (`src/engine.ts`) shared by the CLI report and the plugin:
-  llm-stats + OpenRouter ingestion, cardinal transforms, value scoring
-  (`q − λ·$/M`), the Pareto frontier, and hysteresis.
-- omp plugin (`src/extension.ts`): a day-gated `session_start` refresh plus the
-  `/refresh-roles`, `/explore-roles` and `/create-agent` commands.
-- Surgical `config.yml` patch for `modelRoles` + `retry.fallbackChains`, with
-  atomic write and stale-chain pruning.
-- OpenRouter key tier gate and catalog filter; variant resolution
-  (exact → dated → bare → `-latest`).
-- Interactive explorer (`/explore-roles`, `node explore.ts`): per-role ranking
-  tables, per-model decomposition, weight/required/thinking tuning, Export.
-- `create-role.ts` / `create-agent.ts` and the shipped
-  `omp-llm-role-create-agent` skill: add a role, or an agent + role + wiring.
-- Shipped `designer` role and agent (opt-in), the Design Arena `website`
-  metric, and the writing leaderboard `writing` metric.
-- npm / git / marketplace install routes and the self-hosted
-  `.omp-plugin/marketplace.json` catalog.
 
 [Unreleased]: https://github.com/Gott50/omp-llm-role/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.0.0

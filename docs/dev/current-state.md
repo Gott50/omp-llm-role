@@ -44,13 +44,15 @@ are the 2026-10-02 measurement and are not re-derived on read.
   explorer's `/api/bootstrap` listed the external metric with its derived
   metadata. Unit-tested in `tests/benchmark-sources.test.ts`.
 
-- Release (2026-10-02): `Gott50/omp-llm-role` is public and `main` is pushed
-  (`cc120bb`). The git and marketplace install routes were re-verified against
-  the real URLs in throwaway HOMEs (omp 18.4.10): both installed 1.0.0, and each
-  post-install session run wrote `modelRoles` + `retry.fallbackChains` into that
-  HOME's `config.yml` and landed the three daily caches in the installed copy.
-  npm is not published yet (name unclaimed, no credential on the workstation) —
-  see Releasing.
+- Release (2026-10-03): `Gott50/omp-llm-role` is public, `main` is pushed, and
+  `omp-llm-role@1.0.0` is published to npm (`npm view omp-llm-role version` →
+  `1.0.0`). All three install routes were verified against the real URLs in
+  throwaway HOMEs (omp 18.4.12): npm (`omp plugin install omp-llm-role`), git
+  (`github:Gott50/omp-llm-role`) and marketplace
+  (`omp-llm-role@gott50-plugins`) each installed 1.0.0, and each post-install
+  session run wrote `modelRoles` + `retry.fallbackChains` into that HOME's
+  `config.yml` and landed the three daily caches in the installed copy. See
+  Releasing.
 
 - `/create-agent` free-text form (2026-10-02): the command now accepts a
   plain-language request as well as flags. `parseCreateAgentInput` splits the

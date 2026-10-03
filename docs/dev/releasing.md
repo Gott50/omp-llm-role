@@ -2,8 +2,8 @@
 
 `version` in `package.json` is the release switch — bump it, commit, then
 publish through any channel (same tree, no build step). The repo is public
-(flipped 2026-10-02), so the git and marketplace URLs below resolve; the npm
-channel is not published yet — see Status.
+(flipped 2026-10-02) and 1.0.0 is published to npm (2026-10-03), so all three
+channel URLs below resolve — see Status.
 
 ## Channels
 
@@ -47,17 +47,23 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 
 ## Status
 
-- **Repo public** (2026-10-02). `Gott50/omp-llm-role` was flipped from private
-  to public; `main` is pushed (`cc120bb`).
-- **git + marketplace verified against the real URLs** (2026-10-02, omp
-  18.4.10, throwaway `HOME`s): `omp plugin install github:Gott50/omp-llm-role`
-  and `omp plugin marketplace add Gott50/omp-llm-role` +
-  `omp plugin install omp-llm-role@gott50-plugins` both installed 1.0.0, and
+- **Released 1.0.0 on all three channels.** Repo public since 2026-10-02;
+  `omp-llm-role@1.0.0` published to npm 2026-10-03
+  (`npm view omp-llm-role version` → `1.0.0`, `dist-tags.latest` = `1.0.0`);
+  `main` is pushed and the git + marketplace URLs resolve.
+- **All three routes verified against the real URLs** (2026-10-03, omp
+  18.4.12, throwaway `HOME`s, cwd outside the real home tree): npm
+  (`omp plugin install omp-llm-role`), git
+  (`omp plugin install github:Gott50/omp-llm-role`) and marketplace
+  (`omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins`) each installed 1.0.0, and
   each post-install session run wrote `modelRoles` + `retry.fallbackChains`
   into that HOME's `config.yml` and landed the three daily caches in the
   installed copy.
-- **npm not published.** `omp-llm-role` is unclaimed on the registry
-  (`npm view omp-llm-role version` → 404) and no npm credential exists on the
-  workstation (`~/.npmrc` absent, keychain empty). Publish needs an
-  interactive `npm login` (or an automation token) first; then
-  `npm publish` from the repo root and `npm view omp-llm-role version` → `1.0.0`.
+- **Stray registry placeholder.** The registry also carries a `0.0.0-stage`
+  version ("Temporary package placeholder for staged publishing", 334 B,
+  published 2026-10-03). It is not from this tree; `latest` still points at
+  `1.0.0`, so it does not affect installs.
+- **Next release.** Bump `version` in `package.json` and
+  `.omp-plugin/marketplace.json`, regenerate the report, move the changelog
+  entries out of `## [Unreleased]`, then push and `npm publish`.
