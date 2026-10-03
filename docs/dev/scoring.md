@@ -195,6 +195,27 @@ Naming the archetype's own specialist set is a no-op (the focus share equals its
 archetype share). A named metric already in the weights is reported as a
 duplicate; a name outside the known-metric set is unknown.
 
+**Coverage safety.** A focus metric that is fill-0 and covers too little of the
+field turns `q` into a coverage score (a missing weighted metric contributes 0
+while occupying its denominator share). `focusCoverageOk(metric, covered, total)`
+(`src/agent-create.ts`) is the one rule: a metric is safe when its source is
+capability-filled (`fill > 0`, so absence is a known non-penalty) **or** its
+coverage share clears `FOCUS_COVERAGE_FLOOR` (0.35). When the field size is
+unknown the share rule is skipped and the result is `unknown` (annotated, not
+warned). The discovery gate drops a below-bar candidate (non-fatal, with a
+reason); the report annotates every focus metric and warns below the bar. The
+genuine hazard is the six raw pass-rate metrics (`gpqa`, `aime`, `swe_bench`,
+`arc_agi`, `terminal_bench`, `tau_bench`), which are fill-0 and reachable from
+discovery via the catalog→shipped mapping; `writing`/`website`/`bench:<id>` are
+capability-filled at 0.195 and stay weightable at any coverage.
+
+**Focus cap.** The focus set is capped at `FOCUS_METRIC_CAP` (3) in priority
+order (named/linked first, then discovery order), so one benchmark keeps a
+decisive share instead of five sharing the budget; the metrics beyond the cap are
+reported as dropped. The cap is applied before the share math, so the kept set
+still receives `clamp(specialistShare, 0.25, 0.40)` split evenly and both
+invariants hold exactly.
+
 ## Weight design rules
 
 The shipped weights (`DEFAULT_ROLES`) and the archetype sets

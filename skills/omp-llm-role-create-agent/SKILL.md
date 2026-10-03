@@ -114,6 +114,12 @@ Rules of thumb:
   the ranking. An external metric key is `<namespace>:<local>` and MUST be
   dot-free (the flat dotted settings path splits on `.`); the registry resolves
   it and the explorer/report render it without a hand-maintained table.
+- The focus set is capped at 3 (named/linked first, then discovery order), so one
+  benchmark keeps a decisive share. Discovery refuses a fill-0 benchmark whose
+  coverage is below 35% of the ranking field (a sparse pass-rate metric would
+  turn `q` into a coverage score); a capability-filled metric (`writing`,
+  `website`, `bench:<id>`) is safe at any coverage. The report prints each focus
+  metric's coverage and warns below the bar.
 - A weighted metric with low coverage turns q into a coverage score — prefer a `filters`
   gate over requiring a sparse metric. `website`, `long_context` and `writing` are
   capability-filled (0.195), so they are safe to weight. `writing` (WritingBench, the

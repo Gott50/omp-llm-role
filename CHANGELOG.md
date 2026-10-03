@@ -6,6 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Coverage-safe benchmark discovery in `/create-agent`** — discovery now
+  refuses a benchmark that would turn the role's quality score into a coverage
+  score: a fill-0 metric whose catalog coverage is below 35% of the ranking field
+  is dropped (non-fatal, with a reason), while a capability-filled metric
+  (`writing`/`website`/`bench:<id>`, fill 0.195) stays weightable at any coverage.
+  The focus set is capped at 3 (priority order preserved) so one benchmark keeps
+  a decisive share. The create report prints each focus metric's coverage and
+  warns below the bar; `--dry-run` and `--json` carry the same signal (issue #11).
+- **Differentiation warning** — the create report warns when the new role's top
+  pick equals the `default` role's top pick, so a role that adds nothing is
+  visible before it is wired.
+
+### Changed
+
+- **`/create-agent` writes the agent file before the role** — an agent with no
+  role is harmless (its `@<name>, @default` chain falls back to `@default`),
+  while a role with no agent is a ranked-but-dead entry. A failed role write now
+  removes the agent file (rollback), so a partial failure never leaves a dangling
+  role and a retry needs no `--force`.
+- **Free-text benchmark extraction ignores the always-weighted backbone** —
+  `general`/`price`/`throughput` are weighted by every archetype, so ordinary
+  prose naming one no longer folds it in as a focus metric; `reasoning` stays
+  extractable (not every archetype weights it).
+- The vendored agent-creation architect prompt carries a source-version marker
+  (`ARCHITECT_PROMPT_VERSION`), asserted by a test against the prompt header and
+  the docs, so an omp upgrade surfaces as a failure rather than silent drift.
+
 ## [1.0.0] - 2026-10-01
 
 First release. The plugin ranks today's LLM leaderboard into best-fit picks for

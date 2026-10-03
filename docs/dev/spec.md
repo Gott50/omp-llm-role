@@ -152,11 +152,29 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   are direct measures. A selected benchmark resolves to its shipped metric when
   one exists (`writingbench` → `writing`), else `bench:<id>`, and is folded in as
   a focus metric. Discovery is non-fatal: a catalog or judge failure skips it and
-  the role still ranks on its other weights.
+  the role still ranks on its other weights. Discovery is **coverage-safe**: the
+  handler loads the ranking universe once (the same daily-cached chain the updater
+  and explorer use) for the field size, and a selected benchmark whose metric is
+  fill-0 and whose catalog coverage is below `FOCUS_COVERAGE_FLOOR` (35% of the
+  field) is dropped, not folded in. When the field size is unknown the share rule
+  is skipped and only the fill rule applies.
 - **The focus-share fit** (`applyFocusBenchmarks`) replaces the mean-weight fold: a
   named benchmark takes `clamp(specialistShare, 0.25, 0.40)` of the non-price budget
   (split across the named set), the archetype's remaining non-price weights are
   rescaled to fill `1 − w_price − focusShare`, and both invariants hold exactly.
+  The focus set is capped at `FOCUS_METRIC_CAP` (3) in priority order (named/linked
+  first, then discovery order) so one benchmark keeps a decisive share; the metrics
+  beyond the cap are reported as dropped. `focusCoverageOk(metric, covered, total)`
+  is the one coverage rule, shared by the discovery gate and the report annotation;
+  the report prints each focus metric's coverage and warns below the bar, and
+  `--dry-run`/`--json` carry the same signal.
+- **`/create-agent` writes the agent file before the role**: an agent with no role
+  is harmless (its `@<name>, @default` chain falls back to `@default`), while a
+  role with no agent is a ranked-but-dead entry the updater would still wire. If
+  the role write fails after the agent file landed — a `{ ok: false }` result or a
+  thrown filesystem error in the atomic writer — the agent file is removed
+  (rollback), so a retry needs no `--force`. The pre-flight dry-run role write
+  still runs before both writes, so a validation failure is not a rollback case.
 - Verification after any engine change (existing convention): `node src/cli/llm-role-rank.ts --top 5`,
   check stderr `openrouter: matched N/<pool> models (throughput), M priced` plus the
   `openrouter endpoints: K/L model pages` line, and per-role eligible counts.

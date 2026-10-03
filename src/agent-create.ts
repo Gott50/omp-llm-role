@@ -13,13 +13,13 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_NAME_RE, RESERVED_AGENT_NAMES, isReadOnlyTools, projectAgentsDir, renderAgentFile, userAgentsDir, writeAgentFile } from "./agent-file.ts";
-import type { RoleDef, SuffixLevel } from "./engine.ts";
+import { AGENT_NAME_RE, RESERVED_AGENT_NAMES, isReadOnlyTools, projectAgentsDir, removeAgentFile, renderAgentFile, userAgentsDir, writeAgentFile } from "./agent-file.ts";
+import { CAPABILITY_FILL, rankRole, type Model, type RoleDef, type SuffixLevel } from "./engine.ts";
 import { metricMeta } from "./explorer/explain.ts";
 import { ARCHETYPES, archetypeById, fitArchetype, type Archetype } from "./role-archetypes.ts";
-import { writeRoleSettings } from "./role-settings.ts";
+import { writeRoleSettings, type RoleWriteResult } from "./role-settings.ts";
 import { isKnownMetric, KNOWN_METRICS, PLUGIN_SETTINGS_PATH } from "./settings.ts";
-import { catalogMetric, type BenchmarkCatalogEntry } from "./benchmark-sources.ts";
+import { catalogMetric, sourceForMetric, type BenchmarkCatalogEntry, type SourceDeclaration } from "./benchmark-sources.ts";
 
 /** The architect's output (omp's `/agents` hub contract): the routing rule and
  * the system prompt, plus the identifier omp would use for the file name. */
@@ -66,6 +66,13 @@ export type CreateAgentRequest = {
    * body's `<criteria>` (the architect path gets them in its prompt instead).
    */
   benchmarkLabels?: string[];
+  /**
+   * Per-metric coverage of the ranking field, for the focus-coverage gate and
+   * the report annotation. The extension loads the ranking universe once and
+   * supplies it; omitted (the CLI, tests) means the field size is unknown and
+   * the share rule is skipped.
+   */
+  coverage?: FocusCoverage;
   /** Overwrite an existing agent file. */
   force: boolean;
   dryRun: boolean;
@@ -183,6 +190,10 @@ export type BenchmarkApplication = {
   added: string[];
   duplicates: string[];
   unknown: string[];
+  /** Focus metrics dropped by the top-K cap (priority order preserved). */
+  dropped: string[];
+  /** Per-focus-metric coverage of the ranking field, for the report annotation. */
+  coverage: Record<string, FocusCoverageEntry>;
 };
 
 /** The backbone every role keeps: the general/reasoning quality axes plus the
@@ -193,6 +204,70 @@ const BACKBONE_METRICS: Record<string, true> = { general: true, reasoning: true,
 /** Focus-share bounds: a named benchmark must actually drive the ranking. */
 const FOCUS_SHARE_FLOOR = 0.25;
 const FOCUS_SHARE_CAP = 0.4;
+
+/** The most focus metrics one role may weight, so one benchmark keeps a decisive
+ * share instead of five sharing the budget. */
+export const FOCUS_METRIC_CAP = 3;
+
+/** The coverage share a fill-0 focus metric must clear to be safe to weight. */
+export const FOCUS_COVERAGE_FLOOR = 0.35;
+
+export type FocusCoverageStatus = "ok" | "below-bar" | "unknown";
+
+/** Per-metric coverage of the ranking field, for the focus-coverage gate. */
+export type FocusCoverage = {
+  /** Total models in the ranking universe; null when the load failed. */
+  total: number | null;
+  /** metric -> models that actually carry it (not the imputed fill). */
+  covered: Record<string, number>;
+  /** Declared sources, so a declared metric's fill resolves. */
+  declared?: readonly SourceDeclaration[];
+};
+
+export type FocusCoverageEntry = {
+  covered: number;
+  total: number | null;
+  share: number | null;
+  fill: number;
+  status: FocusCoverageStatus;
+};
+
+/** The capability fill a metric's absence is scored at (0 = a coverage penalty). */
+export function metricFill(metric: string, declared: readonly SourceDeclaration[] = []): number {
+  return CAPABILITY_FILL[metric] ?? sourceForMetric(metric, declared)?.fill ?? 0;
+}
+
+/**
+ * The one coverage rule, shared by the discovery gate and the report annotation:
+ * a focus metric is safe when its source is capability-filled (`fill > 0`, so
+ * absence is a known non-penalty) or its coverage share clears
+ * `FOCUS_COVERAGE_FLOOR`. When the field size is unknown the share rule is
+ * skipped and the result is `unknown` (annotated, not warned).
+ */
+export function focusCoverageOk(
+  metric: string,
+  covered: number,
+  total: number | null,
+  declared: readonly SourceDeclaration[] = [],
+): FocusCoverageStatus {
+  if (metricFill(metric, declared) > 0) return "ok";
+  if (total === null || total <= 0) return "unknown";
+  return covered / total >= FOCUS_COVERAGE_FLOOR ? "ok" : "below-bar";
+}
+
+/** Count the models a metric actually covers: a non-null value that is not the
+ * source's imputed fill. */
+export function countMetricCoverage(models: readonly Model[], metric: string, declared: readonly SourceDeclaration[] = []): number {
+  const fill = metricFill(metric, declared);
+  let covered = 0;
+  for (const model of models) {
+    const value = model.metrics[metric];
+    if (value == null) continue;
+    if (fill > 0 && value === fill) continue;
+    covered++;
+  }
+  return covered;
+}
 
 /**
  * Fold user-named benchmarks into a role's weights as a decisive *focus* share.
@@ -211,8 +286,18 @@ const FOCUS_SHARE_CAP = 0.4;
  * known-metric set (a shipped key or an external `<ns>:<local>`) is unknown.
  * Naming the archetype's own specialist set is a no-op (the focus share equals
  * its archetype share). Nothing changes when the list is empty.
+ *
+ * The focus set is capped at `FOCUS_METRIC_CAP` in priority order (named/linked
+ * first, then discovery order), so the caller's explicit choices survive and one
+ * benchmark keeps a decisive share; the metrics beyond the cap are reported as
+ * `dropped`. `coverage` (the ranking field's size and per-metric counts) drives
+ * the per-metric `coverage` annotation via the shared `focusCoverageOk`.
  */
-export function applyFocusBenchmarks(weights: Record<string, number>, metrics: readonly string[]): BenchmarkApplication {
+export function applyFocusBenchmarks(
+  weights: Record<string, number>,
+  metrics: readonly string[],
+  coverage?: FocusCoverage,
+): BenchmarkApplication {
   const added: string[] = [];
   const duplicates: string[] = [];
   const unknown: string[] = [];
@@ -225,22 +310,40 @@ export function applyFocusBenchmarks(weights: Record<string, number>, metrics: r
       continue;
     }
     if (focus.includes(metric)) continue; // the same metric named twice
-    if (metric in weights) duplicates.push(metric);
-    else added.push(metric);
     focus.push(metric);
   }
-  if (focus.length === 0) return { weights: { ...weights }, added, duplicates, unknown };
+  const kept = focus.slice(0, FOCUS_METRIC_CAP);
+  const dropped = focus.slice(FOCUS_METRIC_CAP);
+  for (const metric of kept) {
+    if (metric in weights) duplicates.push(metric);
+    else added.push(metric);
+  }
+
+  const declared = coverage?.declared ?? [];
+  const total = coverage?.total ?? null;
+  const coverageMap: Record<string, FocusCoverageEntry> = {};
+  for (const metric of kept) {
+    const covered = coverage?.covered[metric] ?? 0;
+    coverageMap[metric] = {
+      covered,
+      total,
+      share: total !== null && total > 0 ? covered / total : null,
+      fill: metricFill(metric, declared),
+      status: focusCoverageOk(metric, covered, total, declared),
+    };
+  }
+  if (kept.length === 0) return { weights: { ...weights }, added, duplicates, unknown, dropped, coverage: coverageMap };
 
   const price = weights.price ?? 0;
   const specialistShare = Object.keys(weights)
     .filter((key) => key !== "price" && !BACKBONE_METRICS[key])
     .reduce((sum, key) => sum + weights[key], 0);
   const focusShare = Math.min(FOCUS_SHARE_CAP, Math.max(FOCUS_SHARE_FLOOR, specialistShare));
-  const perFocus = focusShare / focus.length;
+  const perFocus = focusShare / kept.length;
 
   const next: Record<string, number> = { ...weights };
-  for (const metric of focus) next[metric] = perFocus;
-  const rest = Object.keys(next).filter((key) => key !== "price" && !focus.includes(key));
+  for (const metric of kept) next[metric] = perFocus;
+  const rest = Object.keys(next).filter((key) => key !== "price" && !kept.includes(key));
   const restSum = rest.reduce((sum, key) => sum + next[key], 0);
   const target = 1 - price - focusShare;
   if (restSum > 0) for (const key of rest) next[key] = (next[key] * target) / restSum;
@@ -256,11 +359,19 @@ export function applyFocusBenchmarks(weights: Record<string, number>, metrics: r
     const largest = keys.reduce((a, b) => (next[a] >= next[b] ? a : b));
     next[largest] = Math.round((next[largest] + residual) * 1e4) / 1e4;
   }
-  return { weights: next, added, duplicates, unknown };
+  return { weights: next, added, duplicates, unknown, dropped, coverage: coverageMap };
 }
 
-/** A benchmark discovered for a purpose: the metric it feeds and its label. */
-export type DiscoveredBenchmark = { metric: string; label: string };
+/** A benchmark discovered for a purpose: the metric it feeds, its label, and the
+ * catalog's model count (the coverage numerator). */
+export type DiscoveredBenchmark = { metric: string; label: string; covered: number };
+
+/** A candidate the discovery gate dropped, with the reason (for the report). */
+export type DroppedBenchmark = { metric: string; label: string; reason: string };
+
+/** The discovery outcome: the benchmarks to fold in, and the ones the coverage
+ * gate dropped (non-fatal, reported). */
+export type DiscoveryOutcome = { discovered: DiscoveredBenchmark[]; dropped: DroppedBenchmark[] };
 
 /** Catalog benchmarks with fewer models than this are skipped (a 1-model
  * benchmark would distort the ranking). */
@@ -329,28 +440,44 @@ function rankCatalogCandidates(purpose: string, candidates: readonly BenchmarkCa
  * capped (the catalog is alphabetical, so a blind cap would drop late-sorting
  * benchmarks), a selected benchmark resolves to its shipped metric when one
  * exists (else `bench:<id>`), and a metric already in `exclude` is skipped.
+ *
+ * `fieldSize` is the ranking universe's model count (null when unknown). A
+ * selected benchmark whose metric is fill-0 and whose catalog coverage is below
+ * `FOCUS_COVERAGE_FLOOR` of the field is dropped (non-fatal) with a reason, so a
+ * sparse pass-rate benchmark cannot turn `q` into a coverage score. When the
+ * field size is unknown the share rule is skipped and only the fill rule applies.
  */
 export async function discoverBenchmarks(
   purpose: string,
   catalog: readonly BenchmarkCatalogEntry[],
   decide: (purpose: string, candidates: readonly BenchmarkCatalogEntry[]) => Promise<readonly string[]>,
   exclude: readonly string[] = [],
-): Promise<DiscoveredBenchmark[]> {
+  fieldSize: number | null = null,
+): Promise<DiscoveryOutcome> {
   const candidates = catalog.filter((entry) => entry.modelCount >= MIN_CATALOG_MODELS);
-  if (candidates.length === 0) return [];
+  if (candidates.length === 0) return { discovered: [], dropped: [] };
   const ranked = rankCatalogCandidates(purpose, candidates);
-  if (ranked.length === 0) return [];
+  if (ranked.length === 0) return { discovered: [], dropped: [] };
   const selected = new Set(await decide(purpose, ranked));
   const seen = new Set(exclude);
-  const out: DiscoveredBenchmark[] = [];
+  const discovered: DiscoveredBenchmark[] = [];
+  const dropped: DroppedBenchmark[] = [];
   for (const entry of ranked) {
     if (!selected.has(entry.id)) continue;
     const metric = catalogMetric(entry.id);
     if (seen.has(metric)) continue;
     seen.add(metric);
-    out.push({ metric, label: entry.name });
+    if (focusCoverageOk(metric, entry.modelCount, fieldSize) === "below-bar") {
+      dropped.push({
+        metric,
+        label: entry.name,
+        reason: `coverage ${entry.modelCount}/${fieldSize} is below the ${Math.round(FOCUS_COVERAGE_FLOOR * 100)}% bar`,
+      });
+      continue;
+    }
+    discovered.push({ metric, label: entry.name, covered: entry.modelCount });
   }
-  return out;
+  return { discovered, dropped };
 }
 
 /**
@@ -391,6 +518,12 @@ function resolveRole(request: CreateAgentRequest): { archetype: Archetype; match
 /**
  * Create the role and the agent file for `request`. Nothing is written when any
  * check fails; `dryRun` runs every check and stops before the writes.
+ *
+ * The agent file is written **before** the role: an agent with no role is
+ * harmless (its `@<name>, @default` chain falls back to `@default`), while a
+ * role with no agent is a ranked-but-dead entry the updater would still wire. If
+ * the role write fails after the agent file landed, the agent file is removed
+ * (rollback), so a retry needs no `--force`.
  */
 export function createAgent(request: CreateAgentRequest): CreateAgentResult {
   const errors: string[] = [];
@@ -404,7 +537,7 @@ export function createAgent(request: CreateAgentRequest): CreateAgentResult {
 
   const resolved = resolveRole(request);
   if ("errors" in resolved) return { ok: false, errors: [...errors, ...resolved.errors] };
-  const bench = applyFocusBenchmarks(resolved.def.weights, request.extraBenchmarks ?? []);
+  const bench = applyFocusBenchmarks(resolved.def.weights, request.extraBenchmarks ?? [], request.coverage);
   resolved.def.weights = bench.weights;
   errors.push(...checkWeightMath(name, resolved.def.weights, resolved.def.required));
 
@@ -413,8 +546,8 @@ export function createAgent(request: CreateAgentRequest): CreateAgentResult {
   const agentsDir = request.scope === "project" ? projectAgentsDir(request.projectAnchor ?? process.cwd()) : userAgentsDir();
   const agentPath = join(agentsDir, `${name}.md`);
   const model = `@${name}, @default`;
-  // Pre-flight: the role write must not land when the agent file is going to be
-  // refused, or a failed run leaves a role with no agent behind it.
+  // Pre-flight: the agent file must not be written when the role is going to be
+  // refused, or a failed run leaves an agent behind for a role that never lands.
   if (existsSync(agentPath) && !request.force) errors.push(`${agentPath} already exists — pass --force to overwrite`);
   if (errors.length > 0) return { ok: false, errors };
 
@@ -425,9 +558,6 @@ export function createAgent(request: CreateAgentRequest): CreateAgentResult {
     return { ok: true, name, archetype: resolved.archetype, matched: resolved.matched, def: resolved.def, agentPath, model, readOnly, backupPath: null, dryRun: true, bench };
   }
 
-  const written = writeRoleSettings(request.lockPath, { [name]: resolved.def });
-  if (!written.ok) return { ok: false, errors: written.errors };
-
   // omp's architect supplies the routing rule and the body; the plugin adds the
   // `model:`/`tools:` frontmatter omp's own writer omits. Without a spec (the
   // CLI, or a caller that skipped the architect) the archetype template is used.
@@ -435,11 +565,46 @@ export function createAgent(request: CreateAgentRequest): CreateAgentResult {
   const body = request.spec?.systemPrompt ?? buildBody(request, resolved.archetype, readOnly);
   const text = renderAgentFile({ name, description, model, tools, body });
   const agent = writeAgentFile(agentPath, text, request.force);
-  if (!agent.ok) {
-    return { ok: false, errors: [`roles.${name} was written, but the agent file was not: ${agent.error}`] };
+  if (!agent.ok) return { ok: false, errors: [agent.error] };
+
+  // The real role write can return `{ ok: false }` (validation/lock/merge/mtime)
+  // or throw (a filesystem error in the atomic writer), so both paths roll the
+  // agent file back — a retry then needs no `--force`.
+  let written: RoleWriteResult;
+  try {
+    written = writeRoleSettings(request.lockPath, { [name]: resolved.def });
+  } catch (err) {
+    return { ok: false, errors: [rollbackAgent(agentPath, err instanceof Error ? err.message : String(err))] };
   }
+  if (!written.ok) return { ok: false, errors: [rollbackAgent(agentPath, written.errors.join("; "))] };
 
   return { ok: true, name, archetype: resolved.archetype, matched: resolved.matched, def: resolved.def, agentPath, model, readOnly, backupPath: written.backupPath, dryRun: false, bench };
+}
+
+/** Remove the agent file after a failed role write and describe both artifacts. */
+function rollbackAgent(agentPath: string, roleError: string): string {
+  const removed = removeAgentFile(agentPath);
+  const note = removed.ok ? "the agent file was removed" : `removing the agent file failed: ${removed.error}`;
+  return `the agent file ${agentPath} was written, but the role was not: ${roleError} (${note})`;
+}
+
+/**
+ * A warning when the new role's top pick equals the `default` role's top pick —
+ * the role adds nothing over the default. `null` when they differ or the pool is
+ * empty (nothing to compare).
+ */
+export function differentiationWarning(
+  newDef: RoleDef,
+  defaultDef: RoleDef,
+  models: readonly Model[],
+): string | null {
+  if (models.length === 0) return null;
+  const pool = models as Model[];
+  const next = rankRole(newDef, pool);
+  const base = rankRole(defaultDef, pool);
+  if (next.length === 0 || base.length === 0) return null;
+  if (next[0].model.id !== base[0].model.id) return null;
+  return `the new role's leader (${next[0].model.id}) is also the default role's leader — the role adds nothing; raise its distinctive metric or drop it`;
 }
 
 /** The ok branch of a create run, for the report formatters. */
@@ -636,16 +801,21 @@ export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
   return { ...parsed, freeText: false };
 }
 
+/** Metrics every archetype already weights, so naming one in prose adds nothing
+ * and must not be read as a benchmark. `reasoning` is deliberately absent: not
+ * every archetype weights it, so it stays extractable. */
+const ALWAYS_WEIGHTED_METRICS: Record<string, true> = { general: true, price: true, throughput: true };
+
 /**
  * Metric names a free-text request names explicitly. Whole-word, case-insensitive,
  * with `_`/`-`/space interchangeable inside a name (`long_context` ↔ "long context").
- * `price`/`throughput` are excluded: every archetype already weights them, so
- * naming them adds nothing.
+ * The always-weighted backbone (`general`/`price`/`throughput`) is excluded: every
+ * archetype already weights them, so ordinary prose naming one adds nothing.
  */
 export function extractBenchmarks(text: string): string[] {
   const found: string[] = [];
   for (const metric of Object.keys(KNOWN_METRICS)) {
-    if (metric === "price" || metric === "throughput") continue;
+    if (metric in ALWAYS_WEIGHTED_METRICS) continue;
     const pattern = metric.replace(/_/g, "[ _-]?");
     if (new RegExp(`\\b${pattern}\\b`, "i").test(text)) found.push(metric);
   }
@@ -710,8 +880,19 @@ export function formatArchetypes(): string {
   }).join("\n\n");
 }
 
+/** One coverage line: `metric covered/total (share) status`, or `unknown`. */
+function coverageLine(metric: string, entry: FocusCoverageEntry): string {
+  if (entry.status === "unknown") return `${metric} unknown (field size unavailable)`;
+  const share = entry.share === null ? "?" : `${(entry.share * 100).toFixed(1)}%`;
+  return `${metric} ${entry.covered}/${entry.total} (${share}) ${entry.status}`;
+}
+
 /** The human-readable report for a completed (or dry-run) create. */
-export function formatCreateAgentReport(result: CreatedAgent, updaterHint: string): string {
+export function formatCreateAgentReport(
+  result: CreatedAgent,
+  updaterHint: string,
+  opts: { differentiation?: string | null } = {},
+): string {
   const weights = Object.entries(result.def.weights).map(([metric, weight]) => `${metric}=${weight}`).join(",");
   const fit = result.matched.length > 0 ? `matched ${result.matched.join(", ")}` : "fallback (no purpose keyword matched)";
   const lines = [
@@ -725,6 +906,16 @@ export function formatCreateAgentReport(result: CreatedAgent, updaterHint: strin
   if (result.bench.added.length > 0) lines.push(`  benchmarks: added ${result.bench.added.join(", ")}`);
   if (result.bench.duplicates.length > 0) lines.push(`  benchmarks: already weighted (skipped) ${result.bench.duplicates.join(", ")}`);
   if (result.bench.unknown.length > 0) lines.push(`  benchmarks: unknown (skipped) ${result.bench.unknown.join(", ")}`);
+  if (result.bench.dropped.length > 0) lines.push(`  benchmarks: dropped (focus cap ${FOCUS_METRIC_CAP}) ${result.bench.dropped.join(", ")}`);
+  for (const [metric, entry] of Object.entries(result.bench.coverage)) lines.push(`  coverage:  ${coverageLine(metric, entry)}`);
+  for (const [metric, entry] of Object.entries(result.bench.coverage)) {
+    if (entry.status === "below-bar") {
+      lines.push(
+        `  warning:   ${metric} coverage ${entry.covered}/${entry.total} is below the ${Math.round(FOCUS_COVERAGE_FLOOR * 100)}% bar — the role may rank on coverage, not quality`,
+      );
+    }
+  }
+  if (opts.differentiation) lines.push(`  warning:   ${opts.differentiation}`);
   if (result.backupPath !== null) lines.push(`  backup:    ${result.backupPath}`);
   if (result.dryRun) lines.push("  nothing written (--dry-run)");
   else lines.push(`  next:      ${updaterHint}`);

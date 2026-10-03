@@ -16,6 +16,9 @@
 import { readFileSync } from "node:fs";
 import { createAgentSession } from "@oh-my-pi/pi-coding-agent";
 import type { AgentSpec } from "./agent-create.ts";
+import { ARCHITECT_PROMPT_VERSION } from "./architect-provenance.ts";
+
+export { ARCHITECT_PROMPT_VERSION };
 
 const ARCHITECT_PROMPT = readFileSync(new URL("./prompts/agent-creation-architect.md", import.meta.url), "utf8");
 const USER_PROMPT = readFileSync(new URL("./prompts/agent-creation-user.md", import.meta.url), "utf8");

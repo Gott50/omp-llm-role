@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { applyFocusBenchmarks, createAgent, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, formatBenchmarks, parseCreateAgentInput, type CreateAgentRequest } from "../src/agent-create.ts";
+import { applyFocusBenchmarks, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_METRIC_CAP, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, type CreateAgentRequest } from "../src/agent-create.ts";
 import type { BenchmarkCatalogEntry } from "../src/benchmark-sources.ts";
+import { rankRole, type Model, type RoleDef } from "../src/engine.ts";
 import { isRecord } from "../src/guards.ts";
 import { fitArchetype } from "../src/role-archetypes.ts";
 import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
+import { makeModel } from "./helpers.ts";
 
 /** Temp home: a lock file with a plugins block, plus an agents dir the plugin
  * resolves through `OMP_LLM_ROLE_AGENT_DIR` (src/state.ts `agentDir`). */
@@ -331,15 +333,17 @@ test("discoverBenchmarks filters by coverage, ranks lexically, and maps metrics"
   assert.deepEqual(seen.map((entry) => entry.id), ["writingbench", "creative-writing-v3"]);
   assert.ok(seen.some((entry) => entry.id === "writingbench"));
   assert.ok(!seen.some((entry) => entry.id === "aaa-generic"));
-  // A shipped metric resolves to its key; an unknown one to `bench:<id>`.
-  assert.deepEqual(result, [
-    { metric: "writing", label: "WritingBench" },
-    { metric: "bench:creative-writing-v3", label: "Creative Writing v3" },
+  // A shipped metric resolves to its key; an unknown one to `bench:<id>`. The
+  // catalog's model count rides along as the coverage numerator.
+  assert.deepEqual(result.discovered, [
+    { metric: "writing", label: "WritingBench", covered: 16 },
+    { metric: "bench:creative-writing-v3", label: "Creative Writing v3", covered: 15 },
   ]);
+  assert.deepEqual(result.dropped, []);
 
   // A metric already in `exclude` is skipped.
   const excluded = await discoverBenchmarks("write prose and creative writing", catalog, decide, ["writing"]);
-  assert.deepEqual(excluded, [{ metric: "bench:creative-writing-v3", label: "Creative Writing v3" }]);
+  assert.deepEqual(excluded.discovered, [{ metric: "bench:creative-writing-v3", label: "Creative Writing v3", covered: 15 }]);
 
   // No lexical overlap at all: nothing is handed to the judge.
   let called = false;
@@ -347,8 +351,150 @@ test("discoverBenchmarks filters by coverage, ranks lexically, and maps metrics"
     called = true;
     return [];
   });
-  assert.deepEqual(none, []);
+  assert.deepEqual(none.discovered, []);
   assert.equal(called, false);
+});
+
+test("discoverBenchmarks drops a fill-0 benchmark whose coverage is below the share floor", async () => {
+  // `swe-bench-verified` maps to the fill-0 `swe_bench` metric; 20/400 = 5% is
+  // far below the 35% bar, so it must not become a decisive focus weight.
+  const catalog: BenchmarkCatalogEntry[] = [
+    { id: "swe-bench-verified", name: "SWE-bench Verified", description: "coding", categories: ["coding"], modelCount: 20 },
+    { id: "gpqa", name: "GPQA", description: "coding", categories: ["coding"], modelCount: 300 },
+    { id: "writingbench", name: "WritingBench", description: "coding", categories: ["coding"], modelCount: 4 },
+  ];
+  const decide = async () => ["swe-bench-verified", "gpqa", "writingbench"];
+
+  const result = await discoverBenchmarks("coding", catalog, decide, [], 400);
+  // `swe_bench` (fill 0, 5%) is dropped; `gpqa` (fill 0, 75%) is kept; `writing`
+  // (fill 0.195) is kept regardless of its 1% coverage.
+  assert.deepEqual(result.discovered.map((d) => d.metric), ["gpqa", "writing"]);
+  assert.deepEqual(result.dropped.map((d) => d.metric), ["swe_bench"]);
+  assert.match(result.dropped[0].reason, /20\/400/);
+
+  // With an unknown field size the share rule is skipped: the fill rule alone
+  // applies, so the fill-0 sparse benchmark survives (annotated, not dropped).
+  const unknown = await discoverBenchmarks("coding", catalog, decide, [], null);
+  assert.deepEqual(unknown.discovered.map((d) => d.metric), ["gpqa", "swe_bench", "writing"]);
+  assert.deepEqual(unknown.dropped, []);
+});
+
+test("focusCoverageOk: fill override, share floor boundary, and unknown field size", () => {
+  // A capability-filled metric is safe at any coverage.
+  assert.equal(focusCoverageOk("writing", 0, 400), "ok");
+  assert.equal(focusCoverageOk("bench:whatever", 0, 400), "ok");
+  // A fill-0 metric is gated on the share.
+  assert.equal(focusCoverageOk("gpqa", 400, 400), "ok");
+  assert.equal(focusCoverageOk("gpqa", Math.ceil(FOCUS_COVERAGE_FLOOR * 400), 400), "ok");
+  assert.equal(focusCoverageOk("gpqa", Math.ceil(FOCUS_COVERAGE_FLOOR * 400) - 1, 400), "below-bar");
+  // Unknown field size: the share rule is skipped.
+  assert.equal(focusCoverageOk("gpqa", 0, null), "unknown");
+  assert.equal(focusCoverageOk("gpqa", 0, 0), "unknown");
+});
+
+test("countMetricCoverage counts real values, not the imputed fill", () => {
+  const models = [makeModel("a", 30, 1, 50), makeModel("b", 30, 1, 50)];
+  models[0].metrics.writing = 0.7;
+  models[1].metrics.writing = 0.195; // the capability fill, not a real score
+  models[0].metrics.gpqa = 0.5;
+  assert.equal(countMetricCoverage(models, "writing"), 1);
+  assert.equal(countMetricCoverage(models, "gpqa"), 1);
+  assert.equal(countMetricCoverage(models, "aime"), 0);
+});
+
+test("applyFocusBenchmarks caps the focus set and reports the drops", () => {
+  const base = { general: 0.4, code: 0.2, price: 0.2, throughput: 0.2 };
+  const applied = applyFocusBenchmarks(base, ["writing", "code", "math", "search", "vision"]);
+  // Priority order is preserved: the first FOCUS_METRIC_CAP survive.
+  assert.deepEqual(applied.added, ["writing", "math"]);
+  assert.deepEqual(applied.duplicates, ["code"]);
+  assert.deepEqual(applied.dropped, ["search", "vision"]);
+  assert.equal(applied.weights.search, undefined);
+  assert.equal(applied.weights.vision, undefined);
+
+  const sum = Object.values(applied.weights).reduce((total, weight) => total + weight, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-9, `weights sum to ${sum}`);
+  const nonPrice = Object.entries(applied.weights)
+    .filter(([metric]) => metric !== "price")
+    .reduce((total, [, weight]) => total + weight, 0);
+  assert.ok(Math.abs(nonPrice - (1 - applied.weights.price)) < 1e-9, `non-price sum ${nonPrice}`);
+  assert.equal(FOCUS_METRIC_CAP, 3);
+});
+
+test("applyFocusBenchmarks annotates coverage and warns below the bar", () => {
+  const base = { general: 0.4, code: 0.2, price: 0.2, throughput: 0.2 };
+  const applied = applyFocusBenchmarks(base, ["gpqa", "writing"], {
+    total: 400,
+    covered: { gpqa: 20, writing: 4 },
+  });
+  assert.deepEqual(applied.coverage.gpqa, { covered: 20, total: 400, share: 0.05, fill: 0, status: "below-bar" });
+  assert.equal(applied.coverage.writing.status, "ok");
+  assert.equal(applied.coverage.writing.fill, 0.195);
+
+  // Unknown field size: annotated, not warned.
+  const unknown = applyFocusBenchmarks(base, ["gpqa"], { total: null, covered: {} });
+  assert.equal(unknown.coverage.gpqa.status, "unknown");
+  assert.equal(unknown.coverage.gpqa.share, null);
+});
+
+test("extractBenchmarks ignores the always-weighted backbone but keeps reasoning", () => {
+  // "general"/"price"/"throughput" are weighted by every archetype, so ordinary
+  // prose naming them must not fold them in as focus metrics.
+  assert.deepEqual(extractBenchmarks("a general agent, cheap on price and throughput"), []);
+  // `reasoning` is not weighted by every archetype, so it stays extractable.
+  assert.deepEqual(extractBenchmarks("an agent for reasoning and writing"), ["reasoning", "writing"]);
+});
+
+test("differentiationWarning fires only when the new role's leader equals default's", () => {
+  // A: strong but expensive; B: weaker but cheap. The default role (general-heavy)
+  // leads with A; a price-heavy role leads with B.
+  const models = [makeModel("strong", 50, 10, 100), makeModel("cheap", 40, 0.5, 100)];
+  const defaultDef: RoleDef = { description: "d", weights: { general: 0.9, price: 0.05, throughput: 0.05 }, required: ["general", "price", "throughput"] };
+  const priceDef: RoleDef = { description: "p", weights: { general: 0.1, price: 0.8, throughput: 0.1 }, required: ["general", "price", "throughput"] };
+
+  assert.equal(rankRole(defaultDef, models)[0].model.id, "strong");
+  assert.equal(rankRole(priceDef, models)[0].model.id, "cheap");
+  assert.match(differentiationWarning(defaultDef, defaultDef, models) ?? "", /leader \(strong\)/);
+  assert.equal(differentiationWarning(priceDef, defaultDef, models), null);
+  assert.equal(differentiationWarning(defaultDef, defaultDef, []), null);
+});
+
+test("formatCreateAgentReport prints coverage, a below-bar warning, and the differentiation warning", () => {
+  const { lockPath } = workspace();
+  const result = createAgent(request(lockPath, {
+    dryRun: true,
+    extraBenchmarks: ["gpqa", "writing"],
+    coverage: { total: 400, covered: { gpqa: 20, writing: 4 } },
+  }));
+  assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+  const report = formatCreateAgentReport(result, "ranking…", { differentiation: "the new role's leader (x) is also the default role's leader" });
+  assert.match(report, /coverage:\s+gpqa 20\/400 \(5\.0%\) below-bar/);
+  assert.match(report, /coverage:\s+writing 4\/400 \(1\.0%\) ok/);
+  assert.match(report, /warning:\s+gpqa coverage 20\/400 is below the 35% bar/);
+  assert.match(report, /warning:\s+the new role's leader \(x\)/);
+
+  // Unknown field size: annotated without a warning.
+  const unknown = createAgent(request(lockPath, { dryRun: true, extraBenchmarks: ["gpqa"], coverage: { total: null, covered: {} } }));
+  assert.ok(unknown.ok);
+  const unknownReport = formatCreateAgentReport(unknown, "ranking…");
+  assert.match(unknownReport, /coverage:\s+gpqa unknown \(field size unavailable\)/);
+  assert.doesNotMatch(unknownReport, /below the 35% bar/);
+});
+
+test("createAgent writes the agent file before the role and rolls it back when the role write fails", () => {
+  const { dir, lockPath, agentsDir } = workspace();
+  // A lock path under a directory that does not exist: the dry-run pre-flight
+  // only reads (a missing file is `{}`), but the real atomic write throws ENOENT.
+  const badLock = join(dir, "missing", "omp-plugins.lock.json");
+
+  const result = createAgent(request(badLock));
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join(" "), /the agent file .* was written, but the role was not/);
+  assert.match(result.errors.join(" "), /the agent file was removed/);
+  // Rollback: no dangling agent, no lock file, so a retry needs no --force.
+  assert.equal(existsSync(join(agentsDir, "changelog.md")), false);
+  assert.equal(existsSync(badLock), false);
+  assert.equal(readFileSync(lockPath, "utf8").includes("changelog"), false);
 });
 
 test("parseCreateAgentInput carries the discovery flags", () => {

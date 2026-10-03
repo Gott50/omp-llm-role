@@ -13,14 +13,14 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createAgent, CREATE_AGENT_USAGE, discoverBenchmarks, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, tokenizeArgs, type DiscoveredBenchmark } from "./agent-create.ts";
+import { countMetricCoverage, createAgent, CREATE_AGENT_USAGE, differentiationWarning, discoverBenchmarks, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, tokenizeArgs, type DiscoveryOutcome } from "./agent-create.ts";
 import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
 import { generateAgentSpec } from "./agent-architect.ts";
 import { authorBenchmarkSource } from "./benchmark-author.ts";
 import { declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
-import { loadRankData } from "./engine.ts";
+import { loadRankData, type Model } from "./engine.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { isRecord } from "./guards.ts";
 import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "./settings.ts";
@@ -267,9 +267,10 @@ async function resolveBenchmarkLinks(ctx: ExtContext, links: readonly string[], 
 /**
  * Discover the catalog benchmarks relevant to `purpose` (non-fatal): a catalog
  * fetch or judge failure just skips discovery, so the command still creates the
- * role. Returns null when discovery could not run.
+ * role. `fieldSize` is the ranking universe's model count (null when unknown),
+ * for the coverage gate. Returns null when discovery could not run.
  */
-async function discoverForPurpose(ctx: ExtContext, purpose: string, exclude: readonly string[]): Promise<DiscoveredBenchmark[] | null> {
+async function discoverForPurpose(ctx: ExtContext, purpose: string, exclude: readonly string[], fieldSize: number | null): Promise<DiscoveryOutcome | null> {
   let catalog: BenchmarkCatalogEntry[] | null;
   try {
     catalog = await loadBenchmarkCatalog(false);
@@ -282,7 +283,7 @@ async function discoverForPurpose(ctx: ExtContext, purpose: string, exclude: rea
     return null;
   }
   try {
-    return await discoverBenchmarks(purpose, catalog, (p, candidates) => judgeBenchmarkRelevance(p, candidates, ctx.cwd), exclude);
+    return await discoverBenchmarks(purpose, catalog, (p, candidates) => judgeBenchmarkRelevance(p, candidates, ctx.cwd), exclude, fieldSize);
   } catch (err) {
     notifyLines(ctx, `create-agent: benchmark discovery failed (${err instanceof Error ? err.message : err}) — skipping`);
     return null;
@@ -397,15 +398,35 @@ export default function (pi: ExtensionAPI) {
         parsed.request.benchmarkLabels = resolved.labels;
       }
 
+      // 1a. Load today's ranking universe once: the coverage denominator, the
+      //     per-metric coverage of named benchmarks, and the differentiation
+      //     comparison all need it. Cached (the updater re-reads the same daily
+      //     cache), and non-fatal — an unknown field size skips the share rule.
+      let rankModels: Model[] | null = null;
+      try {
+        rankModels = (await loadRankData({})).models;
+      } catch (err) {
+        notifyLines(ctx, `create-agent: ranking universe unavailable (${err instanceof Error ? err.message : err}) — coverage share checks skipped`);
+      }
+      const fieldSize = rankModels === null ? null : rankModels.length;
+
       // 1b. Discover the catalog benchmarks relevant to the purpose (unless
       //     --no-discover or an explicit --benchmarks list was given). Non-fatal:
-      //     a catalog or judge failure just skips discovery.
+      //     a catalog or judge failure just skips discovery. A candidate whose
+      //     coverage is too low to rank on is dropped, not folded in.
+      const discoveredCovered = new Map<string, number>();
       if (!parsed.noDiscover && !parsed.explicitBenchmarks && parsed.request.purpose.trim() !== "") {
-        const discovered = await discoverForPurpose(ctx, parsed.request.purpose, parsed.request.extraBenchmarks ?? []);
-        if (discovered !== null && discovered.length > 0) {
-          parsed.request.extraBenchmarks = [...(parsed.request.extraBenchmarks ?? []), ...discovered.map((d) => d.metric)];
-          parsed.request.benchmarkLabels = [...(parsed.request.benchmarkLabels ?? []), ...discovered.map((d) => d.label)];
-          notifyLines(ctx, `create-agent: discovered benchmarks: ${discovered.map((d) => `${d.label} (${d.metric})`).join(", ")}`);
+        const outcome = await discoverForPurpose(ctx, parsed.request.purpose, parsed.request.extraBenchmarks ?? [], fieldSize);
+        if (outcome !== null) {
+          if (outcome.dropped.length > 0) {
+            notifyLines(ctx, `create-agent: dropped benchmarks (coverage): ${outcome.dropped.map((d) => `${d.label} (${d.metric}) — ${d.reason}`).join(", ")}`);
+          }
+          if (outcome.discovered.length > 0) {
+            parsed.request.extraBenchmarks = [...(parsed.request.extraBenchmarks ?? []), ...outcome.discovered.map((d) => d.metric)];
+            parsed.request.benchmarkLabels = [...(parsed.request.benchmarkLabels ?? []), ...outcome.discovered.map((d) => d.label)];
+            for (const d of outcome.discovered) discoveredCovered.set(d.metric, d.covered);
+            notifyLines(ctx, `create-agent: discovered benchmarks: ${outcome.discovered.map((d) => `${d.label} (${d.metric})`).join(", ")}`);
+          }
         }
       }
 
@@ -454,13 +475,26 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
+      // 3b. Coverage of the focus metrics: a discovered metric's coverage is the
+      //     catalog's model count; a named metric's is the loaded models that
+      //     carry it. The gate and the report share `focusCoverageOk`.
+      const declared = loadDeclaredSources();
+      const covered: Record<string, number> = {};
+      for (const metric of parsed.request.extraBenchmarks ?? []) {
+        covered[metric] = discoveredCovered.get(metric) ?? (rankModels === null ? 0 : countMetricCoverage(rankModels, metric, declared));
+      }
+      parsed.request.coverage = { total: fieldSize, covered, declared };
+
       // 4. Write the role + the agent file, then wire `modelRoles.<name>` in-process.
       const result = createAgent(parsed.request);
       if (!result.ok) {
         notifyLines(ctx, `create-agent: ${result.errors.join("\n")}`);
         return;
       }
-      notifyLines(ctx, formatCreateAgentReport(result, "ranking the new role…"));
+      const defaultDef = resolveSettings(readPluginSettingsMap({ global: parsed.request.lockPath, project: null })).settings.roles.default;
+      const differentiation = rankModels !== null && defaultDef !== undefined ? differentiationWarning(result.def, defaultDef, rankModels) : null;
+      if (parsed.json) notifyLines(ctx, JSON.stringify({ ...result, differentiation }, null, 2));
+      else notifyLines(ctx, formatCreateAgentReport(result, "ranking the new role…", { differentiation }));
       if (result.dryRun) return;
       try {
         await runUpdater("manual", extDeps(pi, ctx), { force: true });

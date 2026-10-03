@@ -193,6 +193,14 @@ agent is ranked on WritingBench, Creative Writing v3, COLLIE and the other
 writing benchmarks, not just the one you named. Discovery is non-fatal and
 skippable with `--no-discover`; an explicit `--benchmarks` list wins over it.
 
+Discovery is **coverage-safe**: a benchmark that covers too little of the field
+to rank on (a sparse pass-rate metric, below 35% of the models) is dropped rather
+than folded in, and the focus set is capped at three benchmarks so one keeps a
+decisive share. The report prints each focus metric's coverage and warns when one
+is below the bar, and warns when the new role's top pick is the same as the
+`default` role's (the role adds nothing). The agent file is written before the
+role, so a partial failure never leaves a dangling role.
+
 The flag form is equivalent and gives you the name explicitly:
 
 ```sh

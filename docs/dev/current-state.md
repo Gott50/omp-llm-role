@@ -1,11 +1,31 @@
-# Current state (2026-10-02)
+# Current state (2026-10-03)
 
 Dated snapshot of the ranking as of the date in the heading — matched/priced/
 eligible counts, per-role leaders, and the open defects. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
-[`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The numbers below
-are the 2026-10-02 measurement and are not re-derived on read.
+[`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The ranking numbers
+below are the 2026-10-02 measurement (unchanged on 2026-10-03 — no engine change)
+and are not re-derived on read.
+
+- Coverage-safe benchmark discovery + agent-write hardening in `/create-agent`
+  (2026-10-03, issue #11): discovery now refuses a benchmark that would turn `q`
+  into a coverage score — a fill-0 metric whose catalog coverage is below 35% of
+  the ranking field is dropped (non-fatal, with a reason), while a capability-
+  filled metric (`writing`/`website`/`bench:<id>`, fill 0.195) stays weightable at
+  any coverage. The focus set is capped at 3 (priority order preserved) so one
+  benchmark keeps a decisive share. The handler loads the ranking universe once
+  (the same daily-cached chain the updater/explorer use) for the field size,
+  per-metric coverage, and the differentiation comparison; a failed load skips
+  the share rule (fill rule still applies, coverage annotated `unknown`). The
+  report prints each focus metric's coverage and warns below the bar; `--dry-run`
+  and `--json` carry the same signal. Free-text extraction no longer folds
+  `general`/`price`/`throughput` (every archetype weights them) but keeps
+  `reasoning`. The agent file is written **before** the role, and a failed role
+  write removes it (rollback), so a partial failure never leaves a dangling role
+  and a retry needs no `--force`. The vendored architect prompt carries a
+  source-version marker (`ARCHITECT_PROMPT_VERSION`) asserted by a test. Unit-
+  tested in `tests/create-agent.test.ts` and `tests/architect-provenance.test.ts`.
 
 - Benchmark discovery in `/create-agent` (2026-10-02, issue #10): when a purpose
   is given, the command fetches the llm-stats benchmark catalog (745 rows,

@@ -128,9 +128,38 @@ effect on the next session.
   `src/benchmark-discovery.ts`) and folds them in. The resolved benchmark
   labels are given to the architect (and, on the template path, listed in the
   body's `<criteria>`), so the agent's rubric names the benchmark its model was
-  chosen on.
+  chosen on. Discovery is **coverage-safe**: a candidate whose metric is fill-0
+  and whose catalog coverage is below `FOCUS_COVERAGE_FLOOR` (35% of the ranking
+  field) is dropped, not folded in, and the focus set is capped at
+  `FOCUS_METRIC_CAP` (3) so one benchmark keeps a decisive share. The report
+  prints each focus metric's coverage and warns below the bar; `--dry-run` and
+  `--json` carry the same signal. The agent file is written **before** the role,
+  so a partial failure leaves a harmless agent (its `@<name>, @default` chain
+  falls back to `@default`) rather than a dangling role; a failed role write
+  removes the agent file (rollback), so a retry needs no `--force`.
 - **The shipped skill** — the hand-driven workflow, for bodies that need real
   authoring rather than the archetype scaffold.
+
+### The vendored architect prompt
+
+`src/prompts/agent-creation-architect.md` is copied verbatim from omp 18.4.8's
+`/agents` hub prompt (the SDK subpath it lives under does not resolve from the
+extension loader, so the plugin ships its own copy). Its first line carries the
+source version, and `ARCHITECT_PROMPT_VERSION` (`src/architect-provenance.ts`,
+re-exported by `src/agent-architect.ts`) holds the same value. `tests/architect-provenance.test.ts`
+asserts the two agree and that this document names the same version, so an omp
+upgrade that changes the prompt surfaces as a test failure rather than silent
+drift.
+
+**Re-sync procedure** (after an omp upgrade):
+
+1. Read the installed omp's agent-creation architect prompt (the `/agents` hub's
+   system prompt) and diff it against `src/prompts/agent-creation-architect.md`.
+2. If it changed, replace the body of the asset, keeping the header comment's
+   version current.
+3. Bump `ARCHITECT_PROMPT_VERSION` to the new omp version.
+4. Update the version named in this section.
+5. Run `node --test tests/architect-provenance.test.ts`.
 
 ## Removal
 
