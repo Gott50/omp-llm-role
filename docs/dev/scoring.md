@@ -280,8 +280,26 @@ The shipped weights (`DEFAULT_ROLES`) and the archetype sets
    reorderings only).
 6. **λ from the intended posture.** `λ = (w_price/(1−w_price))/20` is the
    quality-per-dollar exchange rate; a price weight whose leader-flip threshold
-   is 10–30× away is decoration. `plan`/`advisor` carry price 0.12/0.20
-   (λ 0.00682/0.0125); `tiny` stays at 0.40.
+   is 10–30× away is decoration. `advisor` carries price 0.20 (λ 0.0125),
+   `plan` 0.25 (λ 0.01667); `tiny` stays at 0.40.
+   - **Measure the leader-flip threshold on the *reachable* pool** — the pool
+     the selector is actually chosen from (candidates the probe walk marks `ok`
+     or `unknown`). The full-pool threshold is a stability check only. Measured
+     2026-10-03 (issue #16): `plan`'s reachable threshold was w_price 0.2175
+     (Hy4 preview → DeepSeek-V4.1-Flash) against a full-pool 0.311 (Muse Spark
+     1.3 → Qwen3.8 Flash), so price 0.25 flips the actionable pick while the
+     full-pool #1 is unchanged.
+   - **Degenerate case.** When the value leader is also the quality leader the
+     formula `(q_QL − q_VL)/(p_QL − p_VL)` is 0/0 — *undefined*, not zero, and
+     it does **not** mean "no price weight dethrones the leader". The leader
+     still flips at `min` over the cheaper challengers X of
+     `(q_leader − q_X)/(pEff_leader − pEff_X)`.
+   - **Coverage caveat.** A reachable flip can land on a model whose weighted
+     metric is *imputed*, not measured. `long_context` covers 39% of the `plan`
+     pool (56/142), and DeepSeek-V4.1-Flash's `index_long_context` is null —
+     llm-stats reads that as insufficient evidence, not zero — so it scores the
+     0.195 capability fill against Hy4 preview's measured 18.9. Read the flip as
+     partly a data-coverage artefact.
 7. **`website` vs `code` collinearity.** They correlate at r = 0.890 over the
    covered pool, so `designer` weights `website` 0.18 with `code` trimmed to
    0.06 (the old 0.10/0.18 pair double-counted one capability axis). The freed
@@ -342,6 +360,29 @@ Measured effect: `slow` #1 glm-5.3 → muse-spark-1.3, `plan` #1 hy4-preview →
 muse-spark-1.3, `smol`/`commit` #1 muse-spark-1.1 → deepseek-v4.1-flash;
 `default`/`advisor` keep their #1 (near-tie reorderings only).
 
+## Value-review findings (2026-10-03, issue #16 — `plan` cost posture)
+
+`plan` did not honour the stated "cheapest model that can do the task" stance:
+its price weight (0.12, λ 0.00682) was decoration on the pool the selector is
+actually chosen from.
+
+- **The reachable pool, not the full pool, is the decision pool.** The shipped
+  `plan` pick was Hy4 preview ($2.32/M); DeepSeek-V4.1-Flash ($0.43/M, 5.4×
+  cheaper) is reachable on this account and lost by 0.013 value. Hy4's whole
+  edge is `long_context` (measured 18.9 vs DeepSeek's null → capability fill
+  0.195); DeepSeek leads the measured axes (`general` 51.2 vs 50.4, 81 vs 36
+  tok/s). Fix: raise `plan`'s `price` 0.12 → 0.25 (λ 0.01667), rescaling the
+  non-price weights by 0.852273 — `general` 0.6, `long_context` 0.116676,
+  `throughput` 0.033324 (Σ(non-price) = 0.75 = 1 − price; `q` unchanged).
+  Measured reachable flip 0.2175, full-pool 0.311, so 0.25 flips the actionable
+  pick (Hy4 → DeepSeek-V4.1-Flash) and leaves the full-pool #1 (Muse Spark 1.3)
+  in place. `long_context` stays weighted — it is the only non-collinear
+  capability axis in `plan`; dropping it would collapse the role onto `general`.
+- **The flip rides on imputed data.** 5 of the 7 reachable `plan` models are
+  `long_context`-imputed; the metric covers 39% of the pool. If the account's
+  provider whitelist changes, `qwen3.8-flash` (same $0.43/M, higher q) strictly
+  dominates DeepSeek and takes the reachable #1 with no weight edit.
+
 ## Changing a weight — checklist
 
 1. Keep Σ = 1 and Σ(non-price) = 1 − w_price (rescale the others; do not touch
@@ -356,3 +397,7 @@ muse-spark-1.3, `smol`/`commit` #1 muse-spark-1.1 → deepseek-v4.1-flash;
 4. Re-run the report (`node src/cli/llm-role-rank.ts --top 5`) and check the stderr
    match/eligible counts; the explorer's `Δ` column measures against the role's
    effective def.
+5. A price-weight change is a posture change: measure the leader-flip threshold
+   on the **reachable** pool (rule 6), not the full pool, and record both
+   numbers (reachable and full-pool) in the review. A threshold measured on the
+   wrong pool reads as decoration when it is binding, or vice versa.

@@ -87,21 +87,21 @@ eligible: 75 — λ 0.00682 $/quality-point (thinking ×1.857)
 |  9 | 0.695 | 0.773 | ★ GPT-5.6 Sol       | OpenAI                    | $11.4 |    56 | 1.1M |     0.371 |     0.193 |     0.143 |     0.051 |     0.016 |
 | 10 | 0.686 | 0.693 | Qwen3.7-Plus        | Alibaba Cloud / Qwen Team | $1.04 |    51 |    — |     0.353 |     0.163 |     0.123 |     0.039 |     0.015 |
 
-## @plan — Planning: reasoning, long-context coherence
-eligible: 142 — λ 0.00682 $/quality-point (thinking ×1.857)
+## @plan — Planning: reasoning and long-context coherence, priced so the cheapest capable planner wins
+eligible: 142 — λ 0.01667 $/quality-point (thinking ×1.857)
 
 |  # | value |     q | model               | org                       |   $/M | tok/s |  ctx | gen 80% | lc 15.6% | tput 4.4% |
 | -: | ----: | ----: | ------------------- | ------------------------- | ----: | ----: | ---: | ------: | -------: | --------: |
-|  1 | 0.837 | 0.863 | ★ Muse Spark 1.3    | Meta                      | $3.71 |    64 | 1.0M |   0.737 |    0.101 |     0.024 |
-|  2 | 0.801 | 0.820 | ★ Gemini 3.8 Flash  | Google                    | $2.79 |   110 | 1.0M |   0.696 |    0.093 |     0.031 |
-|  3 | 0.789 | 0.808 | Gemini 3.7 Flash    | Google                    | $2.79 |   113 | 1.0M |   0.676 |    0.100 |     0.032 |
-|  4 | 0.785 | 0.788 | ★ Qwen3.8 Flash     | Alibaba Cloud / Qwen Team | $0.43 |    56 | 1.0M |   0.686 |    0.079 |     0.023 |
-|  5 | 0.785 | 0.862 | GPT-5.6 Sol         | OpenAI                    | $11.4 |    56 | 1.1M |   0.741 |    0.099 |     0.022 |
-|  6 | 0.780 | 0.796 | ★ Hy4 preview       | Tencent                   | $2.32 |    36 |    — |   0.703 |    0.076 |     0.017 |
-|  7 | 0.767 | 0.770 | DeepSeek-V4.1-Flash | DeepSeek                  | $0.43 |    81 | 1.0M |   0.712 |    0.030 |     0.027 |
-|  8 | 0.761 | 0.777 | GLM-5.3             | Zhipu AI                  | $2.39 |    78 | 1.0M |   0.720 |    0.030 |     0.027 |
-|  9 | 0.759 | 0.819 | GPT-5.6 Terra       | OpenAI                    | $8.82 |    87 | 1.1M |   0.701 |    0.089 |     0.028 |
-| 10 | 0.750 | 0.756 | GPT-5.6 Luna        | OpenAI                    | $0.88 |    91 | 1.1M |   0.647 |    0.080 |     0.029 |
+|  1 | 0.801 | 0.863 | ★ Muse Spark 1.3    | Meta                      | $3.71 |    64 | 1.0M |   0.737 |    0.101 |     0.024 |
+|  2 | 0.781 | 0.788 | ★ Qwen3.8 Flash     | Alibaba Cloud / Qwen Team | $0.43 |    56 | 1.0M |   0.686 |    0.079 |     0.023 |
+|  3 | 0.774 | 0.820 | ★ Gemini 3.8 Flash  | Google                    | $2.79 |   110 | 1.0M |   0.696 |    0.093 |     0.031 |
+|  4 | 0.762 | 0.770 | DeepSeek-V4.1-Flash | DeepSeek                  | $0.43 |    81 | 1.0M |   0.712 |    0.030 |     0.027 |
+|  5 | 0.761 | 0.808 | Gemini 3.7 Flash    | Google                    | $2.79 |   113 | 1.0M |   0.676 |    0.100 |     0.032 |
+|  6 | 0.757 | 0.796 | ★ Hy4 preview       | Tencent                   | $2.32 |    36 |    — |   0.703 |    0.076 |     0.017 |
+|  7 | 0.741 | 0.756 | GPT-5.6 Luna        | OpenAI                    | $0.88 |    91 | 1.1M |   0.647 |    0.080 |     0.029 |
+|  8 | 0.740 | 0.746 | ★ GLM-5.3-Flash     | Zhipu AI                  | $0.36 |    51 | 1.0M |   0.694 |    0.030 |     0.021 |
+|  9 | 0.738 | 0.777 | GLM-5.3             | Zhipu AI                  | $2.39 |    78 | 1.0M |   0.720 |    0.030 |     0.027 |
+| 10 | 0.732 | 0.740 | Hy3                 | Tencent                   | $0.47 |    61 | 262k |   0.629 |    0.088 |     0.024 |
 
 ## @commit — Commit messages: cheap and fast with decent general quality
 eligible: 142 — λ 0.04091 $/quality-point

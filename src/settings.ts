@@ -50,8 +50,19 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     filters: { image: true },
   },
   plan: {
-    description: "Planning: reasoning, long-context coherence",
-    weights: { general: 0.704, long_context: 0.1369, throughput: 0.0391, price: 0.12 },
+    description: "Planning: reasoning and long-context coherence, priced so the cheapest capable planner wins",
+    // 2026-10-03 (issue #16): `price` raised 0.12 → 0.25 so the cost posture
+    // binds on the *reachable* pool — the pool the selector is chosen from.
+    // Measured reachable leader-flip w_price 0.2175 (Hy4 preview →
+    // DeepSeek-V4.1-Flash) vs full-pool 0.311 (Muse Spark 1.3 → Qwen3.8 Flash),
+    // so 0.25 flips the actionable decision while leaving the full-pool #1
+    // unchanged. Non-price weights rescaled by (1−0.25)/(1−0.12) = 0.852273:
+    // general 0.704 → 0.6, long_context 0.1369 → 0.116676, throughput 0.0391 →
+    // 0.033324 (Σ(non-price) = 0.75 = 1 − price). `q` is unchanged by the
+    // rescale; only λ moves (0.00682 → 0.016667). The reachable flip lands on a
+    // model whose `long_context` is imputed (capability fill 0.195, not
+    // measured) — see Scoring rule 6.
+    weights: { general: 0.6, long_context: 0.116676, throughput: 0.033324, price: 0.25 },
     required: ["reasoning", "general", "price", "throughput"],
     // `auto`, not `medium`: no reachable planning candidate lists `medium` in its
     // catalog thinking[], so a `medium` pin silently writes bare (the session

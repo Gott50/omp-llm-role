@@ -61,6 +61,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `smol`/`commit` raise their price weight to 0.45 so it actually binds (the
   value leader is no longer the quality leader). `plan`'s description drops
   `math` to match. (issue #13)
+- **`plan` cost posture now binds on the reachable pool** — `plan`'s `price`
+  weight is raised 0.12 → 0.25 (λ 0.00682 → 0.01667), rescaling the non-price
+  weights (so `q` is unchanged), because the leader-flip threshold measured on
+  the pool the account can actually run is w_price 0.2175 — below the old
+  weight. The `plan` pick among reachable models becomes DeepSeek-V4.1-Flash
+  (5.4× cheaper than Hy4 preview), while the full-pool #1 (Muse Spark 1.3) is
+  unchanged; the flip rides on `long_context` imputation (DeepSeek has no
+  llm-stats long-context evidence, so it scores the capability fill, not a
+  measured weakness). The scoring doc's rule 6 now says which pool to measure
+  the threshold on and documents the value-leader == quality-leader degenerate
+  case. (issue #16)
 - **`/create-agent` writes the agent file before the role** — an agent with no
   role is harmless (its `@<name>, @default` chain falls back to `@default`),
   while a role with no agent is a ranked-but-dead entry. A failed role write now

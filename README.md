@@ -62,7 +62,7 @@ omp plugin install omp-llm-role@gott50-plugins
 | `smol` | Fast lightweight model: cheap and quick, still competent |
 | `slow` | Most capable model for hard problems; cost and speed as tiebreakers |
 | `vision` | Image understanding: vision index dominates |
-| `plan` | Planning: reasoning, math, long-context coherence |
+| `plan` | Planning: reasoning and long-context coherence, priced so the cheapest capable planner wins |
 | `commit` | Commit messages: cheap and fast with decent general quality |
 | `tiny` | Background tasks (titles, memory): cheapest and fastest wins |
 | `task` | Subagents: agentic + tool calling, moderate cost sensitivity |

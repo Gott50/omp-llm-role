@@ -5,8 +5,20 @@ eligible counts, per-role leaders, and the open defects. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The ranking numbers
-below are the 2026-10-03 measurement (the #13 role-weight rebalance; see the top
-bullet) and are not re-derived on read.
+below are the 2026-10-03 measurement (the #13 role-weight rebalance and the #16
+`plan` cost posture; see the top bullets) and are not re-derived on read.
+
+- `plan` cost posture (2026-10-03, issue #16): `plan`'s `price` raised 0.12 → 0.25
+  (λ 0.00682 → 0.01667) so the posture binds on the **reachable** pool — the pool
+  the selector is chosen from. Measured reachable leader-flip w_price 0.2175 (Hy4
+  preview → DeepSeek-V4.1-Flash) vs full-pool 0.311 (Muse Spark 1.3 → Qwen3.8
+  Flash); 0.25 flips the actionable pick while the full-pool #1 is unchanged.
+  Non-price weights rescaled by 0.852273: `general` 0.6, `long_context` 0.116676,
+  `throughput` 0.033324 (Σ(non-price) = 0.75 = 1 − price; `q` unchanged). The
+  reachable flip rides on `long_context` imputation (39% coverage; DeepSeek's
+  index is null → capability fill 0.195, not a measured weakness). Full-pool
+  `plan` #1 stays Muse Spark 1.3 (value 0.837 → 0.801); reachable #1 Hy4 preview →
+  DeepSeek-V4.1-Flash. The other nine roles are untouched.
 
 - Keyed-catalog availability fast path (2026-10-03, issue #15): the updater now consumes
   the shared `KeyAvailability` primitive — when the account's OpenRouter "Filter the
@@ -33,7 +45,8 @@ bullet) and are not re-derived on read.
   `default` general 0.4926/code 0.1705/agents 0.1137/tool_calling 0.0947/
   throughput 0.0285/price 0.10; `slow` general 0.60/code 0.18/agents 0.13/
   throughput 0.04/price 0.05; `plan` general 0.704/long_context 0.1369/
-  throughput 0.0391/price 0.12; `advisor` general 0.5947/long_context 0.1004/
+  throughput 0.0391/price 0.12 (superseded by issue #16, above); `advisor`
+  general 0.5947/long_context 0.1004/
   price 0.20/throughput 0.1049; `smol` price 0.45/throughput 0.22/general
   0.1571/code 0.0943/tool_calling 0.0786; `commit` price 0.45/throughput
   0.2285/general 0.2369/code 0.0846. Leaders: `default` DeepSeek-V4.1-Flash
@@ -392,7 +405,7 @@ bullet) and are not re-derived on read.
   leaders, before the account's provider whitelist drops the blocked ones):
   `default` DeepSeek-V4.1-Flash (0.815), `smol` DeepSeek-V4.1-Flash (0.717),
   `slow` Muse Spark 1.3 (0.838), `vision` Qwen3.8 Flash (0.733), `plan`
-  Muse Spark 1.3 (0.837), `commit` DeepSeek-V4.1-Flash (0.750), `tiny`
+  Muse Spark 1.3 (0.801), `commit` DeepSeek-V4.1-Flash (0.750), `tiny`
   Mercury 2 (0.798), `task` DeepSeek-V4.1-Flash (0.758), `advisor`
   Muse Spark 1.3 (0.792), `designer` DeepSeek-V4.1-Flash (0.780).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
