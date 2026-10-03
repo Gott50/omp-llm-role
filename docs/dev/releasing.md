@@ -50,7 +50,10 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 - **Released 1.0.0 on all three channels.** Repo public since 2026-10-02;
   `omp-llm-role@1.0.0` published to npm 2026-10-03
   (`npm view omp-llm-role version` → `1.0.0`, `dist-tags.latest` = `1.0.0`);
-  `main` is pushed and the git + marketplace URLs resolve.
+  `main` is pushed and the git + marketplace URLs resolve. Tagged `v1.0.0` at
+  `fe98b76` (the published commit — npm's `gitHead`), so the changelog link and
+  pinned git refs (`omp plugin install github:Gott50/omp-llm-role#v1.0.0`)
+  resolve.
 - **All three routes verified against the real URLs** (2026-10-03, omp
   18.4.12, throwaway `HOME`s, cwd outside the real home tree): npm
   (`omp plugin install omp-llm-role`), git
