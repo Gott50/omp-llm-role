@@ -22,10 +22,14 @@ and are not re-derived on read.
   and `--json` carry the same signal. Free-text extraction no longer folds
   `general`/`price`/`throughput` (every archetype weights them) but keeps
   `reasoning`. The agent file is written **before** the role, and a failed role
-  write removes it (rollback), so a partial failure never leaves a dangling role
-  and a retry needs no `--force`. The vendored architect prompt carries a
-  source-version marker (`ARCHITECT_PROMPT_VERSION`) asserted by a test. Unit-
-  tested in `tests/create-agent.test.ts` and `tests/architect-provenance.test.ts`.
+  write rolls it back (restoring the prior file on a `--force` re-create, else
+  removing the new one), so a partial failure never leaves a dangling role, a
+  retry needs no `--force`, and the user's prior agent is never destroyed. The
+  step-3 benchmark prompt previews the request's resolved weights (`resolveRole`),
+  so the "already in this role's weights" marker appears live. The vendored
+  architect prompt carries a source-version marker (`ARCHITECT_PROMPT_VERSION`)
+  asserted by a test. Unit-tested in `tests/create-agent.test.ts` and
+  `tests/architect-provenance.test.ts`.
 
 - Benchmark discovery in `/create-agent` (2026-10-02, issue #10): when a purpose
   is given, the command fetches the llm-stats benchmark catalog (745 rows,

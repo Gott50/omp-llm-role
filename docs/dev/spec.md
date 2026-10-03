@@ -172,9 +172,13 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   is harmless (its `@<name>, @default` chain falls back to `@default`), while a
   role with no agent is a ranked-but-dead entry the updater would still wire. If
   the role write fails after the agent file landed — a `{ ok: false }` result or a
-  thrown filesystem error in the atomic writer — the agent file is removed
-  (rollback), so a retry needs no `--force`. The pre-flight dry-run role write
-  still runs before both writes, so a validation failure is not a rollback case.
+  thrown filesystem error in the atomic writer — the agent file is rolled back:
+  the prior file is restored on a `--force` re-create, else the new file is
+  removed, so a retry needs no `--force` and the user's prior agent is never
+  destroyed. The pre-flight dry-run role write still runs before both writes, so a
+  validation failure is not a rollback case. The step-3 benchmark prompt previews
+  the request's resolved weights (`resolveRole`), so the "already in this role's
+  weights" marker appears live.
 - Verification after any engine change (existing convention): `node src/cli/llm-role-rank.ts --top 5`,
   check stderr `openrouter: matched N/<pool> models (throughput), M priced` plus the
   `openrouter endpoints: K/L model pages` line, and per-role eligible counts.

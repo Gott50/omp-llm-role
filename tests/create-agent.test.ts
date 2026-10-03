@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { applyFocusBenchmarks, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_METRIC_CAP, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, type CreateAgentRequest } from "../src/agent-create.ts";
+import { applyFocusBenchmarks, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_METRIC_CAP, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, type CreateAgentRequest } from "../src/agent-create.ts";
 import type { BenchmarkCatalogEntry } from "../src/benchmark-sources.ts";
 import { rankRole, type Model, type RoleDef } from "../src/engine.ts";
 import { isRecord } from "../src/guards.ts";
@@ -495,6 +495,30 @@ test("createAgent writes the agent file before the role and rolls it back when t
   assert.equal(existsSync(join(agentsDir, "changelog.md")), false);
   assert.equal(existsSync(badLock), false);
   assert.equal(readFileSync(lockPath, "utf8").includes("changelog"), false);
+});
+
+test("createAgent --force restores the prior agent file when the role write fails", () => {
+  const { dir, agentsDir } = workspace();
+  mkdirSync(agentsDir, { recursive: true });
+  const prior = "---\nname: changelog\ndescription: hand-written\n---\n\nKeep me.\n";
+  writeFileSync(join(agentsDir, "changelog.md"), prior);
+  const badLock = join(dir, "missing", "omp-plugins.lock.json");
+
+  const result = createAgent(request(badLock, { force: true }));
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join(" "), /the prior agent file was restored/);
+  // Blind removal would destroy the user's agent and leave the old role dangling.
+  assert.equal(readFileSync(join(agentsDir, "changelog.md"), "utf8"), prior);
+});
+
+test("resolveRole previews the request's weights without writing", () => {
+  const { lockPath, dir } = workspace();
+  const resolved = resolveRole(request(lockPath));
+  assert.ok(!("errors" in resolved));
+  assert.equal(resolved.archetype.id, "prose");
+  // The preview is the archetype's weights, so the live prompt can mark them.
+  assert.deepEqual(resolved.def.weights, resolved.archetype.weights);
+  assert.deepEqual(readdirSync(dir), ["omp-plugins.lock.json"]);
 });
 
 test("parseCreateAgentInput carries the discovery flags", () => {

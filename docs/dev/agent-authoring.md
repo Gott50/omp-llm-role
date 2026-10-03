@@ -136,7 +136,11 @@ effect on the next session.
   `--json` carry the same signal. The agent file is written **before** the role,
   so a partial failure leaves a harmless agent (its `@<name>, @default` chain
   falls back to `@default`) rather than a dangling role; a failed role write
-  removes the agent file (rollback), so a retry needs no `--force`.
+  rolls the agent file back — restoring the prior file on a `--force` re-create,
+  else removing the new one — so a retry needs no `--force` and the user's prior
+  agent is never destroyed. The step-3 benchmark prompt previews the request's
+  resolved weights (`resolveRole`), so the "already in this role's weights"
+  marker appears live.
 - **The shipped skill** — the hand-driven workflow, for bodies that need real
   authoring rather than the archetype scaffold.
 

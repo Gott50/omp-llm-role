@@ -25,8 +25,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`/create-agent` writes the agent file before the role** — an agent with no
   role is harmless (its `@<name>, @default` chain falls back to `@default`),
   while a role with no agent is a ranked-but-dead entry. A failed role write now
-  removes the agent file (rollback), so a partial failure never leaves a dangling
-  role and a retry needs no `--force`.
+  rolls the agent file back — restoring the prior file on a `--force` re-create,
+  else removing the new one — so a partial failure never leaves a dangling role,
+  a retry needs no `--force`, and the user's prior agent is never destroyed.
+- The `/create-agent` benchmark prompt now marks the metrics the role already
+  weights (the "already in this role's weights" marker), so you do not re-add
+  one.
 - **Free-text benchmark extraction ignores the always-weighted backbone** —
   `general`/`price`/`throughput` are weighted by every archetype, so ordinary
   prose naming one no longer folds it in as a focus metric; `reasoning` stays

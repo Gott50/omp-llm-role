@@ -11,7 +11,7 @@
  * updater in-process right after (the same path `/refresh-roles` takes).
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_NAME_RE, RESERVED_AGENT_NAMES, isReadOnlyTools, projectAgentsDir, removeAgentFile, renderAgentFile, userAgentsDir, writeAgentFile } from "./agent-file.ts";
 import { CAPABILITY_FILL, rankRole, type Model, type RoleDef, type SuffixLevel } from "./engine.ts";
@@ -499,8 +499,12 @@ export function formatBenchmarks(weights?: Record<string, number>, extra?: reado
 /** Shared empty match list for an explicitly chosen archetype (no keyword hits). */
 const EMPTY_MATCHED: string[] = [];
 
-/** Resolve the archetype, then layer the caller's explicit overrides on top. */
-function resolveRole(request: CreateAgentRequest): { archetype: Archetype; matched: string[]; def: RoleDef } | { errors: string[] } {
+/**
+ * Resolve the archetype, then layer the caller's explicit overrides on top.
+ * Exported so the extension can preview the request's weights (for the live
+ * "already in this role's weights" marker) without writing anything.
+ */
+export function resolveRole(request: CreateAgentRequest): { archetype: Archetype; matched: string[]; def: RoleDef } | { errors: string[] } {
   const match = request.archetypeId === undefined ? fitArchetype(stripBenchmarkLinks(request.purpose)) : { archetype: archetypeById(request.archetypeId), matched: EMPTY_MATCHED };
   if (match.archetype === null) {
     return { errors: [`unknown archetype "${request.archetypeId}" — one of ${ARCHETYPES.map((a) => a.id).join(", ")}`] };
@@ -564,6 +568,10 @@ export function createAgent(request: CreateAgentRequest): CreateAgentResult {
   const description = request.spec?.whenToUse ?? routingDescription(request.purpose);
   const body = request.spec?.systemPrompt ?? buildBody(request, resolved.archetype, readOnly);
   const text = renderAgentFile({ name, description, model, tools, body });
+  // Capture the prior text (only reachable with `--force`) so a failed role write
+  // restores it instead of destroying the user's file and leaving the old role
+  // dangling.
+  const priorAgent = existsSync(agentPath) ? readFileSync(agentPath, "utf8") : null;
   const agent = writeAgentFile(agentPath, text, request.force);
   if (!agent.ok) return { ok: false, errors: [agent.error] };
 
@@ -574,17 +582,26 @@ export function createAgent(request: CreateAgentRequest): CreateAgentResult {
   try {
     written = writeRoleSettings(request.lockPath, { [name]: resolved.def });
   } catch (err) {
-    return { ok: false, errors: [rollbackAgent(agentPath, err instanceof Error ? err.message : String(err))] };
+    return { ok: false, errors: [rollbackAgent(agentPath, priorAgent, err instanceof Error ? err.message : String(err))] };
   }
-  if (!written.ok) return { ok: false, errors: [rollbackAgent(agentPath, written.errors.join("; "))] };
+  if (!written.ok) return { ok: false, errors: [rollbackAgent(agentPath, priorAgent, written.errors.join("; "))] };
 
   return { ok: true, name, archetype: resolved.archetype, matched: resolved.matched, def: resolved.def, agentPath, model, readOnly, backupPath: written.backupPath, dryRun: false, bench };
 }
 
-/** Remove the agent file after a failed role write and describe both artifacts. */
-function rollbackAgent(agentPath: string, roleError: string): string {
-  const removed = removeAgentFile(agentPath);
-  const note = removed.ok ? "the agent file was removed" : `removing the agent file failed: ${removed.error}`;
+/**
+ * Undo the agent write after a failed role write: restore the prior file when one
+ * existed (a `--force` re-create), else remove the new one. Blind removal under
+ * `--force` would destroy the user's agent and leave the old role dangling.
+ */
+function rollbackAgent(agentPath: string, priorAgent: string | null, roleError: string): string {
+  if (priorAgent === null) {
+    const removed = removeAgentFile(agentPath);
+    const note = removed.ok ? "the agent file was removed" : `removing the agent file failed: ${removed.error}`;
+    return `the agent file ${agentPath} was written, but the role was not: ${roleError} (${note})`;
+  }
+  const restored = writeAgentFile(agentPath, priorAgent, true);
+  const note = restored.ok ? "the prior agent file was restored" : `restoring the prior agent file failed: ${restored.error}`;
   return `the agent file ${agentPath} was written, but the role was not: ${roleError} (${note})`;
 }
 

@@ -13,7 +13,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { countMetricCoverage, createAgent, CREATE_AGENT_USAGE, differentiationWarning, discoverBenchmarks, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, tokenizeArgs, type DiscoveryOutcome } from "./agent-create.ts";
+import { countMetricCoverage, createAgent, CREATE_AGENT_USAGE, differentiationWarning, discoverBenchmarks, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, tokenizeArgs, type DiscoveryOutcome } from "./agent-create.ts";
 import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
 import { generateAgentSpec } from "./agent-architect.ts";
 import { authorBenchmarkSource } from "./benchmark-author.ts";
@@ -462,7 +462,10 @@ export default function (pi: ExtensionAPI) {
       //    user can see what is already in use and avoid duplicates. `--benchmarks`
       //    covers headless runs, where there is no prompt.
       if (ctx.hasUI && ctx.ui.input && parsed.request.extraBenchmarks === undefined) {
-        notifyLines(ctx, formatBenchmarks(undefined, externalMetricsInUse()));
+        // Preview the request's resolved weights so the list marks what the role
+        // already weights (the "already in this role's weights" marker).
+        const preview = resolveRole(parsed.request);
+        notifyLines(ctx, formatBenchmarks("errors" in preview ? undefined : preview.def.weights, externalMetricsInUse()));
         const answer = await ctx.ui.input(
           "Additional benchmarks",
           "comma-separated metric names to add to the weights, or empty",
