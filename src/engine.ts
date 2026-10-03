@@ -493,7 +493,7 @@ async function loadEndpointPages(slugs: string[], refresh: boolean): Promise<Ope
  * covered median overstates an unmeasured model; the uncovered cohort's own
  * mean general index sits at the 0.195 percentile of the covered field. A
  * below-median covered model therefore still scores below the fill — that
- * residual inversion is documented in README Known quirks. (A regression fill
+ * residual inversion is documented in `docs/dev/quirks.md`. (A regression fill
  * was rejected: a least-squares fit of percentile on the general index
  * saturates at 0 for ~19% of the uncovered eligible pool, and a
  * nearest-neighbour fill is discontinuous (0.49 jumps between models 0.06

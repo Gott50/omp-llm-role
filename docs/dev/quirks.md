@@ -27,6 +27,17 @@ the home for the things that only bite someone changing or debugging the code.
 - **`index_*` scores are interval-scale** (observed −16..+60, can be negative);
   the fixed affine anchors (−20→0, +60→1) handle it.
 
+## Capability fill
+
+- **The fill can invert against the covered field.** The capability fill
+  (`CAPABILITY_FILL`, 0.195) is the percentile implied by the *uncovered*
+  cohort's mean general index, which sits above the bottom of the covered
+  field — so a covered model in the bottom ~8% of the field scores *below* a
+  model with no Design Arena data at all. Measured 2026-10-03: 4 of the 51
+  covered in-pool models (24 of 121 across all models). This is a
+  debugging-only oddity, not a contract; the fill is deliberately conservative
+  and a regression fill was rejected (see the `applyDesignPercentiles` comment).
+
 ## The 1/price² blend
 
 - **The blend renormalizes throughput over the routes that have p50 data**,

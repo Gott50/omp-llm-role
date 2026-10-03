@@ -823,7 +823,7 @@
       "roles.designer.weights.code": {
         "type": "number",
         "description": "Weight of code in the designer quality composite",
-        "default": 0.1,
+        "default": 0.06,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -839,7 +839,7 @@
       "roles.designer.weights.throughput": {
         "type": "number",
         "description": "Weight of throughput in the designer quality composite",
-        "default": 0.13,
+        "default": 0.15,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -847,7 +847,7 @@
       "roles.designer.weights.price": {
         "type": "number",
         "description": "Weight of price in the designer quality composite",
-        "default": 0.15,
+        "default": 0.17,
         "min": 0,
         "max": 1,
         "step": 0.001

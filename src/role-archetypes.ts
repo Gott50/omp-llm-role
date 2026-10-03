@@ -128,8 +128,9 @@ export const ARCHETYPES: readonly Archetype[] = [
     id: "design",
     label: "design specialist",
     keywords: ["design", "ui", "ux", "visual", "layout", "style", "css", "frontend", "mockup", "wireframe", "screenshot", "image", "logo", "brand", "accessib", "typograph"],
-    weights: { vision: 0.3, website: 0.2, general: 0.2, code: 0.1, price: 0.12, throughput: 0.08 },
-    required: ["general", "price", "throughput"],
+    // The shipped `designer` role's own weights: one canonical design weighting.
+    weights: DEFAULT_ROLES.designer.weights,
+    required: DEFAULT_ROLES.designer.required,
     thinking: "auto",
     tools: ["read", "grep", "glob", "find", "write", "edit"],
     image: true,

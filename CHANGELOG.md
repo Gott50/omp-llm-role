@@ -22,6 +22,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Designer agent + role reconciled with the repo's contracts** — the shipped
+  `designer` agent body now renders and inspects its own output (dev server →
+  `browser.open` → `screenshot` at the project's real breakpoints, both themes,
+  focus states), its `tools:` allowlist is trimmed to the design-relevant set
+  (dropping `ida`/`security_scan`/`debug`/`github` and the memory/context tools),
+  its font rule is scoped to projects with no type system, and its description
+  reads as a routing rule. The `designer` role trims the collinear `code` weight
+  (0.10 → 0.06, r = 0.890 with `website`) and moves the freed share to the
+  independent `price`/`throughput` axes, and the `design` archetype now derives
+  its weights from the shipped role by reference. Docs corrected: the engine
+  comment points at `docs/dev/quirks.md`, which now documents the capability-fill
+  inversion, the README caveat no longer claims absence is never a penalty, and
+  the scoring doc's rule 7 carries the new numbers. (issue #12)
 - **Role weight rebalance** — `plan`/`slow` drop the collinear, sparse `math`
   metric and move its share to the consolidated `general` axis
   (capability-preserving, so `slow`'s speed weight stays a tiebreaker);

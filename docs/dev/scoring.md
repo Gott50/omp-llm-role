@@ -282,9 +282,12 @@ The shipped weights (`DEFAULT_ROLES`) and the archetype sets
    quality-per-dollar exchange rate; a price weight whose leader-flip threshold
    is 10–30× away is decoration. `plan`/`advisor` carry price 0.12/0.20
    (λ 0.00682/0.0125); `tiny` stays at 0.40.
-7. **`website` vs `code` collinearity.** They correlate at r = 0.876, so
-   `designer` weights `website` 0.18 with `code` trimmed to 0.10 (the old
-   0.10/0.18 pair double-counted one capability axis).
+7. **`website` vs `code` collinearity.** They correlate at r = 0.890 over the
+   covered pool, so `designer` weights `website` 0.18 with `code` trimmed to
+   0.06 (the old 0.10/0.18 pair double-counted one capability axis). The freed
+   0.04 goes to the independent axes (`price` +0.02, `throughput` +0.02) per
+   rule 5, giving `general` 0.26, `vision` 0.18, `throughput` 0.15, `price`
+   0.17, `website` 0.18, `code` 0.06.
 
 ## Value-review findings (2026-09-30)
 

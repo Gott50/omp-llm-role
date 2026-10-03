@@ -102,7 +102,7 @@ These are the same sets `/create-agent` fits automatically — the executable co
 | prose / writing (WritingBench-weighted) | general .24, reasoning .16, long_context .10, writing .26, price .14, throughput .10 | general, price, throughput |
 | data / analysis | math .28, reasoning .26, general .20, code .10, price .10, throughput .06 | general, price, throughput |
 | research / search | search .28, general .24, reasoning .20, long_context .10, price .10, throughput .08 | general, price, throughput |
-| design / UI | vision .30, website .20, general .20, code .10, price .12, throughput .08 (+ `filters.image`) | general, price, throughput |
+| design / UI | general .26, code .06, vision .18, throughput .15, price .17, website .18 (+ `filters.image`) | general, price, throughput |
 | refactor / migration | code .30, agents .20, general .20, long_context .10, price .12, throughput .08 | general, price, throughput |
 | test / QA | code .28, agents .20, tool_calling .14, general .18, price .12, throughput .08 | general, price, throughput |
 | ops / infra | agents .24, tool_calling .20, general .20, code .14, price .12, throughput .10 | general, price, throughput |

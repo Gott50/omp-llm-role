@@ -116,7 +116,7 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     // role is disabled (an unresolved `@x` is a literal pattern, so a bare
     // `@designer` would hard-fail — the chain is what keeps the agent spawnable).
     enabled: false,
-    weights: { general: 0.26, code: 0.10, vision: 0.18, throughput: 0.13, price: 0.15, website: 0.18 },
+    weights: { general: 0.26, code: 0.06, vision: 0.18, throughput: 0.15, price: 0.17, website: 0.18 },
     required: ["general", "price", "throughput"],
     // `auto` for the same reason as `plan`: nothing in the designer pool lists
     // `medium`, and `auto` is a meta level written as-is at the same overhead.

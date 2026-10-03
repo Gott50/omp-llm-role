@@ -328,7 +328,10 @@ The plugin keeps only models the OpenRouter key can actually run:
   occupying its share of the denominator, so weight sparse metrics as
   differentiators, never as `required` gates. `website`, `writing` and
   `long_context` are capability-filled (0.195) instead, so absence is not a
-  penalty for them.
+  penalty for them — with one residual inversion: the fill sits above the bottom
+  of the covered field, so a covered model in the bottom of the field can still
+  score below a model with no data (see
+  [docs/dev/quirks.md](docs/dev/quirks.md)).
 - **Provider whitelist.** The account's allowed-providers whitelist blocks many
   models, so the report's #1 and the written selector can differ — judge weights
   on the reachable pool.

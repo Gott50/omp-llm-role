@@ -31,6 +31,18 @@ bullet) and are not re-derived on read.
   `filters`, `enabled` and the `vision`/`tiny`/`task`/`designer` weights are
   unchanged.
 
+- Designer weight reconciliation (2026-10-03, issue #12): `designer` `code`
+  0.10 → 0.06 (collinear with `website`, r 0.890, so it double-counted one
+  capability axis) and the freed 0.04 moved to the independent axes (`price`
+  +0.02, `throughput` +0.02), per Scoring rule 5. New weights: general 0.26/
+  code 0.06/vision 0.18/throughput 0.15/price 0.17/website 0.18 (Σ = 1.00,
+  Σ(non-price) = 0.83 = 1 − 0.17); λ 0.00882 → 0.010241. The `design` archetype
+  now derives its `weights`/`required` from `DEFAULT_ROLES.designer` by
+  reference (the `general` archetype's pattern), so the two design weightings
+  cannot diverge. `required`, `thinking`, `filters.image`, `enabled` and the
+  description are unchanged; the leader is unchanged (a refinement, not a
+  re-ranking).
+
 - Coverage-safe benchmark discovery + agent-write hardening in `/create-agent`
   (2026-10-03, issue #11): discovery now refuses a benchmark that would turn `q`
   into a coverage score — a fill-0 metric whose catalog coverage is below 35% of
@@ -371,7 +383,7 @@ bullet) and are not re-derived on read.
   `slow` Muse Spark 1.3 (0.838), `vision` Qwen3.8 Flash (0.733), `plan`
   Muse Spark 1.3 (0.837), `commit` DeepSeek-V4.1-Flash (0.750), `tiny`
   Mercury 2 (0.798), `task` DeepSeek-V4.1-Flash (0.758), `advisor`
-  Muse Spark 1.3 (0.792), `designer` DeepSeek-V4.1-Flash (0.784).
+  Muse Spark 1.3 (0.792), `designer` DeepSeek-V4.1-Flash (0.780).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
