@@ -12,10 +12,15 @@
  * and the `./judgment` subpath for `resolveJudge`/`sharedJudgmentCache`. The
  * deeper `./judgment/standalone` path is not resolvable in the installed build
  * (verified: importing it fails the whole extension load).
+ *
+ * The SDK is imported dynamically, inside the function. Static import cannot
+ * work here: the specifier is host-injected and version-dependent (the
+ * `./judgment` subpath does not exist in every omp build), and a static import
+ * failure is fatal to the whole `extension.ts` load — it would kill every plugin
+ * command, not just discovery. Dynamic, a resolution failure degrades to "no
+ * discovery" (the caller catches and skips).
  */
 
-import { ModelRegistry, Settings, discoverAuthStorage, loadCliExtensionProviders } from "@oh-my-pi/pi-coding-agent";
-import { resolveJudge, sharedJudgmentCache } from "@oh-my-pi/pi-coding-agent/judgment";
 import type { BenchmarkCatalogEntry } from "./benchmark-sources.ts";
 
 /** Keep a candidate when the judge's yes-probability is at least this. */
@@ -34,6 +39,8 @@ export async function judgeBenchmarkRelevance(
 ): Promise<string[]> {
   const bounded = candidates;
   if (bounded.length === 0) return [];
+  const { ModelRegistry, Settings, discoverAuthStorage, loadCliExtensionProviders } = await import("@oh-my-pi/pi-coding-agent");
+  const { resolveJudge, sharedJudgmentCache } = await import("@oh-my-pi/pi-coding-agent/judgment");
   const settings = await Settings.init({ cwd });
   const authStorage = await discoverAuthStorage(undefined, { settings });
   try {
