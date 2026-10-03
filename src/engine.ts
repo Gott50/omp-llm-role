@@ -1157,18 +1157,21 @@ async function loadDesignArenaBoards(refresh: boolean): Promise<{ website: Desig
  * falls back to a stale cache (non-fatal — affected models just go unranked).
  * Throws only when llm-stats has neither fresh cache nor a usable fetch (§9 abort).
  */
-export async function loadRankData(opts?: { refresh?: boolean; url?: string; roles?: Record<string, RoleDef> }): Promise<RankData> {
+export async function loadRankData(opts?: { refresh?: boolean; url?: string; roles?: Record<string, RoleDef>; extraMetrics?: readonly string[] }): Promise<RankData> {
   const refresh = opts?.refresh ?? false;
   const url = opts?.url ?? DEFAULT_URL;
+  const extraMetrics = new Set(opts?.extraMetrics ?? []);
   // Design Arena is the only source a role can depend on exclusively (`website`).
   // When the caller names the roles it will rank and none weights `website`, skip
   // the endpoint fetch entirely — the OpenRouter mirror (part of the find payload
   // fetched anyway) still populates `designElo`. Undefined roles = fetch (the
-  // standalone default, e.g. a caller that ranks every shipped role).
-  const needsDesignArena = opts?.roles === undefined || Object.values(opts.roles).some((r) => r.weights.website !== undefined);
+  // standalone default, e.g. a caller that ranks every shipped role). An
+  // `extraMetrics` entry forces the fetch too: the explorer's UI can weight any
+  // shipped metric, so it passes the shipped keys even when no role weights them.
+  const needsDesignArena = opts?.roles === undefined || extraMetrics.has("website") || Object.values(opts.roles).some((r) => r.weights.website !== undefined);
   // The writing leaderboard is the only source a role can depend on exclusively
   // (`writing`); skip its fetch when no ranked role weights it.
-  const needsWriting = opts?.roles === undefined || Object.values(opts.roles).some((r) => r.weights.writing !== undefined);
+  const needsWriting = opts?.roles === undefined || extraMetrics.has("writing") || Object.values(opts.roles).some((r) => r.weights.writing !== undefined);
 
   const cached = refresh ? null : readCache(CACHE_PATH);
   let rows: LlmStatsRow[];
@@ -1310,8 +1313,10 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string; rol
   // does not ship resolves through the benchmark-source registry (a declared
   // source, or the generic llm-stats benchmark). Fetched only when a ranked role
   // weights the metric; `opts.roles === undefined` fetches every declared source.
-  // Non-fatal: a source that fails leaves its metric unfilled and the role ranks
-  // on the rest of its weights.
+  // `extraMetrics` adds metrics no role weights (the explorer's UI can weight any
+  // shipped key, so it passes them to keep its dataset a superset of any def it
+  // can rank). Non-fatal: a source that fails leaves its metric unfilled and the
+  // role ranks on the rest of its weights.
   const declared = loadDeclaredSources();
   const externalMetrics = new Set<string>();
   if (opts?.roles === undefined) {
@@ -1321,6 +1326,7 @@ export async function loadRankData(opts?: { refresh?: boolean; url?: string; rol
       for (const metric of Object.keys(def.weights)) externalMetrics.add(metric);
     }
   }
+  for (const metric of extraMetrics) externalMetrics.add(metric);
   for (const metric of externalMetrics) {
     const source = sourceForMetric(metric, declared);
     if (source === null || source.external !== true || source.fetch === undefined) continue;

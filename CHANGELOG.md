@@ -89,6 +89,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`ARCHITECT_PROMPT_VERSION`), asserted by a test against the prompt header and
   the docs, so an omp upgrade surfaces as a failure rather than silent drift.
 
+### Fixed
+
+- **Explorer dataset now carries role-weighted benchmarks** — the explorer
+  loaded its ranking data with `loadRankData({})`, which fetches declared
+  benchmark sources only. A role weighting a generic llm-stats benchmark
+  (`bench:<id>`, e.g. `bench:alignbench`) therefore ranked on a dataset missing
+  that metric, so the explorer disagreed with the updater (and `/refresh-roles`)
+  for that role. The explorer now loads with the resolved roles plus the shipped
+  keys (`loadRankData({ roles, extraMetrics: Object.keys(KNOWN_METRICS) })`), so
+  its dataset is a superset of any def the UI can rank; `extraMetrics` also
+  forces the `website`/`writing` fetches even when no role weights them.
+
 ## [1.0.0] - 2026-10-01
 
 First release. The plugin ranks today's LLM leaderboard into best-fit picks for

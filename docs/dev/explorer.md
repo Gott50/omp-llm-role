@@ -39,7 +39,7 @@ type ExplorerOpts = {
     defaults: Record<string, RoleDef>;
     availability: KeyAvailability;            // keyed-catalog overlay (re-derived on refresh)
   };
-  refresh(): Promise<void>;                   // re-runs loadRankData({ refresh: true }) and swaps rank
+  refresh(): Promise<void>;                   // re-runs loadRankData({ refresh: true, roles, extraMetrics }) and swaps rank
 };
 ```
 
@@ -141,6 +141,14 @@ launcher `/explore-roles` uses.
   factor on the omp catalog; `refresh()` re-runs `opts.reload(true)`,
   re-enriches, and — when `opts.reloadAvailability` is supplied — re-derives the
   availability overlay.
+- The dataset is loaded with the **resolved roles plus the shipped keys**
+  (`loadRankData({ roles, extraMetrics: Object.keys(KNOWN_METRICS) })`), so it
+  carries every metric the UI can weight — including a generic llm-stats
+  benchmark (`bench:<id>`) that only a role's weights pull in. Loading with no
+  roles (`loadRankData({})`) fetches declared sources only, so a role weighting
+  an undeclared benchmark would rank on a dataset missing that metric and the
+  explorer would disagree with the updater. `extraMetrics` also forces the
+  `website`/`writing` fetches even when no role weights them.
 - `opts.availability` is the boot-time keyed-catalog overlay; `getState()` returns
   it on every request, so `/api/rank` and `/api/explain` annotate rows without a
   second fetch. `/explore-roles` builds it in-process from the session's

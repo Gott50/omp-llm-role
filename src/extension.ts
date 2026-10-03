@@ -334,7 +334,17 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         notifyLines(ctx, "llm-role explorer: loading today's rankings…");
-        const rank = await loadRankData({});
+        // The explorer ranks the resolved roles, so its dataset must carry every
+        // metric those roles weight — including generic llm-stats benchmarks
+        // (`bench:<id>`) that only a role's weights pull in. `loadRankData({})`
+        // loads declared sources only, so a role weighting an undeclared
+        // benchmark would rank on a dataset missing that metric and the explorer
+        // would disagree with the updater. Pass the resolved roles (the same
+        // user-level lock file the explorer reads) plus the shipped keys, so the
+        // dataset stays a superset of any def the UI can rank (the UI can weight
+        // `website`/`writing` even when no role does).
+        const explorerRoles = () => resolveSettings(readPluginSettingsMap({ project: null })).settings.roles;
+        const rank = await loadRankData({ roles: explorerRoles(), extraMetrics: Object.keys(KNOWN_METRICS) });
         const catalog = await extDeps(pi, ctx).getCatalog();
         // Best-effort key-availability overlay: a missing key or a failed fetch
         // degrades to "unavailable" and never blocks Explorer boot.
@@ -350,7 +360,7 @@ export default function (pi: ExtensionAPI) {
           catalog,
           availability: await loadAvailability(),
           reloadAvailability: loadAvailability,
-          reload: (refresh) => loadRankData({ refresh }),
+          reload: (refresh) => loadRankData({ refresh, roles: explorerRoles(), extraMetrics: Object.keys(KNOWN_METRICS) }),
           port,
           open,
           unref: true,

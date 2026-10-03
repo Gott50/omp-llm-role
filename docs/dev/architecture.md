@@ -202,12 +202,18 @@ before `catalogFromOmpModelsJson`.
 
 `src/engine.ts` is the shared engine; `src/cli/llm-role-rank.ts` is a thin CLI over it.
 
-- `loadRankData(opts?: { refresh?; url?; roles? }): Promise<RankData>` — the
-  per-source cache → fetch → stale-cache chain. `opts.roles` names the roles the
-  caller will rank: a role-exclusive source is fetched only when some role
+- `loadRankData(opts?: { refresh?; url?; roles?; extraMetrics? }): Promise<RankData>`
+  — the per-source cache → fetch → stale-cache chain. `opts.roles` names the roles
+  the caller will rank: a role-exclusive source is fetched only when some role
   weights its metric — Design Arena (`website`), the writing leaderboard
   (`writing`), and every external metric (a declared source or the generic
-  llm-stats benchmark). `undefined` = fetch all (what the explorer passes).
+  llm-stats benchmark). `opts.extraMetrics` adds metrics no role weights and also
+  forces the `website`/`writing` fetches. `undefined` roles = fetch every declared
+  source. The explorer passes the resolved roles **plus** the shipped keys
+  (`Object.keys(KNOWN_METRICS)`), so its dataset is a superset of any def the UI
+  can rank — without it a role weighting an undeclared generic benchmark
+  (`bench:<id>`) would rank on a dataset missing that metric and disagree with the
+  updater.
 - `src/benchmark-sources.ts` is the registry: `resolveBenchmarkSource(link)` maps
   a link to a source, `sourceForMetric(metric)` maps a metric back, and
   `loadBenchmarkScores`/`applyBenchmarkScores` are the shared cache chain and
