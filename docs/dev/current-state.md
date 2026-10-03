@@ -5,8 +5,31 @@ eligible counts, per-role leaders, and the open defects. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The ranking numbers
-below are the 2026-10-02 measurement (unchanged on 2026-10-03 — no engine change)
-and are not re-derived on read.
+below are the 2026-10-03 measurement (the #13 role-weight rebalance; see the top
+bullet) and are not re-derived on read.
+
+- Role-weight rebalance (2026-10-03, issue #13): `math` dropped from `plan` and
+  `slow` (collinear with `reasoning`, r 0.919, and missing for 18% of the pool —
+  a coverage penalty, not a quality signal) and its share moved to the
+  consolidated `general` axis (capability-preserving, 100% coverage), not
+  `throughput` (which would have tripled `slow`'s speed weight and flipped both
+  leaders to a cheap/fast model). `general`+`reasoning` merged into `general`
+  in `default`/`slow`/`plan`/`advisor` (a pure relabel: `general`~`reasoning`
+  r 0.984, so the combined capability share is unchanged). `smol`/`commit`
+  `price` raised 0.30/0.35 → 0.45 (the measured binding threshold; non-price
+  weights rescaled proportionally, so it is a posture change, not a capability
+  change). `plan`'s description drops the now-unweighted `math`. New weights:
+  `default` general 0.4926/code 0.1705/agents 0.1137/tool_calling 0.0947/
+  throughput 0.0285/price 0.10; `slow` general 0.60/code 0.18/agents 0.13/
+  throughput 0.04/price 0.05; `plan` general 0.704/long_context 0.1369/
+  throughput 0.0391/price 0.12; `advisor` general 0.5947/long_context 0.1004/
+  price 0.20/throughput 0.1049; `smol` price 0.45/throughput 0.22/general
+  0.1571/code 0.0943/tool_calling 0.0786; `commit` price 0.45/throughput
+  0.2285/general 0.2369/code 0.0846. Leaders: `default` DeepSeek-V4.1-Flash
+  (unchanged), `slow`/`plan` → Muse Spark 1.3, `advisor` Muse Spark 1.3
+  (unchanged), `smol`/`commit` → DeepSeek-V4.1-Flash. `required`, `thinking`,
+  `filters`, `enabled` and the `vision`/`tiny`/`task`/`designer` weights are
+  unchanged.
 
 - Coverage-safe benchmark discovery + agent-write hardening in `/create-agent`
   (2026-10-03, issue #11): discovery now refuses a benchmark that would turn `q`
@@ -340,18 +363,15 @@ and are not re-derived on read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 400 llm-stats models; OpenRouter matched 152/400 (throughput), 151 priced.
-- Eligible per role: 143 (vision 75, designer 88, image-input filter).
+- 400 llm-stats models; OpenRouter matched 151/400 (throughput), 150 priced.
+- Eligible per role: 142 (vision 75, designer 87, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.810), `smol` Muse Spark 1.1 (0.740, blocked
-  → DeepSeek), `slow` GLM-5.3 (0.816), `vision` Qwen3.8 Flash (0.731, blocked
-  → DeepSeek), `plan` Qwen3.8 Flash (0.751), `commit` Muse Spark 1.1 (0.768,
-  blocked → DeepSeek), `tiny` Muse Spark 1.1 (0.779, blocked → Ling Fin),
-  `task` DeepSeek-V4.1-Flash (0.759), `advisor` Muse Spark 1.3 (0.788,
-  blocked → Hy4), `designer` DeepSeek-V4.1-Flash (0.787). The suffix pass moved
-  `default` and `advisor` onto their reachable leaders (Muse Spark 1.3 and
-  GPT-5.6 Sol were blocked).
+  `default` DeepSeek-V4.1-Flash (0.815), `smol` DeepSeek-V4.1-Flash (0.717),
+  `slow` Muse Spark 1.3 (0.838), `vision` Qwen3.8 Flash (0.733), `plan`
+  Muse Spark 1.3 (0.837), `commit` DeepSeek-V4.1-Flash (0.750), `tiny`
+  Mercury 2 (0.798), `task` DeepSeek-V4.1-Flash (0.758), `advisor`
+  Muse Spark 1.3 (0.792), `designer` DeepSeek-V4.1-Flash (0.784).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)

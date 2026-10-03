@@ -39,8 +39,10 @@ test("rankRows: deltas measure movement against the baseline ranking", () => {
 });
 
 test("rankRows: missing lists weighted metrics with a null raw value", () => {
-  // makeModel leaves `math` null; slow weights it, so every row reports it missing.
-  const rows = rankRows(DEFAULT_ROLES.slow, MODELS, []);
+  // makeModel leaves `math` null; the role weights it, so every row reports it missing.
+  // A fixture role, not a shipped one: no shipped role weights `math` any more.
+  const def = { description: "", weights: { math: 0.3, general: 0.5, price: 0.2 }, required: ["general", "price", "throughput"] };
+  const rows = rankRows(def, MODELS, []);
   assert.deepEqual(rows[0].missing, ["math"]);
   assert.equal(rows[0].baselineRank, null);
   assert.equal(rows[0].delta, null);

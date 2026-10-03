@@ -23,7 +23,7 @@ export const PLUGIN_SETTINGS_PATH = join(homedir(), ".omp", "plugins", "omp-plug
 export const DEFAULT_ROLES: Record<string, RoleDef> = {
   default: {
     description: "Main workhorse: strong general coding-agent quality, sane cost",
-    weights: { general: 0.3221, reasoning: 0.1705, code: 0.1705, agents: 0.1137, tool_calling: 0.0947, throughput: 0.0285, price: 0.1 },
+    weights: { general: 0.4926, code: 0.1705, agents: 0.1137, tool_calling: 0.0947, throughput: 0.0285, price: 0.1 },
     required: ["general", "price", "throughput"],
     // `auto`, not bare: the session default is `auto` (config.yml
     // `defaultThinkingLevel`), so a bare selector runs at auto effort while
@@ -32,13 +32,13 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
   },
   smol: {
     description: "Fast lightweight model: cheap and quick, still competent",
-    weights: { price: 0.3, throughput: 0.28, general: 0.2, code: 0.12, tool_calling: 0.1 },
+    weights: { price: 0.45, throughput: 0.22, general: 0.1571, code: 0.0943, tool_calling: 0.0786 },
     required: ["general", "price", "throughput"],
     thinking: "off",
   },
   slow: {
     description: "Most capable model for hard problems; cost and speed as tiebreakers",
-    weights: { general: 0.26, reasoning: 0.26, code: 0.18, agents: 0.13, math: 0.08, throughput: 0.04, price: 0.05 },
+    weights: { general: 0.60, code: 0.18, agents: 0.13, throughput: 0.04, price: 0.05 },
     required: ["general", "price", "throughput"],
     thinking: "high",
   },
@@ -50,8 +50,8 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     filters: { image: true },
   },
   plan: {
-    description: "Planning: reasoning, math, long-context coherence",
-    weights: { reasoning: 0.3129, general: 0.2542, long_context: 0.1369, math: 0.1369, throughput: 0.0391, price: 0.12 },
+    description: "Planning: reasoning, long-context coherence",
+    weights: { general: 0.704, long_context: 0.1369, throughput: 0.0391, price: 0.12 },
     required: ["reasoning", "general", "price", "throughput"],
     // `auto`, not `medium`: no reachable planning candidate lists `medium` in its
     // catalog thinking[], so a `medium` pin silently writes bare (the session
@@ -60,7 +60,7 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
   },
   commit: {
     description: "Commit messages: cheap and fast with decent general quality",
-    weights: { price: 0.35, throughput: 0.27, general: 0.28, code: 0.1 },
+    weights: { price: 0.45, throughput: 0.2285, general: 0.2369, code: 0.0846 },
     required: ["general", "price", "throughput"],
     thinking: "off",
   },
@@ -90,14 +90,15 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     // lottery at 76% coverage); `long_context` is kept (the most independent
     // capability axis, r 0.739/0.767 with reasoning/general) and is now
     // capability-filled at 0.195 like `website` (src/engine.ts CAPABILITY_FILL),
-    // so its 44.7% coverage no longer penalizes. `reasoning`↔`general` stay
-    // collinear (r 0.972) but the independent axes now carry more. `price` is
+    // so its 44.7% coverage no longer penalizes. `reasoning`↔`general` were
+    // collinear (r 0.972) and are now merged into `general` (2026-10-03, issue
+    // #13), so the independent axes carry more. `price` is
     // raised to 0.20 (λ 0.0125) because the advisor fires on every primary turn
     // *and* every `task` subagent turn (config.yml task.agentAdvisor.task: on),
     // so spend is ~2× a per-turn count; `throughput` is raised to 0.1049 because
     // `syncBacklog: "1"` lets a slow advisor stall the primary up to 30s.
     // Non-price weights sum to 0.80 = 1 − price, as the (w/qW) blend requires.
-    weights: { reasoning: 0.3498, general: 0.2449, long_context: 0.1004, price: 0.2, throughput: 0.1049 },
+    weights: { general: 0.5947, long_context: 0.1004, price: 0.2, throughput: 0.1049 },
     required: ["reasoning", "general", "price", "throughput"],
     // `auto`, matching `plan`: the same model (Hy4 preview) runs both roles, so
     // pricing advisor bare while plan is `auto` understated advisor by 1.857×.

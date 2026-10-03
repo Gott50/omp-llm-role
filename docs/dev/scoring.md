@@ -134,6 +134,20 @@ instead of 0, so absence is not a coverage penalty. None of the three may be a
   fill. Making it per-metric is a one-line change (`CAPABILITY_FILL`).
 - The report marks a filled value `~` in the model column.
 
+### The 0-fill posture
+
+`code`, `agents`, `tool_calling`, `math` and `vision` are deliberately
+**0-filled** — a missing value scores 0, not the capability fill. This is a
+cost-conservative choice, not an oversight: capability-filling them at 0.195
+promotes expensive models, because the fill lifts every uncovered model's `q`
+and the expensive models are the ones the source tends to cover. Measured on the
+2026-10-03 caches, filling these metrics flips `slow` #1 muse-spark-1.3 →
+gpt-6-astra and `plan` #1 hy4-preview → gpt-5.6-sol. The 0-fill keeps the
+ranking on the models the source actually measured; the cost is that a model
+missing a weighted metric is penalized for a coverage gap (see rule 4), which is
+why the defaults weight these metrics at reduced share and never add them to
+`required`.
+
 ## Thinking price factor
 
 Roles with a `thinking` level rank on the thinking-adjusted price.
@@ -216,6 +230,21 @@ reported as dropped. The cap is applied before the share math, so the kept set
 still receives `clamp(specialistShare, 0.25, 0.40)` split evenly and both
 invariants hold exactly.
 
+### Zeroeval catalog benchmarks — none added
+
+No zeroeval catalog benchmark adds an independent axis at usable coverage, so
+none is weighted in a shipped role. Measured over the 400-model ranking field
+(2026-10-03): `mmlu-pro` is the only catalog benchmark that clears the 35%
+`FOCUS_COVERAGE_FLOOR` (142/400 = 35.5%), but it correlates r 0.90–0.92 with
+`general`/`reasoning`; `HLE` is the next best at 26% and does not clear the bar.
+The role-relevant benchmarks are 17–30% coverage and collinear with an existing
+index (`toolathlon` 0.89 with `tool_calling`, `swe-bench-pro` 0.91 with `code`,
+`terminal-bench-2.1` 0.94 with `code`, `mcp-atlas` 0.80 with `agents`,
+`browsecomp` 0.97 with `search`, `deepswe-1.1` 0.80 with `agents`, `lvbench`
+0.95 with `vision`). The six shipped-but-unweighted raw benchmarks (`gpqa`,
+`aime`, `swe_bench`, `arc_agi`, `terminal_bench`, `tau_bench`) are all redundant
+with an index or 5–6% coverage — do not weight them.
+
 ## Weight design rules
 
 The shipped weights (`DEFAULT_ROLES`) and the archetype sets
@@ -240,10 +269,15 @@ The shipped weights (`DEFAULT_ROLES`) and the archetype sets
    `website`/`long_context`/`writing` are capability-filled rather than
    0-filled.
 5. **Non-collinear differentiation.** The capability indices are one latent
-   factor (Pearson r over the pool: general↔reasoning 0.99, code↔agents 0.95,
+   factor (Pearson r over the pool: general↔reasoning 0.984, code↔agents 0.95,
    general↔code 0.94), so re-weighting them barely separates roles.
    Differentiate on the independent axes instead — throughput (r 0.13 with
-   general), price (r ≈ 0), and the specialist metrics.
+   general), price (r ≈ 0), and the specialist metrics. The `general`+`reasoning`
+   pair is the extreme case: at r 0.984 they are ~one latent factor, so
+   `default`/`slow`/`plan`/`advisor` merge them into a single `general` weight —
+   a pure relabel (the combined capability share is unchanged, so no share is
+   freed and none is reallocated; the ranking is ≈ unchanged, near-tie
+   reorderings only).
 6. **λ from the intended posture.** `λ = (w_price/(1−w_price))/20` is the
    quality-per-dollar exchange rate; a price weight whose leader-flip threshold
    is 10–30× away is decoration. `plan`/`advisor` carry price 0.12/0.20
@@ -270,6 +304,40 @@ one." Three findings, each measured on that day's caches:
   restores the pure margin. The quality given up is real but small (`default`
   GLM-5.3 → DeepSeek −0.004 q for 4.6× less money; `vision` −0.041 for 18×;
   `designer` −0.010 for 26×; `task` +0.007 for 4.6×).
+
+## Value-review findings (2026-10-03)
+
+Three measured defects in the shipped weights, each fixed in issue #13 (all
+numbers from the 2026-10-03 caches: 400 models, 151 throughput-matched, 150
+priced):
+
+- **`math` is collinear and sparse in `plan`/`slow`.** Over the eligible pool
+  `math` correlates with `reasoning` at r 0.919 and is missing for 18% of the
+  pool, so a model without `math` data loses up to 0.090 `q` for `plan` (share
+  0.156) and 0.049 for `slow` (share 0.084) — a coverage penalty, not a quality
+  signal. `advisor` had already dropped `math` for this reason (2026-09-30);
+  `plan`/`slow` were left behind. Fix: drop `math` from both and move its share
+  to the consolidated `general` axis (capability-preserving, 100% coverage) —
+  not `throughput`, which would contradict `slow`'s "speed as tiebreakers"
+  description and flip both leaders to a cheap/fast model. `plan`'s description
+  drops `math` in the same change.
+- **`smol`/`commit` price weight does not bind.** Both are described as
+  "cheap", but the value leader is also the quality leader, so the price term is
+  not what picks #1. The leader-flip threshold is λ* 0.0367 (`smol`, w_price*
+  0.423) and 0.0402 (`commit`, w_price* 0.446) against the current λ 0.0214
+  (w_price 0.30) and 0.0286 (w_price 0.35). Fix: raise both `w_price` to 0.45
+  (the measured binding threshold), rescaling the non-price weights
+  proportionally — a posture change, not a capability change.
+- **The capability weights are ~one latent factor.** `general`~`reasoning` r
+  0.984 over the eligible pool; `default`/`slow`/`plan`/`advisor` each spend
+  55–74% of their non-price budget on that pair. The split buys almost nothing —
+  merging leaves `default`'s top-3 identical and only swaps #4/#5. Fix: merge
+  `general`+`reasoning` into `general` in those four roles as a pure relabel (no
+  reallocation).
+
+Measured effect: `slow` #1 glm-5.3 → muse-spark-1.3, `plan` #1 hy4-preview →
+muse-spark-1.3, `smol`/`commit` #1 muse-spark-1.1 → deepseek-v4.1-flash;
+`default`/`advisor` keep their #1 (near-tie reorderings only).
 
 ## Changing a weight — checklist
 

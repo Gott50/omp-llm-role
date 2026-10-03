@@ -22,6 +22,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Role weight rebalance** — `plan`/`slow` drop the collinear, sparse `math`
+  metric and move its share to the consolidated `general` axis
+  (capability-preserving, so `slow`'s speed weight stays a tiebreaker);
+  `default`/`slow`/`plan`/`advisor` merge the near-duplicate `general`+`reasoning`
+  pair (r 0.984) into a single `general` weight as a pure relabel; and
+  `smol`/`commit` raise their price weight to 0.45 so it actually binds (the
+  value leader is no longer the quality leader). `plan`'s description drops
+  `math` to match. (issue #13)
 - **`/create-agent` writes the agent file before the role** — an agent with no
   role is harmless (its `@<name>, @default` chain falls back to `@default`),
   while a role with no agent is a ranked-but-dead entry. A failed role write now

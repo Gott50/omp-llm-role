@@ -31,7 +31,9 @@
     "create-role": "node src/cli/create-role.ts"
   },
   "omp": {
-    "extensions": ["./src/extension.ts"],
+    "extensions": [
+      "./src/extension.ts"
+    ],
     "settings": {
       "switchMargin": {
         "type": "number",
@@ -80,7 +82,16 @@
         "type": "enum",
         "description": "Thinking level appended to the default selector",
         "default": "auto",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.default.required": {
         "type": "string",
@@ -100,15 +111,7 @@
       "roles.default.weights.general": {
         "type": "number",
         "description": "Weight of general in the default quality composite",
-        "default": 0.3221,
-        "min": 0,
-        "max": 1,
-        "step": 0.001
-      },
-      "roles.default.weights.reasoning": {
-        "type": "number",
-        "description": "Weight of reasoning in the default quality composite",
-        "default": 0.1705,
+        "default": 0.4926,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -167,7 +170,16 @@
         "type": "enum",
         "description": "Thinking level appended to the smol selector",
         "default": "off",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.smol.required": {
         "type": "string",
@@ -187,7 +199,7 @@
       "roles.smol.weights.price": {
         "type": "number",
         "description": "Weight of price in the smol quality composite",
-        "default": 0.3,
+        "default": 0.45,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -195,7 +207,7 @@
       "roles.smol.weights.throughput": {
         "type": "number",
         "description": "Weight of throughput in the smol quality composite",
-        "default": 0.28,
+        "default": 0.22,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -203,7 +215,7 @@
       "roles.smol.weights.general": {
         "type": "number",
         "description": "Weight of general in the smol quality composite",
-        "default": 0.2,
+        "default": 0.1571,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -211,7 +223,7 @@
       "roles.smol.weights.code": {
         "type": "number",
         "description": "Weight of code in the smol quality composite",
-        "default": 0.12,
+        "default": 0.0943,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -219,7 +231,7 @@
       "roles.smol.weights.tool_calling": {
         "type": "number",
         "description": "Weight of tool_calling in the smol quality composite",
-        "default": 0.1,
+        "default": 0.0786,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -238,7 +250,16 @@
         "type": "enum",
         "description": "Thinking level appended to the slow selector",
         "default": "high",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.slow.required": {
         "type": "string",
@@ -258,15 +279,7 @@
       "roles.slow.weights.general": {
         "type": "number",
         "description": "Weight of general in the slow quality composite",
-        "default": 0.26,
-        "min": 0,
-        "max": 1,
-        "step": 0.001
-      },
-      "roles.slow.weights.reasoning": {
-        "type": "number",
-        "description": "Weight of reasoning in the slow quality composite",
-        "default": 0.26,
+        "default": 0.6,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -283,14 +296,6 @@
         "type": "number",
         "description": "Weight of agents in the slow quality composite",
         "default": 0.13,
-        "min": 0,
-        "max": 1,
-        "step": 0.001
-      },
-      "roles.slow.weights.math": {
-        "type": "number",
-        "description": "Weight of math in the slow quality composite",
-        "default": 0.08,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -325,7 +330,16 @@
         "type": "enum",
         "description": "Thinking level appended to the vision selector",
         "default": "auto",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.vision.required": {
         "type": "string",
@@ -398,13 +412,22 @@
       "roles.plan.description": {
         "type": "string",
         "description": "Description of the plan role",
-        "default": "Planning: reasoning, math, long-context coherence"
+        "default": "Planning: reasoning, long-context coherence"
       },
       "roles.plan.thinking": {
         "type": "enum",
         "description": "Thinking level appended to the plan selector",
         "default": "auto",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.plan.required": {
         "type": "string",
@@ -421,18 +444,10 @@
         "description": "Explicit λ ($ per quality point) override for plan",
         "min": 0
       },
-      "roles.plan.weights.reasoning": {
-        "type": "number",
-        "description": "Weight of reasoning in the plan quality composite",
-        "default": 0.3129,
-        "min": 0,
-        "max": 1,
-        "step": 0.001
-      },
       "roles.plan.weights.general": {
         "type": "number",
         "description": "Weight of general in the plan quality composite",
-        "default": 0.2542,
+        "default": 0.704,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -440,14 +455,6 @@
       "roles.plan.weights.long_context": {
         "type": "number",
         "description": "Weight of long_context in the plan quality composite",
-        "default": 0.1369,
-        "min": 0,
-        "max": 1,
-        "step": 0.001
-      },
-      "roles.plan.weights.math": {
-        "type": "number",
-        "description": "Weight of math in the plan quality composite",
         "default": 0.1369,
         "min": 0,
         "max": 1,
@@ -483,7 +490,16 @@
         "type": "enum",
         "description": "Thinking level appended to the commit selector",
         "default": "off",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.commit.required": {
         "type": "string",
@@ -503,7 +519,7 @@
       "roles.commit.weights.price": {
         "type": "number",
         "description": "Weight of price in the commit quality composite",
-        "default": 0.35,
+        "default": 0.45,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -511,7 +527,7 @@
       "roles.commit.weights.throughput": {
         "type": "number",
         "description": "Weight of throughput in the commit quality composite",
-        "default": 0.27,
+        "default": 0.2285,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -519,7 +535,7 @@
       "roles.commit.weights.general": {
         "type": "number",
         "description": "Weight of general in the commit quality composite",
-        "default": 0.28,
+        "default": 0.2369,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -527,7 +543,7 @@
       "roles.commit.weights.code": {
         "type": "number",
         "description": "Weight of code in the commit quality composite",
-        "default": 0.1,
+        "default": 0.0846,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -546,7 +562,16 @@
         "type": "enum",
         "description": "Thinking level appended to the tiny selector",
         "default": "off",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.tiny.required": {
         "type": "string",
@@ -601,7 +626,16 @@
         "type": "enum",
         "description": "Thinking level appended to the task selector",
         "default": "auto",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.task.required": {
         "type": "string",
@@ -680,7 +714,16 @@
         "type": "enum",
         "description": "Thinking level appended to the advisor selector",
         "default": "auto",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.advisor.required": {
         "type": "string",
@@ -697,18 +740,10 @@
         "description": "Explicit λ ($ per quality point) override for advisor",
         "min": 0
       },
-      "roles.advisor.weights.reasoning": {
-        "type": "number",
-        "description": "Weight of reasoning in the advisor quality composite",
-        "default": 0.3498,
-        "min": 0,
-        "max": 1,
-        "step": 0.001
-      },
       "roles.advisor.weights.general": {
         "type": "number",
         "description": "Weight of general in the advisor quality composite",
-        "default": 0.2449,
+        "default": 0.5947,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -751,7 +786,16 @@
         "type": "enum",
         "description": "Thinking level appended to the designer selector",
         "default": "auto",
-        "values": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"]
+        "values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "auto"
+        ]
       },
       "roles.designer.required": {
         "type": "string",
