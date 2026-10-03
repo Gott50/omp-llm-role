@@ -22,6 +22,8 @@ const state = {
   lockPath: "",
   filter: "",
   topn: "25",
+  hideBlocked: false,
+  availability: null,
   explain: null,
   exportMessage: "",
 };
@@ -109,6 +111,9 @@ const TIPS = {
   models: "Models in the cached llm-stats leaderboard snapshot.",
   fetched: "UTC day of the cached snapshot; a cache older than today is refetched on boot.",
   orJoin: "OpenRouter join: matched = models paired by slug suffix (source of throughput and price); priced = matched models that carry an OpenRouter price.",
+  availability: "Whether your OpenRouter key can run each model, from the keyed catalog. Enable OpenRouter → Settings → \"Filter the model catalog for API keys\" so the keyed catalog is a per-model allowlist; otherwise every mark reads unknown.",
+  key: "Key usability: usable = your OpenRouter key can run this model (in the keyed catalog); blocked = the public catalog has it but your key cannot; unknown = the keyed catalog is inactive or the model is in neither catalog.",
+  hideBlocked: "Drop rows your OpenRouter key cannot run (key = blocked). Applied after the text filter and the top-n slice.",
   lock: "Plugin settings lock file that Export writes to.",
   refresh: "Refetch llm-stats and OpenRouter data (hits the network).",
   rank: "Rank among this role's eligible models, by value, descending.",
@@ -211,6 +216,17 @@ function initTips() {
 // Header + role tabs
 // ---------------------------------------------------------------------------
 
+/** Header availability summary. When the keyed catalog is active it reports the
+ * allowlist size; otherwise it names the OpenRouter setting that turns it on and
+ * every row's mark reads unknown. */
+function availabilitySpan() {
+  const a = state.availability;
+  if (a && a.active) {
+    return el("span", { "data-tip": TIPS.availability, text: "key: " + a.keyedCount + " usable / " + a.blockedCount + " blocked" });
+  }
+  return el("span", { class: "muted", "data-tip": TIPS.availability, text: "availability unknown — enable OpenRouter → Settings → \"Filter the model catalog for API keys\"" });
+}
+
 function renderMeta(data) {
   const meta = document.getElementById("meta");
   meta.textContent = "";
@@ -222,6 +238,8 @@ function renderMeta(data) {
     el("span", { "data-tip": TIPS.fetched, text: "fetched " + data.fetchedAt.slice(0, 10) }),
     el("span", { class: "sep", text: "·" }),
     el("span", { "data-tip": TIPS.orJoin, text: "OpenRouter " + data.orMatched + " matched / " + data.orPriced + " priced" }),
+    el("span", { class: "sep", text: "·" }),
+    availabilitySpan(),
     el("span", { class: "sep", text: "·" }),
     el("span", { class: "lock", "data-tip": TIPS.lock, text: "lock: " + data.lockPath }),
     el("button", { id: "refresh", "data-tip": TIPS.refresh, text: "Refresh data", onclick: onRefresh }),
@@ -337,6 +355,21 @@ async function recompute() {
   }
 }
 
+/** Tooltip text for one key verdict. The server owns the verdict; the client
+ * only explains it, so the three states cannot drift from the ranking. */
+function keyTip(key) {
+  if (key === "usable") return "usable — your OpenRouter key can run this model (in the keyed catalog)";
+  if (key === "blocked") return "key-blocked — the public catalog has this model but your key cannot run it (OpenRouter → Settings → \"Filter the model catalog for API keys\")";
+  return "unknown — the keyed catalog is inactive or this model is in neither catalog (OpenRouter → Settings → \"Filter the model catalog for API keys\")";
+}
+
+/** Three-state key badge. Renders exactly the verdict the server sent; the
+ * client never invents an availability rule. */
+function keyBadge(key) {
+  const state_ = key === "usable" || key === "blocked" ? key : "unknown";
+  return el("span", { class: "badge " + state_, "data-tip": keyTip(state_), text: state_ });
+}
+
 function renderTable() {
   const table = document.getElementById("table");
   table.textContent = "";
@@ -347,6 +380,7 @@ function renderTable() {
       el("th", { "data-tip": TIPS.frontier, text: "★" }),
       el("th", { text: "model" }),
       el("th", { text: "org" }),
+      el("th", { "data-tip": TIPS.key, text: "key" }),
       el("th", { class: "num", "data-tip": TIPS.value, text: "value" }),
       el("th", { class: "num", "data-tip": TIPS.q, text: "q" }),
       el("th", { class: "num", "data-tip": TIPS.price, text: "$/M" }),
@@ -359,6 +393,9 @@ function renderTable() {
   let rows = state.rows;
   if (filter) rows = rows.filter((r) => (r.name + " " + r.org + " " + r.id).toLowerCase().includes(filter));
   if (state.topn !== "all") rows = rows.slice(0, Number(state.topn));
+  // Order: text filter → top-n slice → hide-blocked drop. The drop runs last so
+  // the top-n count is the ranking's own prefix, not a post-filter count.
+  if (state.hideBlocked) rows = rows.filter((r) => r.key !== "blocked");
   for (const r of rows) {
     tbody.append(
       el("tr", { class: "row" + (r.id === state.selectedId ? " selected" : ""), onclick: () => selectModel(r.id) }, [
@@ -367,6 +404,7 @@ function renderTable() {
         el("td", { class: "star", text: r.frontier ? "★" : "" }),
         el("td", { class: "model", text: r.name }),
         el("td", { class: "org", text: r.org }),
+        el("td", { class: "key" }, keyBadge(r.key)),
         el("td", { class: "num", text: fmt(r.value, 3) }),
         el("td", { class: "num", text: fmt(r.q, 3) }),
         el("td", { class: "num", text: fmt(r.priceEff, 2) }),
@@ -421,6 +459,12 @@ function renderExplain() {
       text: ex.model.org + " · rank " + ex.rank + " of " + ex.total + " · value " + fmt(ex.value, 3) + " · q " + fmt(ex.q, 3) + " · $" + fmt(ex.priceEff, 2) + "/M",
     }),
   );
+
+  // Key verdict line: the server's overlay verdict, plus the reason and the
+  // OpenRouter setting name when the keyed catalog is not active.
+  let keyLine = "key: " + keyTip(ex.key);
+  if (ex.keyReason !== "active") keyLine += " (reason: " + ex.keyReason + ")";
+  panel.append(el("p", { class: "sub key-line", "data-tip": TIPS.key, text: keyLine }));
 
   panel.append(el("h3", { "data-tip": TIPS.composition, text: "Value composition" }));
   const comp = el("table", { class: "comp" });
@@ -786,6 +830,7 @@ async function onRefresh() {
   if (!confirm("Refetch the leaderboard and OpenRouter data? This hits the network.")) return;
   try {
     const data = await api("/api/refresh", {});
+    state.availability = data.availability;
     renderMeta(data);
     await recompute();
   } catch (err) {
@@ -809,6 +854,7 @@ async function boot() {
   state.levels = data.levels;
   state.thinkingFactors = data.thinkingFactors;
   state.lockPath = data.lockPath;
+  state.availability = data.availability;
   initTips();
   renderMeta(data);
   renderRoles();
@@ -819,6 +865,12 @@ async function boot() {
   });
   document.getElementById("topn").addEventListener("change", (e) => {
     state.topn = e.target.value;
+    renderTable();
+  });
+  const hideBlocked = document.getElementById("hide-blocked");
+  hideBlocked.dataset.tip = TIPS.hideBlocked;
+  hideBlocked.addEventListener("change", (e) => {
+    state.hideBlocked = e.target.checked;
     renderTable();
   });
   const exportBtn = document.getElementById("export");

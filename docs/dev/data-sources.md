@@ -101,6 +101,25 @@ probability proportional to `1/price²`):
   `m.throughput`, `m.metrics.price`/`throughput`, and `m.thinking`
   (`supports_reasoning`).
 
+## OpenRouter — keyed catalog (availability)
+
+The account setting **"Filter the model catalog for API keys"** (openrouter.ai/settings)
+makes the Bearer-authenticated catalog a per-key allowlist.
+
+- **URLs**: `GET https://openrouter.ai/api/v1/models` twice — once unauthenticated
+  (the public catalog) and once with `Authorization: Bearer <key>` (the keyed catalog).
+  `fetchKeyAvailability` (`src/availability.ts`) issues both in parallel.
+- **Signal**: set membership only — the response carries no per-model access flag. Both
+  id lists are normalized with `rankingIdOf` (suffix after the last `/`, minus `:free`,
+  minus a trailing `-latest`), the same identity space as the engine's `Model.id`, so
+  aliases never produce a false "blocked". The keyed list being a non-empty **proper
+  subset** of the public one means the setting is on (`active`); equality is `no-filter`;
+  an empty list or any transport/status/shape failure is `unavailable`.
+- **Consumers**: the updater fetches it **once per run** and shares it across roles; the
+  explorer fetches it on boot and on `POST /api/refresh`. It is **not cached to disk** —
+  every consumer re-fetches, and `fetchKeyAvailability` **never throws** (a failure
+  degrades to `unavailable` with empty sets, so the probe walk / `unknown` marks stand).
+
 ## Design Arena — design quality
 
 Two routes, never averaged (same Elo family; mean diff −1.0 website … −5.1 svg,

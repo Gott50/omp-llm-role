@@ -240,18 +240,38 @@ matching). Among matched candidates, emit in this order:
 Never emit `:batch`. `:free` only when the free-tier branch of §5.2 is active. Ties break
 lexicographically. The emitted selector is always `openrouter/<catalogId>` (decision #12).
 
-### 5.5 Provider-allowlist probe (added 2026-09-23)
+### 5.5 Provider-allowlist probe (added 2026-09-23; keyed-catalog signal added 2026-10-03)
 
 The account-level **allowed-providers privacy whitelist** (openrouter.ai/settings/privacy)
-is enforced at request time and invisible to every catalog surface: `/api/v1/key` has no
-provider field (§2 facts), and the key-authenticated `GET /api/v1/models/{id}/endpoints`
-still returns 200 with the full serving-provider list for blocked models. The only
-reliable signal is a real request: a one-token `POST /api/v1/chat/completions` whose 404
-body reads "No allowed providers are available for the selected model …". Models are
-runnable iff at least one serving endpoint's provider is whitelisted — the org prefix is
-**not** a valid filter (aggregator-org models such as `deepseek/*`, `z-ai/*`,
-`inclusionai/*` run via whitelisted third-party endpoints while `openai/*` and
-`anthropic/*` fail on first-party-only routing).
+is enforced at request time. It is invisible to `/api/v1/key` (no provider field, §2
+facts) and to the key-authenticated `GET /api/v1/models/{id}/endpoints` (still 200 with
+the full serving-provider list for blocked models). It **is** visible through the
+key-authenticated `GET /api/v1/models` when the account setting **"Filter the model
+catalog for API keys"** is on: the Bearer request then returns only the models the key
+may run, while the unauthenticated request still sees the public catalog. Set membership
+is the only signal — the response carries no per-model access flag.
+
+**Updater fast path (added 2026-10-03).** When the keyed catalog is `active` it is the
+updater's availability source: a candidate whose ranking id is in `allowed` is clean
+without a probe, and one in `blocked` is **pruned from the walk order** before the walk
+starts. Pruning — not pre-seeding a `blocked` verdict — is load-bearing: the per-role
+budget counts candidates *examined*, so a pre-seeded blocked candidate would still
+consume it and reproduce the all-blocked-pool failure the fast path exists to fix. A
+candidate in neither catalog is still probed. When the keyed catalog is `no-filter`
+(setting off) or `unavailable` (fetch/parse failure) the probe walk below is the sole
+gate, exactly as before — there is no abort path. The decision records
+`availabilitySource` (`"keyed-catalog"` | `"probe"`) and `keyBlockedCount`; the
+keyed-blocked set itself is **not** enumerated into the decision (it can be hundreds of
+ids). `blocked[]` keeps its old meaning: probe-blocked ids examined in the walk.
+
+The probe below remains the fallback path.
+
+The probe: a one-token `POST /api/v1/chat/completions` whose 404 body reads "No allowed
+providers are available for the selected model …". Models are runnable iff at least one
+serving endpoint's provider is whitelisted — the org prefix is **not** a valid filter
+(aggregator-org models such as `deepseek/*`, `z-ai/*`, `inclusionai/*` run via
+whitelisted third-party endpoints while `openai/*` and `anthropic/*` fail on
+first-party-only routing).
 
 Per role, candidates are verified with `probeModel` (`availability.ts`) in a bounded
 walk: the current selector's candidate first (hysteresis must see it), then rank order.
@@ -265,6 +285,42 @@ model) counts as usable and stays in omp's runtime-fallback domain. Blocked cand
 are excluded from selection and from fallback chains, are recorded on the decision
 (`blocked[]`) and in history, and a role whose probed candidates are all blocked is left
 untouched with a notify note.
+
+#### 5.5.1 Keyed-catalog availability (`KeyAvailability`)
+
+`src/availability.ts` exposes the shared primitive the explorer and the updater's fast
+path consume:
+
+- `computeKeyAvailability(publicIds, keyedIds, fetchedAt?)` — pure derivation from the
+  two catalog id lists.
+- `fetchKeyAvailability(token, fetchImpl?)` — fetches both catalogs in parallel and
+  derives the mark; **never throws** (any transport, status or shape failure yields
+  `reason: "unavailable"` with empty sets, so a transient OpenRouter outage degrades to
+  "unknown" instead of breaking boot).
+
+Both lists are normalized with `rankingIdOf` — the same identity space as the engine's
+`Model.id` and `RankRow.id` (suffix after the last `/`, minus `:free`, minus a trailing
+`-latest`) — so `~org/x-latest`, `org/x:free` and `org/x` collapse to one ranking id and
+aliases never produce a false "blocked".
+
+The result carries `active`, `reason`, `allowed`, `blocked`, `publicCount`, `keyedCount`
+and `fetchedAt`:
+
+| `reason` | Condition | `allowed`/`blocked` |
+|---|---|---|
+| `active` | keyed is a non-empty **proper subset** of public → the setting is on | populated |
+| `no-filter` | keyed == public (setting off), or a keyed id is absent from public | empty |
+| `unavailable` | either list is empty (missing key, fetch or shape failure) | empty |
+
+`allowed`/`blocked` are populated only when `reason === "active"`; every other reason
+leaves them empty, so a consumer that forgets to check `active` degrades to "unknown"
+rather than over-claiming "usable".
+
+The explorer marks every rank row **usable** (in `allowed`), **blocked** (in `blocked`)
+or **unknown** (inactive, or in neither catalog) from this value — a read-only overlay
+that never edits roles, reorders ranks or changes an Export. When `reason !== "active"`
+every mark reads `unknown` and the UI names the OpenRouter setting
+(see [`explorer.md`](explorer.md)).
 
 ## 6. Selection pipeline
 

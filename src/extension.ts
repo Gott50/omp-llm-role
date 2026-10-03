@@ -19,7 +19,7 @@ import { generateAgentSpec } from "./agent-architect.ts";
 import { authorBenchmarkSource } from "./benchmark-author.ts";
 import { declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
-import { THINKING_LEVELS, catalogFromOmpModelsJson } from "./availability.ts";
+import { THINKING_LEVELS, catalogFromOmpModelsJson, fetchKeyAvailability, type KeyAvailability } from "./availability.ts";
 import { loadRankData, type Model } from "./engine.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { isRecord } from "./guards.ts";
@@ -336,10 +336,20 @@ export default function (pi: ExtensionAPI) {
         notifyLines(ctx, "llm-role explorer: loading today's rankings…");
         const rank = await loadRankData({});
         const catalog = await extDeps(pi, ctx).getCatalog();
+        // Best-effort key-availability overlay: a missing key or a failed fetch
+        // degrades to "unavailable" and never blocks Explorer boot.
+        const loadAvailability = async (): Promise<KeyAvailability> => {
+          const token = await ctx.modelRegistry.getApiKeyForProvider("openrouter").catch(() => undefined);
+          return token
+            ? fetchKeyAvailability(token)
+            : { active: false, reason: "unavailable", allowed: new Set(), blocked: new Set(), publicCount: 0, keyedCount: 0, fetchedAt: new Date().toISOString() };
+        };
         explorer = await startExplorer({
           webDir: WEB_DIR,
           rank,
           catalog,
+          availability: await loadAvailability(),
+          reloadAvailability: loadAvailability,
           reload: (refresh) => loadRankData({ refresh }),
           port,
           open,

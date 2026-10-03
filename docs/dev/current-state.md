@@ -8,6 +8,17 @@ copying the new numbers here; release prose belongs in
 below are the 2026-10-03 measurement (the #13 role-weight rebalance; see the top
 bullet) and are not re-derived on read.
 
+- Keyed-catalog availability fast path (2026-10-03, issue #15): the updater now consumes
+  the shared `KeyAvailability` primitive — when the account's OpenRouter "Filter the
+  model catalog for API keys" setting is on, allowed candidates skip the probe and
+  key-blocked candidates are pruned from the walk order (the budget counts candidates
+  examined, so pre-seeding a blocked verdict would not save it); candidates in neither
+  catalog are still probed, and `no-filter`/`unavailable` degrade to the probe walk with
+  no abort path. Measured on this account (setting on): keyed `GET /api/v1/models`
+  returned 108 rows vs 466 public; after `rankingIdOf` normalization 107 keyed ranking
+  ids ⊆ 454 public, 347 blocked. A 6-blocked/6-allowed probe cross-check agreed 6/6
+  blocked and 5/6 allowed (the sixth probed `unknown`, which counts as usable).
+
 - Role-weight rebalance (2026-10-03, issue #13): `math` dropped from `plan` and
   `slow` (collinear with `reasoning`, r 0.919, and missing for 18% of the pool —
   a coverage penalty, not a quality signal) and its share moved to the

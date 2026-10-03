@@ -4,8 +4,10 @@
  *
  *   GET  /                 -> web/index.html
  *   GET  /app.js /style.css -> static assets (traversal-guarded)
- *   GET  /api/bootstrap    -> roles, defaults, metric universe, dataset counts
- *   POST /api/rank         -> { role, def } -> rows with baseline deltas
+ *   GET  /api/bootstrap    -> roles, defaults, metric universe, dataset counts,
+ *                             and the key-availability summary
+ *   POST /api/rank         -> { role, def } -> rows with baseline deltas and a
+ *                             per-row `key` badge (usable/blocked/unknown)
  *   POST /api/explain      -> { role, def, modelId } -> full decomposition
  *   POST /api/export       -> { roles } -> validated, backed-up lock-file write
  *   POST /api/refresh      -> refetch the dataset, return the bootstrap payload
@@ -17,6 +19,7 @@
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
+import type { KeyAvailability } from "../availability.ts";
 import { loadDeclaredSources } from "../benchmark-sources.ts";
 import { SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { isRecord } from "../guards.ts";
@@ -30,7 +33,8 @@ export type ExplorerOpts = {
   /**
    * Fresh state per call: `rank` (swapped by `refresh`) plus `roles`/`universe`
    * re-read from the lock file, so a page reload after Export reflects the write
-   * instead of a boot-time snapshot.
+   * instead of a boot-time snapshot. `availability` is the key-usable/key-blocked
+   * overlay derived from the OpenRouter keyed catalog (re-derived on refresh).
    */
   getState(): {
     rank: RankData;
@@ -38,6 +42,7 @@ export type ExplorerOpts = {
     /** Every known role (disabled included) with kind/enabled/locked + effective def. */
     universe: Record<string, UniverseEntry>;
     defaults: Record<string, RoleDef>;
+    availability: KeyAvailability;
   };
   /** Re-runs loadRankData({ refresh: true }) and swaps the snapshot. */
   refresh(): Promise<void>;
@@ -145,6 +150,14 @@ function bootstrapPayload(opts: ExplorerOpts): object {
     modelCount: state.rank.models.length,
     orMatched: state.rank.orMatched,
     orPriced: state.rank.orPriced,
+    availability: {
+      active: state.availability.active,
+      reason: state.availability.reason,
+      publicCount: state.availability.publicCount,
+      keyedCount: state.availability.keyedCount,
+      blockedCount: state.availability.blocked.size,
+      fetchedAt: state.availability.fetchedAt,
+    },
     lockPath: opts.lockPath,
   };
 }
@@ -162,7 +175,7 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   // selecting it still shows deltas, not an empty baseline.
   const baselineDef = state.roles[role] ?? state.universe[role]?.def ?? state.defaults[role];
   const baseline = baselineDef ? rankRole(baselineDef, state.rank.models) : [];
-  const rows = rankRows(def, state.rank.models, baseline);
+  const rows = rankRows(def, state.rank.models, baseline, state.availability);
   sendJson(res, 200, {
     eligible: rows.length,
     lambda: roleLambda(def),
@@ -178,7 +191,8 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
     throw new HttpError(400, "expected { role: string, def: object, modelId: string }");
   }
   const def = body.def as unknown as RoleDef;
-  const explanation = explainModel(def, opts.getState().rank.models, body.modelId, body.role);
+  const state = opts.getState();
+  const explanation = explainModel(def, state.rank.models, body.modelId, body.role, state.availability);
   sendJson(res, 200, { ...explanation, errors: validateRole(body.role, def) });
 }
 

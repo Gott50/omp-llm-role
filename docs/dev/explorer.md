@@ -12,7 +12,7 @@ explorer never reimplements `value = q − λ·$/M`.
 | File | Role |
 |---|---|
 | `src/explorer/server.ts` | Zero-dependency `node:http` surface: static SPA + JSON API. Exports `createExplorerServer`, `ExplorerOpts`. |
-| `src/explorer/explain.ts` | Pure explanation layer (no I/O): rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets. Exports `rankRows`, `explainModel`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`. |
+| `src/explorer/explain.ts` | Pure explanation layer (no I/O): rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, and the keyed-catalog availability overlay. Exports `rankRows`, `explainModel`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`. |
 | `src/explorer/boot.ts` | Shared launcher: bind/port fallback, lock-file roles, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, `ExplorerHandle`, `ExplorerBootOpts`. |
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write). Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `timestamp`. |
 | `web/app.js` | The SPA: renders and edits role defs, calls the API. No framework, no build step, no external requests. |
@@ -37,6 +37,7 @@ type ExplorerOpts = {
     roles: Record<string, RoleDef>;
     universe: Record<string, UniverseEntry>;  // every known role, disabled included
     defaults: Record<string, RoleDef>;
+    availability: KeyAvailability;            // keyed-catalog overlay (re-derived on refresh)
   };
   refresh(): Promise<void>;                   // re-runs loadRankData({ refresh: true }) and swaps rank
 };
@@ -52,7 +53,7 @@ Endpoints:
 | `POST /api/rank` | `{role, def}` | `{eligible, lambda, derivedLambda, rows, errors}` |
 | `POST /api/explain` | `{role, def, modelId}` | `explainModel(...)` spread + `errors` |
 | `POST /api/export` | `{roles}` | `{ok:true, backupPath, roles}` or `{ok:false, errors}` |
-| `POST /api/refresh` | — | `await opts.refresh()` then the bootstrap payload |
+| `POST /api/refresh` | — | `await opts.refresh()` (re-ranks and re-derives the availability overlay) then the bootstrap payload |
 
 - `bootstrapPayload` ships `roles` (resolved), `defaults` (`DEFAULT_ROLES`),
   `universe` (kind/enabled/locked + effective def per known role), `metrics`
@@ -61,13 +62,16 @@ Endpoints:
   external metric), `levels` (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors`
   (per-level billed-blend multiplier from the engine's own `thinkingPriceFactor`,
   so the UI readout cannot drift), `fetchedAt`, `modelCount`, `orMatched`,
-  `orPriced`, `lockPath`. Every request calls `getState()`, which re-reads the
-  lock file — so a page reload after Export shows the new roles, not the
-  boot-time snapshot.
+  `orPriced`, `lockPath`, and `availability` (the keyed-catalog summary:
+  `{active, reason, publicCount, keyedCount, blockedCount, fetchedAt}`). Every
+  request calls `getState()`, which re-reads the lock file — so a page reload
+  after Export shows the new roles, not the boot-time snapshot.
 - `handleRank` baselines against `state.roles[role] ?? state.universe[role]?.def ??
   state.defaults[role]`: an enabled role against its resolved def, a disabled or
   lock-file-only role against its effective def, so selecting it still shows
-  deltas rather than an empty baseline.
+  deltas rather than an empty baseline. It passes `state.availability` to
+  `rankRows`, so every row carries its `key` badge (usable/blocked/unknown) with
+  no extra call.
 - `handleExport` calls `writeRoleSettings(opts.lockPath, body.roles)` and
   returns its result verbatim.
 - Unknown `/api/*` → 404; wrong method → 405; non-API non-GET → 405.
@@ -89,27 +93,32 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   declared?)`** merges the shipped table with a derived entry per external metric.
 - **`weightableMetrics(extra?)`** — the shipped keys plus any external metric in
   `extra`; exactly what the validator accepts.
-- **`rankRows(def, models, baseline)`** — `rankRole(def, models)` +
+- **`rankRows(def, models, baseline, availability?)`** — `rankRole(def, models)` +
   `paretoFrontier`, annotating each row with `baselineRank`/`delta`
   (`baselineRank − rank`; positive = moved up) against the effective role's
   ranking. Rows carry `priceEff` (the thinking-adjusted price the ranking
   penalized), `parts`, `missing` (weighted non-price metrics whose raw value is
-  null), and `frontier`.
+  null), `frontier`, and `key` — the availability overlay verdict
+  (`usable`/`blocked`/`unknown`), orthogonal to `missing` and to the eligibility
+  gates. `availability` is optional and pure (no I/O); omitted or inactive ⇒
+  every row reads `unknown`.
 - **`inverseCardinal(metric, t)`** — inverse of `cardinalMetric` for the "what
   would it take" targets: `index` → `t*80 − 20`; `throughput` → `10 * 30**t`
   (null outside `[0,1]`, because the forward transform clamps); everything else
   (benchmark, percentile, price) → identity. See *Open defect* below for the
   `gpqa` exception.
-- **`explainModel(def, models, modelId, roleName)`** — the full decomposition, or
-  the eligibility gates it failed (same gates `rankRole` applies, same order:
-  missing required, image filter, no billed price). On success: `contributions`
+- **`explainModel(def, models, modelId, roleName, availability?)`** — the full
+  decomposition, or the eligibility gates it failed (same gates `rankRole`
+  applies, same order: missing required, image filter, no billed price). On
+  success: `contributions`
   (raw → cardinal `t` → renormalized weight → contribution → share of `q`, with
   a `fillNote` when the value is a capability fill), `cost` (`priceEff`, billed
   price, λ, penalty, `q`, `value`), `gapAbove`/`gapToTop`/`above`, `closing` (the
   per-metric raw target that would close the gap, via `inverseCardinal`, with
-  unreachable/extrapolated notes), and `dominators` (models both cheaper and at
-  least as good on `q`, top 3). It mirrors `rankRole`'s capability fill so the
-  contributions sum exactly to `q`.
+  unreachable/extrapolated notes), `dominators` (models both cheaper and at
+  least as good on `q`, top 3), and the availability overlay `key`/`keyReason`
+  (the same verdict as `rankRows`, plus the reason it reads that way). It mirrors
+  `rankRole`'s capability fill so the contributions sum exactly to `q`.
 
 ## Shared boot path (`src/explorer/boot.ts`)
 
@@ -129,8 +138,15 @@ launcher `/explore-roles` uses.
   roles). `getState()` re-runs this read on **every** request, so a page reload
   after Export reflects the write instead of the state at boot.
 - `enrichThinkingLevels(rank.models, opts.catalog)` gates the thinking price
-  factor on the omp catalog; `refresh()` re-runs `opts.reload(true)` and
-  re-enriches.
+  factor on the omp catalog; `refresh()` re-runs `opts.reload(true)`,
+  re-enriches, and — when `opts.reloadAvailability` is supplied — re-derives the
+  availability overlay.
+- `opts.availability` is the boot-time keyed-catalog overlay; `getState()` returns
+  it on every request, so `/api/rank` and `/api/explain` annotate rows without a
+  second fetch. `/explore-roles` builds it in-process from the session's
+  OpenRouter key (`ctx.modelRegistry.getApiKeyForProvider("openrouter")`) via
+  `fetchKeyAvailability`; a missing key or a failed fetch is `unavailable`
+  (best-effort — the explorer still boots).
 - `unref` (extension only) detaches the server from the event loop so a
   short-lived `omp -p` run cannot hang.
 - `open` launches the default browser on macOS (`execFile("open", [url])`).
@@ -168,8 +184,9 @@ a scraped third-party site, so the DOM is built with
 
 - **Boot**: `boot()` → `GET /api/bootstrap` → fills `state` (`universe`,
   `effective` = each entry's `def`, `defs` = a structuredClone of it, `defaults`,
-  `metrics`, `metricMeta`, `levels`, `thinkingFactors`, `lockPath`), wires the
-  filter/topn/export/copy/download controls, and selects the first role.
+  `metrics`, `metricMeta`, `levels`, `thinkingFactors`, `lockPath`,
+  `availability`), wires the filter/topn/hide-key-blocked/export/copy/download
+  controls, and selects the first role.
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
   `recompute()`. `recompute()` → `POST /api/rank {role, def}` → `state.rows`,
   `lambda`, `derivedLambda`, `errors`; re-renders the table and readouts, and
@@ -177,7 +194,15 @@ a scraped third-party site, so the DOM is built with
   changes call `scheduleRecompute()` (120 ms debounce).
 - **Explain**: `selectModel(id)` → `POST /api/explain {role, def, modelId}` →
   `renderExplain()` (composition table, cost line, "why not higher",
-  dominators).
+  dominators, and the availability line).
+- **Availability overlay**: each row's `key` renders as a three-state badge in
+  the `key` column; the **hide key-blocked** checkbox beside the filter/top-n
+  controls drops `blocked` rows from the table (a client-side filter — the
+  ranking and Export are untouched); the header shows the allowlist size
+  (`keyedCount`/`publicCount`). The explain panel repeats the verdict and its
+  reason. When `availability.reason !== "active"` every badge reads `unknown`
+  and the tooltip/hint names OpenRouter → Settings → **"Filter the model catalog
+  for API keys"** — the explorer never guesses.
 - **Dirty tracking**: `dirtyRoles()` compares `JSON.stringify(defs[role])` to
   `effective[role]`; only dirty roles are sent to `POST /api/export`. On success
   the client updates `effective` for the written roles.

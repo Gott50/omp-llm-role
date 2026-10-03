@@ -118,6 +118,100 @@ export async function probeModel(token: string, catalogId: string, fetchImpl: ty
   }
 }
 
+// ---------------------------------------------------------------------------
+// Keyed-catalog availability (SPEC §5.5 addendum)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the user's OpenRouter key can actually run, derived from the account
+ * setting "Filter the model catalog for API keys": with it on, a
+ * Bearer-authenticated `GET /api/v1/models` returns only the models the key may
+ * use (provider restrictions and guardrails applied), while the unauthenticated
+ * request still sees the public catalog. Set membership is the only signal —
+ * the response carries no per-model access flag.
+ *
+ * `allowed`/`blocked` are populated only when `reason === "active"`; every other
+ * reason leaves them empty so a consumer that forgets to check `active` degrades
+ * to "unknown" rather than over-claiming "usable".
+ */
+export type KeyAvailability = {
+  /** keyed catalog ⊊ public catalog → the OpenRouter filter is on. */
+  active: boolean;
+  reason: "active" | "no-filter" | "unavailable";
+  /** ranking ids present in the keyed catalog (empty unless `active`). */
+  allowed: ReadonlySet<string>;
+  /** ranking ids present in the public catalog but not the keyed one (empty unless `active`). */
+  blocked: ReadonlySet<string>;
+  publicCount: number;
+  keyedCount: number;
+  /** ISO 8601. */
+  fetchedAt: string;
+};
+
+const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+
+/** Tolerant `data[].id` reader; null when the payload is not the expected shape. */
+function modelIdsFromPayload(v: unknown): string[] | null {
+  if (!isRecord(v) || !Array.isArray(v.data)) return null;
+  const ids: string[] = [];
+  for (const row of v.data) {
+    if (isRecord(row) && typeof row.id === "string") ids.push(row.id);
+  }
+  return ids;
+}
+
+/**
+ * Pure derivation of the availability mark from the two catalog id lists. Both
+ * are normalized with `rankingIdOf` — the same identity space `resolveVariant`
+ * and the engine's `Model.id` use — so `~org/x-latest`, `org/x:free` and
+ * `org/x` collapse to one ranking id and aliases never produce a false "blocked".
+ *
+ * `active` requires a non-empty keyed list that is a **proper subset** of the
+ * public one; equality (the setting is off) or a keyed id absent from public is
+ * `no-filter`; an empty list is `unavailable`.
+ */
+export function computeKeyAvailability(publicIds: string[], keyedIds: string[], fetchedAt = new Date().toISOString()): KeyAvailability {
+  const publicSet = new Set(publicIds.map(rankingIdOf));
+  const keyedSet = new Set(keyedIds.map(rankingIdOf));
+  const base = { publicCount: publicSet.size, keyedCount: keyedSet.size, fetchedAt };
+  if (publicSet.size === 0 || keyedSet.size === 0) {
+    return { active: false, reason: "unavailable", allowed: new Set(), blocked: new Set(), ...base };
+  }
+  const subset = keyedSet.size < publicSet.size && [...keyedSet].every((id) => publicSet.has(id));
+  if (!subset) return { active: false, reason: "no-filter", allowed: new Set(), blocked: new Set(), ...base };
+  return {
+    active: true,
+    reason: "active",
+    allowed: keyedSet,
+    blocked: new Set([...publicSet].filter((id) => !keyedSet.has(id))),
+    ...base,
+  };
+}
+
+/**
+ * Fetch the public and key-authenticated catalogs in parallel and derive the
+ * availability mark. **Never throws**: any transport, status, or shape failure
+ * yields `reason: "unavailable"` with empty sets, so both callers (the explorer
+ * and the updater) keep their current behavior on a transient OpenRouter outage.
+ */
+export async function fetchKeyAvailability(token: string, fetchImpl: typeof fetch = fetch): Promise<KeyAvailability> {
+  const fetchedAt = new Date().toISOString();
+  const unavailable: KeyAvailability = { active: false, reason: "unavailable", allowed: new Set(), blocked: new Set(), publicCount: 0, keyedCount: 0, fetchedAt };
+  try {
+    const [publicRes, keyedRes] = await Promise.all([
+      fetchImpl(OPENROUTER_MODELS_URL),
+      fetchImpl(OPENROUTER_MODELS_URL, { headers: { authorization: `Bearer ${token}` } }),
+    ]);
+    if (!publicRes.ok || !keyedRes.ok) return unavailable;
+    const publicIds = modelIdsFromPayload(await publicRes.json());
+    const keyedIds = modelIdsFromPayload(await keyedRes.json());
+    if (publicIds === null || keyedIds === null) return unavailable;
+    return computeKeyAvailability(publicIds, keyedIds, fetchedAt);
+  } catch {
+    return unavailable;
+  }
+}
+
 /** Keep openrouter catalog rows the tier may run: never `:batch`; `:free` only on free tier. */
 export function filterCatalog(catalog: CatalogEntry[], tier: Tier): CatalogEntry[] {
   if (tier === "none") return [];

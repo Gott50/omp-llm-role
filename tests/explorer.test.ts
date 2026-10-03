@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { type KeyAvailability } from "../src/availability.ts";
 import { cardinalMetric, rankRole, type RankData } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, rankRows } from "../src/explorer/explain.ts";
@@ -17,6 +18,28 @@ import { makeModel } from "./helpers.ts";
 // quality-heavy role ranks premium first and a price/throughput-heavy role flips it.
 const MODELS = [makeModel("premium", 90, 20, 50), makeModel("budget", 60, 0.5, 200)];
 const TINY = { description: "", weights: { price: 0.4, throughput: 0.35, general: 0.25 }, required: ["general", "price", "throughput"] };
+
+// Keyed-catalog availability fixtures (SPEC §5.5). `NO_AVAILABILITY` is the
+// inactive default the existing fakes/opts thread through; `ACTIVE_AVAILABILITY`
+// marks `premium` usable and `budget` blocked.
+const NO_AVAILABILITY: KeyAvailability = {
+  active: false,
+  reason: "unavailable",
+  allowed: new Set(),
+  blocked: new Set(),
+  publicCount: 0,
+  keyedCount: 0,
+  fetchedAt: "2026-10-03T00:00:00.000Z",
+};
+const ACTIVE_AVAILABILITY: KeyAvailability = {
+  active: true,
+  reason: "active",
+  allowed: new Set(["premium"]),
+  blocked: new Set(["budget"]),
+  publicCount: 2,
+  keyedCount: 1,
+  fetchedAt: "2026-10-03T00:00:00.000Z",
+};
 
 test("rankRows: deltas measure movement against the baseline ranking", () => {
   const baseline = rankRole(DEFAULT_ROLES.slow, MODELS);
@@ -154,7 +177,7 @@ test("export writes the lock file with a backup and stays valid", async () => {
   const server = createExplorerServer({
     webDir: join(process.cwd(), "web"),
     lockPath,
-    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES }),
+    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY }),
     refresh: async () => {},
   });
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -205,7 +228,7 @@ test("a role absent from the shipped defaults ranks and exports", async () => {
   const server = createExplorerServer({
     webDir: join(process.cwd(), "web"),
     lockPath,
-    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES }),
+    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY }),
     refresh: async () => {},
   });
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -271,6 +294,7 @@ test("startExplorer serves lock-file roles and releases its port on close", asyn
     lockPath,
     rank,
     catalog: [],
+    availability: NO_AVAILABILITY,
     reload: async () => rank,
     port: 0,
     open: false,
@@ -349,6 +373,7 @@ test("a bootstrap after Export reflects the new lock state", async () => {
     lockPath,
     rank,
     catalog: [],
+    availability: NO_AVAILABILITY,
     reload: async () => rank,
     port: 0,
     open: false,
@@ -400,6 +425,7 @@ test("startExplorer falls back to an ephemeral port when the preferred one is bu
     lockPath,
     rank,
     catalog: [],
+    availability: NO_AVAILABILITY,
     reload: async () => rank,
     port: busy,
     open: false,
@@ -413,5 +439,132 @@ test("startExplorer falls back to an ephemeral port when the preferred one is bu
   } finally {
     await handle.close();
     await new Promise<void>((resolve) => blocker.close(() => resolve()));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Keyed-catalog availability overlay (SPEC §5.5)
+// ---------------------------------------------------------------------------
+
+test("rankRows: availability annotates key without reordering", () => {
+  const baseline = rankRole(DEFAULT_ROLES.slow, MODELS);
+  const plain = rankRows(TINY, MODELS, baseline);
+  const marked = rankRows(TINY, MODELS, baseline, ACTIVE_AVAILABILITY);
+
+  // The overlay is read-only: same ids in the same order as the unannotated call.
+  assert.deepEqual(marked.map((r) => r.id), plain.map((r) => r.id));
+
+  const byId = new Map(marked.map((r) => [r.id, r.key]));
+  assert.equal(byId.get("premium"), "usable");
+  assert.equal(byId.get("budget"), "blocked");
+
+  // A model in neither catalog is unknown, not blocked.
+  const partial: KeyAvailability = { ...ACTIVE_AVAILABILITY, blocked: new Set() };
+  const rows = rankRows(TINY, MODELS, baseline, partial);
+  assert.equal(rows.find((r) => r.id === "budget")?.key, "unknown");
+});
+
+test("rankRows: no availability, no-filter, and unavailable all read unknown", () => {
+  const baseline = rankRole(DEFAULT_ROLES.slow, MODELS);
+  const noFilter: KeyAvailability = { ...NO_AVAILABILITY, reason: "no-filter" };
+  for (const availability of [undefined, noFilter, NO_AVAILABILITY]) {
+    const rows = rankRows(TINY, MODELS, baseline, availability);
+    assert.deepEqual(rows.map((r) => r.key), ["unknown", "unknown"]);
+  }
+});
+
+test("explainModel: the eligible branch carries the availability overlay", () => {
+  const usable = explainModel(TINY, MODELS, "premium", "tiny", ACTIVE_AVAILABILITY);
+  if (!usable.eligible) throw new Error(`unexpected ineligible: ${usable.reasons.join(", ")}`);
+  assert.equal(usable.key, "usable");
+  assert.equal(usable.keyReason, "active");
+
+  const blocked = explainModel(TINY, MODELS, "budget", "tiny", ACTIVE_AVAILABILITY);
+  if (!blocked.eligible) throw new Error(`unexpected ineligible: ${blocked.reasons.join(", ")}`);
+  assert.equal(blocked.key, "blocked");
+  assert.equal(blocked.keyReason, "active");
+
+  // No availability value supplied: the overlay degrades to unknown/unavailable.
+  const unknown = explainModel(TINY, MODELS, "premium", "tiny");
+  if (!unknown.eligible) throw new Error(`unexpected ineligible: ${unknown.reasons.join(", ")}`);
+  assert.equal(unknown.key, "unknown");
+  assert.equal(unknown.keyReason, "unavailable");
+});
+
+/** Boot a `createExplorerServer` with a fixed availability overlay and a temp lock file. */
+async function bootExplorer(availability: KeyAvailability): Promise<{ url: string; close: () => Promise<void> }> {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-avail-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const rank: RankData = { models: MODELS, fetchedAt: "2026-10-03T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const server = createExplorerServer({
+    webDir: join(process.cwd(), "web"),
+    lockPath,
+    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability }),
+    refresh: async () => {},
+  });
+  const { promise, resolve } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", resolve);
+  await promise;
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+test("bootstrap and rank carry the active availability overlay", async () => {
+  const handle = await bootExplorer(ACTIVE_AVAILABILITY);
+  try {
+    const boot: unknown = await (await fetch(`${handle.url}/api/bootstrap`)).json();
+    assert.ok(isRecord(boot));
+    assert.ok(isRecord(boot.availability));
+    assert.equal(boot.availability.active, true);
+    assert.equal(boot.availability.blockedCount, 1);
+
+    const res = await fetch(`${handle.url}/api/rank`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "tiny", def: TINY }),
+    });
+    const body: unknown = await res.json();
+    assert.ok(isRecord(body));
+    assert.ok(Array.isArray(body.rows));
+    const keys = new Map<string, unknown>();
+    for (const row of body.rows) {
+      assert.ok(isRecord(row));
+      if (typeof row.id === "string") keys.set(row.id, row.key);
+    }
+    assert.equal(keys.get("premium"), "usable");
+    assert.equal(keys.get("budget"), "blocked");
+  } finally {
+    await handle.close();
+  }
+});
+
+test("a non-active availability reads unknown everywhere", async () => {
+  const handle = await bootExplorer(NO_AVAILABILITY);
+  try {
+    const boot: unknown = await (await fetch(`${handle.url}/api/bootstrap`)).json();
+    assert.ok(isRecord(boot));
+    assert.ok(isRecord(boot.availability));
+    assert.equal(boot.availability.active, false);
+
+    const res = await fetch(`${handle.url}/api/rank`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "tiny", def: TINY }),
+    });
+    const body: unknown = await res.json();
+    assert.ok(isRecord(body));
+    assert.ok(Array.isArray(body.rows));
+    assert.ok(body.rows.length > 0);
+    for (const row of body.rows) {
+      assert.ok(isRecord(row));
+      assert.equal(row.key, "unknown");
+    }
+  } finally {
+    await handle.close();
   }
 });

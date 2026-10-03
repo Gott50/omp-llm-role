@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Explorer key-availability marking** — the explorer now overlays every ranked
+  model with a **usable** / **key-blocked** / **unknown** badge derived from the
+  key-authenticated `GET /api/v1/models` (the account setting "Filter the model
+  catalog for API keys" makes it a per-key allowlist; set membership is the only
+  signal). A **hide key-blocked** toggle drops blocked rows, the header shows the
+  allowlist size, and the explain panel names the reason. When the setting is off
+  every badge reads *unknown* with a hint naming the OpenRouter setting. The mark
+  is a read-only overlay — it never edits roles, reorders ranks or changes an
+  Export. The shared `KeyAvailability` primitive (`computeKeyAvailability` /
+  `fetchKeyAvailability` in `src/availability.ts`) is the same one the updater's
+  fast path consumes.
 - **Coverage-safe benchmark discovery in `/create-agent`** — discovery now
   refuses a benchmark that would turn the role's quality score into a coverage
   score: a fill-0 metric whose catalog coverage is below 35% of the ranking field
@@ -22,6 +33,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Updater keyed-catalog fast path** — the updater now consumes the shared
+  `KeyAvailability` primitive: when the account's OpenRouter "Filter the model catalog
+  for API keys" setting is on, allowed candidates skip the probe and key-blocked
+  candidates are pruned from the probe walk (the budget counts candidates examined, so
+  pre-seeding a blocked verdict would not save it); candidates in neither catalog are
+  still probed. With the setting off or the fetch failing, the probe walk remains the
+  sole gate — no abort path. Cheaper refreshes on accounts with provider restrictions.
 - **Designer agent + role reconciled with the repo's contracts** — the shipped
   `designer` agent body now renders and inspects its own output (dev server →
   `browser.open` → `screenshot` at the project's real breakpoints, both themes,

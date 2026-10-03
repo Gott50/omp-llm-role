@@ -1,6 +1,7 @@
 /**
  * Shared in-process launcher for the ranking explorer. Both entry points feed
- * it today's ranking data plus an omp catalog and get back a loopback server:
+ * it today's ranking data, the key-availability overlay, plus an omp catalog
+ * and get back a loopback server:
  *
  *   - the omp extension's `/explore-roles` command (catalog via the session's
  *     model registry, so no subprocess)
@@ -12,7 +13,7 @@
 
 import { execFile } from "node:child_process";
 import type { Server } from "node:http";
-import { enrichThinkingLevels, type CatalogEntry } from "../availability.ts";
+import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability } from "../availability.ts";
 import type { RankData, RoleDef } from "../engine.ts";
 import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH, readPluginSettingsMap, resolveSettings, roleUniverse, type UniverseEntry } from "../settings.ts";
 import { createExplorerServer } from "./server.ts";
@@ -36,8 +37,12 @@ export type ExplorerBootOpts = {
   rank: RankData;
   /** omp catalog rows gating the thinking price factor (empty = OR-flag fallback). */
   catalog: CatalogEntry[];
+  /** Today's key-availability overlay (key-usable vs key-blocked models). */
+  availability: KeyAvailability;
   /** Refetch for `POST /api/refresh`. */
   reload(refresh: boolean): Promise<RankData>;
+  /** Re-derive the key-availability overlay for `POST /api/refresh` (best-effort). */
+  reloadAvailability?: () => Promise<KeyAvailability>;
   port?: number;
   /** Open the URL in the default browser (macOS only). */
   open?: boolean;
@@ -79,6 +84,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   const onLog = opts.onLog ?? (() => {});
   const lockPath = opts.lockPath ?? PLUGIN_SETTINGS_PATH;
   let rank = opts.rank;
+  let availability = opts.availability;
   enrichThinkingLevels(rank.models, opts.catalog);
 
   // User-level lock file only: project: null keeps any project-anchor file out
@@ -100,11 +106,12 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     lockPath,
     getState: () => {
       const { roles, universe } = readRoles();
-      return { rank, roles, universe, defaults: DEFAULT_ROLES };
+      return { rank, roles, universe, defaults: DEFAULT_ROLES, availability };
     },
     refresh: async () => {
       rank = await opts.reload(true);
       enrichThinkingLevels(rank.models, opts.catalog);
+      if (opts.reloadAvailability) availability = await opts.reloadAvailability();
     },
   });
   // Optional detach (extension only): never hold the host process open on the

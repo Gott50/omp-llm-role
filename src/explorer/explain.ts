@@ -6,8 +6,13 @@
  * No I/O: the server (src/explorer/server.ts) owns the HTTP surface and the
  * export write; this module only computes. All ranking math is delegated to
  * src/engine.ts so the numbers on screen are exactly the plugin's numbers.
+ *
+ * The keyed-catalog availability annotation (`key` on rank rows and the eligible
+ * explanation) is a pure overlay computed from an injected `KeyAvailability`
+ * value — no I/O here; the caller owns the fetch.
  */
 
+import { type KeyAvailability } from "../availability.ts";
 import { sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
 import { CAPABILITY_FILL, cardinalMetric, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
@@ -99,6 +104,11 @@ export type RankRow = {
   parts: Record<string, number>;
   /** weighted non-price metrics whose raw value is null (they contribute 0) */
   missing: string[];
+  /** keyed-catalog availability overlay: whether the user's OpenRouter key can
+   * run this model. Orthogonal to `missing` (weighted metrics with no value) and
+   * to the eligibility gates `rankRole` applies; `"unknown"` when the keyed
+   * catalog is inactive or the model is in neither catalog. */
+  key: "usable" | "blocked" | "unknown";
   frontier: boolean;
   rank: number;
   baselineRank: number | null;
@@ -106,9 +116,22 @@ export type RankRow = {
   delta: number | null;
 };
 
+/** The availability overlay verdict for one model id: `"usable"` when the keyed
+ * catalog allows it, `"blocked"` when the public catalog has it but the keyed
+ * one does not, `"unknown"` when the keyed catalog is inactive or the model is
+ * in neither catalog. Pure; no I/O. */
+function keyVerdict(availability: KeyAvailability | undefined, id: string): "usable" | "blocked" | "unknown" {
+  if (availability?.active !== true) return "unknown";
+  if (availability.allowed.has(id)) return "usable";
+  if (availability.blocked.has(id)) return "blocked";
+  return "unknown";
+}
+
 /** Rank `models` under `def`, annotating each row with its rank delta against
- * `baseline` (the effective role's ranking, i.e. what the plugin does today). */
-export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[]): RankRow[] {
+ * `baseline` (the effective role's ranking, i.e. what the plugin does today) and
+ * its keyed-catalog availability overlay. Ranking order, deltas, and every other
+ * field are unaffected by `availability`. */
+export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], availability?: KeyAvailability): RankRow[] {
   const ranked = rankRole(def, models);
   const frontier = paretoFrontier(ranked);
   const baselineRank = new Map<string, number>();
@@ -130,6 +153,7 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[]): Ran
       q: r.q,
       parts: r.parts,
       missing: weightedNonPrice.filter((k) => r.model.metrics[k] == null),
+      key: keyVerdict(availability, r.model.id),
       frontier: frontier.has(r.model.id),
       rank,
       baselineRank: b,
@@ -186,6 +210,11 @@ export type Explanation =
   | {
       eligible: true;
       model: { id: string; name: string; org: string };
+      /** keyed-catalog availability overlay (see `RankRow.key`) */
+      key: "usable" | "blocked" | "unknown";
+      /** why the overlay reads as it does: the injected availability reason, or
+       * `"unavailable"` when no availability value was supplied */
+      keyReason: KeyAvailability["reason"];
       rank: number;
       total: number;
       value: number;
@@ -202,8 +231,9 @@ export type Explanation =
     };
 
 /** Full decomposition of one model's rank for a role, or the eligibility gates it
- * failed (same gates `rankRole` applies, listed in the same order). */
-export function explainModel(def: RoleDef, models: Model[], modelId: string, roleName = ""): Explanation {
+ * failed (same gates `rankRole` applies, listed in the same order). The eligible
+ * branch also carries the keyed-catalog availability overlay (`key`/`keyReason`). */
+export function explainModel(def: RoleDef, models: Model[], modelId: string, roleName = "", availability?: KeyAvailability): Explanation {
   const model = models.find((m) => m.id === modelId);
   if (!model) return { eligible: false, reasons: ["model not found in today's dataset"] };
 
@@ -301,6 +331,8 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   return {
     eligible: true,
     model: { id: model.id, name: model.name, org: model.org },
+    key: keyVerdict(availability, model.id),
+    keyReason: availability?.reason ?? "unavailable",
     rank,
     total,
     value: self.value,

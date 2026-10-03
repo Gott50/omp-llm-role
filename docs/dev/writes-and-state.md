@@ -78,6 +78,11 @@ they describe. Agent-dir resolution: `OMP_LLM_ROLE_AGENT_DIR` (test hook) →
 - `managedDisabledAgents` is the set of agent names the plugin added to
   `task.disabledAgents`; a later run removes a name whose agent file is gone
   (e.g. `/remove-agent`) or whose role is no longer disabled.
+- Each `decisions[]` entry carries `availabilitySource` (`"keyed-catalog"` when the
+  keyed catalog was active for that role, else `"probe"`) and `keyBlockedCount` (the
+  candidates pruned as key-blocked). The keyed-blocked set itself is deliberately
+  **not** enumerated — it can be hundreds of ids; `blocked[]` keeps its old meaning,
+  the probe-blocked ids examined in the walk.
 - Role removal (`/remove-agent`) goes through `removeRoleSettings` in
   `src/role-settings.ts` — the same validate/backup/atomic-write path as
   `writeRoleSettings`, deleting the role's flat dotted keys and any nested entry.

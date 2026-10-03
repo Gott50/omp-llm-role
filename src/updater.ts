@@ -2,6 +2,10 @@
  * Orchestration (SPEC §6–9): rank today's models -> tier gate + catalog
  * resolution -> per-role hysteresis -> fallback chains -> surgical config patch.
  *
+ * When the account's OpenRouter keyed catalog is active (SPEC §5.5) it is the
+ * availability source: allowed candidates skip the probe, key-blocked ones are
+ * pruned from the walk order, and only candidates in neither catalog are probed.
+ *
  * Every abort path notifies and returns `aborted` without touching config.yml.
  * A run with zero changes writes nothing (config mtime untouched) but still
  * stamps the day gate and appends a history row. Both entry points (the omp
@@ -12,7 +16,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { computeRankings, loadRankData, META_LEVELS, type Ranked, type RankData } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { currentRankingId, enrichThinkingLevels, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
@@ -30,6 +34,10 @@ export type Decision = {
   currentValue: number | null;
   /** Catalog ids probed blocked (provider allowlist) while selecting this role. */
   blocked: string[];
+  /** Availability source for this role's selection: the keyed-catalog fast path or the probe walk. */
+  availabilitySource: "keyed-catalog" | "probe";
+  /** Candidates pruned as key-blocked (present in the public catalog, absent from the keyed one). */
+  keyBlockedCount: number;
 };
 
 export type RunResult = {
@@ -55,6 +63,8 @@ export type Deps = {
   getSettings?(): Promise<Record<string, unknown>>;
   getKeyMeta?(token: string): Promise<KeyMeta>;
   probeModel?(token: string, catalogId: string): Promise<ProbeVerdict>;
+  /** DI seam like `getKeyMeta`/`probeModel`; production defaults to `fetchKeyAvailability` (never throws). */
+  getKeyAvailability?(token: string): Promise<KeyAvailability>;
   /**
    * Host coupling (extension only): apply a concrete selector to the live
    * session model. Receives the final `default` selector (with thinking
@@ -228,6 +238,10 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
     const catalog = await deps.getCatalog();
     const eligible = filterCatalog(catalog, tier);
+    // Keyed-catalog availability (SPEC §5.5): fetched once per run and shared
+    // across roles. Never throws — an unavailable allowlist degrades to the
+    // probe walk with no abort path.
+    const availability = await (deps.getKeyAvailability?.(token) ?? fetchKeyAvailability(token));
     const rowById = new Map(eligible.map((c) => [c.id, c]));
     enrichThinkingLevels(rank.models, catalog);
 
@@ -239,12 +253,24 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     }
     const current = parseConfig(configText);
 
-    // Per-role selection: rank -> tier/catalog filter -> probe gate ->
-    // hysteresis -> suffix. The probe walk verifies candidates with one-token
-    // completions because the key's allowed-providers privacy whitelist is
-    // invisible to /api/v1/key and the catalog endpoints (SPEC §5 addendum).
+    // Per-role selection: rank -> tier/catalog filter -> availability gate ->
+    // hysteresis -> suffix. When the keyed catalog is active it classifies
+    // candidates without a request (allowed -> clean, key-blocked -> pruned);
+    // the probe walk still verifies candidates in neither catalog with
+    // one-token completions, because the key's allowed-providers privacy
+    // whitelist is otherwise invisible to /api/v1/key and the catalog
+    // endpoints (SPEC §5 addendum, §5.5).
     const decisions: Decision[] = [];
     const notes: string[] = [];
+    if (availability.active) {
+      notes.push(
+        `omp-llm-role: OpenRouter keyed catalog active — ${availability.keyedCount}/${availability.publicCount} models allowed; key-blocked candidates are pruned from the probe walk (up to ${PROBE_BUDGET} probes/role saved)`,
+      );
+    } else {
+      notes.push(
+        `omp-llm-role: OpenRouter keyed catalog ${availability.reason === "no-filter" ? "not filtering" : "unavailable"} — enable OpenRouter → Settings → "Filter the model catalog for API keys" to skip probing key-blocked models; the probe walk is still in use`,
+      );
+    }
     const poolByRole: Record<string, Candidate[]> = {};
     /** Per managed role: its bare chain key, role suffix, and the pool it was chosen from. */
     const chainPlanByRole: Record<string, { key: string; suffix: string | undefined; pool: Candidate[]; chosenIdx: number }> = {};
@@ -265,6 +291,25 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const currentId = currentSelector === null ? null : currentRankingId(currentSelector);
       const currentIdx = currentId === null ? -1 : candidates.findIndex((c) => c.ranked.model.id === currentId);
 
+      // Keyed-catalog fast path (SPEC §5.5): when the account's OpenRouter
+      // filter is on, membership in the keyed catalog is authoritative — an
+      // allowed candidate is clean without a probe, and a key-blocked one is
+      // pruned from the walk order entirely. Pruning (not pre-seeding a
+      // "blocked" verdict) is load-bearing: the budget counts candidates
+      // *examined*, so a pre-seeded blocked candidate would still consume it
+      // and reproduce the all-blocked-pool failure this path exists to fix.
+      const keyBlocked = (c: Candidate) => availability.active && availability.blocked.has(c.ranked.model.id);
+      if (availability.active) {
+        for (const c of candidates) {
+          if (availability.allowed.has(c.ranked.model.id)) probeVerdicts.set(c.catalogId, "ok");
+        }
+      }
+      const keyBlockedCount = candidates.filter(keyBlocked).length;
+      // A key-blocked current candidate is not the walk's current: it will
+      // never be kept, so the stop condition must not demand extra clean
+      // candidates beyond it.
+      const currentWalkIdx = currentIdx >= 0 && !keyBlocked(candidates[currentIdx]) ? currentIdx : -1;
+
       // Probe walk: current candidate first (hysteresis must see it), then rank
       // order. It stops only when 1 + chain depth clean candidates exist AND —
       // when the current candidate is clean — `fallbackChainDepth` clean
@@ -273,9 +318,9 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // the graceful degradation); verdicts cached across roles.
       const target = 1 + settings.fallbackChainDepth;
       const order: number[] = [];
-      if (currentIdx >= 0) order.push(currentIdx);
+      if (currentWalkIdx >= 0) order.push(currentWalkIdx);
       for (let i = 0; i < candidates.length; i++) {
-        if (i !== currentIdx) order.push(i);
+        if (i !== currentWalkIdx && !keyBlocked(candidates[i])) order.push(i);
       }
       const probed: number[] = [];
       const blockedForRole: string[] = [];
@@ -294,9 +339,9 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           blockedForRole.push(id);
         } else {
           cleanCount++;
-          if (currentIdx >= 0 && idx > currentIdx) cleanAfterCurrent++;
+          if (currentWalkIdx >= 0 && idx > currentWalkIdx) cleanAfterCurrent++;
         }
-        const currentClean = currentIdx >= 0 && probeVerdicts.get(candidates[currentIdx].catalogId) !== "blocked";
+        const currentClean = currentWalkIdx >= 0 && probeVerdicts.get(candidates[currentWalkIdx].catalogId) !== "blocked";
         if (cleanCount >= target && (!currentClean || cleanAfterCurrent >= settings.fallbackChainDepth)) break;
       }
       const pool = probed
@@ -304,7 +349,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         .sort((a, b) => a - b)
         .map((idx) => candidates[idx]);
       if (pool.length === 0) {
-        notes.push(`@${role}: no probe-clean candidate among ${probed.length} probed (blocked: ${blockedForRole.join(", ")}) — role untouched`);
+        const keyed = availability.active ? `key-blocked: ${keyBlockedCount}, ` : "";
+        notes.push(`@${role}: no probe-clean candidate among ${probed.length} probed (${keyed}blocked: ${blockedForRole.join(", ")}) — role untouched`);
         continue;
       }
       poolByRole[role] = pool;
@@ -341,6 +387,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         bestValue: best.ranked.value,
         currentValue: currentEntry?.ranked.value ?? null,
         blocked: blockedForRole,
+        availabilitySource: availability.active ? "keyed-catalog" : "probe",
+        keyBlockedCount,
       });
 
       // Fallback chain inputs for every managed role: the bare key (a chain key

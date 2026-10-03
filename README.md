@@ -315,12 +315,23 @@ The plugin keeps only models the OpenRouter key can actually run:
 - **Tier/budget gate** — paid keys with budget get billed variants, free or
   exhausted keys get `:free` variants, `:batch` never. Every candidate must
   resolve in omp's catalog.
-- **Probe verification** — on top of the gate, every candidate is verified with
-  a one-token completion probe, because the account's OpenRouter
-  **allowed-providers privacy whitelist** is invisible to the key and catalog
-  endpoints and a real request's 404 is the only reliable signal. Blocked
-  candidates are excluded from selection and chains; a role with no clean
-  candidate is left untouched.
+- **Keyed-catalog fast path** — when the account's OpenRouter setting **"Filter the
+  model catalog for API keys"** is on, the key-authenticated `GET /api/v1/models` is a
+  per-key allowlist: allowed candidates skip the probe and key-blocked candidates are
+  pruned from the walk. With the setting off (or the fetch failing) the plugin falls
+  back to the probe walk below — no abort.
+- **Probe verification** — the fallback: every candidate is verified with a one-token
+  completion probe, because the account's OpenRouter **allowed-providers privacy
+  whitelist** is invisible to the key endpoint and the unauthenticated catalog, and a
+  real request's 404 is the only reliable signal. Blocked candidates are excluded from
+  selection and chains; a role with no clean candidate is left untouched.
+- **Explorer key marking** — the explorer overlays every ranked model with a
+  **usable** / **key-blocked** / **unknown** badge derived from the
+  key-authenticated `GET /api/v1/models` (the account setting **"Filter the model
+  catalog for API keys"** makes it a per-key allowlist). A **hide key-blocked**
+  toggle drops blocked rows, and when the setting is off every badge reads
+  *unknown* with a hint naming the OpenRouter setting. The mark is read-only: it
+  never edits roles, reorders ranks or changes an Export.
 
 ## Caveats
 

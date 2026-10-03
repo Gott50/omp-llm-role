@@ -3,7 +3,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CatalogEntry, KeyMeta } from "../src/availability.ts";
+import { computeKeyAvailability, type CatalogEntry, type KeyAvailability, type KeyMeta } from "../src/availability.ts";
 import type { Model, RankData } from "../src/engine.ts";
 import type { Deps } from "../src/updater.ts";
 
@@ -56,6 +56,12 @@ export function makeCatalog(ids: string[], thinking: string[] = []): CatalogEntr
 
 export const PAID_KEY_META: KeyMeta = { isFreeTier: false, limitRemaining: 10, freeRemaining: 1000, creditsRemaining: 500 };
 
+/** Keyed-catalog availability fixture: the OpenRouter "Filter the model catalog
+ * for API keys" setting is off (keyed == public), so the probe walk stays the
+ * sole availability gate. Keeps `fakeDeps` hermetic — without it the updater's
+ * `?? fetchKeyAvailability(token)` default would issue live HTTP in every test. */
+export const NO_FILTER_AVAILABILITY: KeyAvailability = computeKeyAvailability(["org/a"], ["org/a"]);
+
 /** Temp agent dir with an optional config.yml and preloaded state file. */
 export function setupAgentDir(configText: string | null, state?: object): string {
   const dir = mkdtempSync(join(tmpdir(), "llm-role-test-"));
@@ -77,6 +83,7 @@ export function fakeDeps(models: Model[], settings: Record<string, unknown> = {}
     getToken: async () => "sk-or-test",
     getCatalog: async () => makeCatalog(models.map((m) => m.id)),
     getKeyMeta: async () => PAID_KEY_META,
+    getKeyAvailability: async () => NO_FILTER_AVAILABILITY,
     probeModel: async () => "ok",
     getRankData: async () => rankData,
     getSettings: async () => settings,
