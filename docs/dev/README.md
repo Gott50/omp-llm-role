@@ -52,3 +52,12 @@ home — if it is here, it is not in the README.
 - **[quirks.md](quirks.md)** — debugging-only oddities and gotchas that are not
   contracts (e.g. Node type-stripping not typechecking, stale in-process plugin
   code).
+
+## Research notes
+
+External material that informs (but does not bind) the design. Not contracts.
+
+- **[../research/agentic-engineering-benchmarks.md](../research/agentic-engineering-benchmarks.md)**
+  — IndyDevDan's "top 5 agentic-engineering benchmarks" video, mapped onto the
+  project's coverage/collinearity rules; records the two axes the project lacks
+  (guardrails, hallucination) and the per-task-vs-$/M cost gap.
