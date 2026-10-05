@@ -22,9 +22,17 @@ payload; there is no public JSON API.
   `context`, `release_date`, `multimodal`, `license`, `input_price`/`output_price`
   (unused), `throughput`/`latency` (unused), the `index_*` scores (0–100:
   general, reasoning, math, code, agents, search, vision, tool_calling,
-  long_context) and the benchmark scores (0–1: `gpqa_score`,
-  `aime_2025_score`, `swe_bench_verified_score`, `arc_agi_v2_score`,
-  `mrcr_v2_score`, `terminal_bench_score`, `tau_bench_retail_score`).
+  long_context, communication, finance, healthcare, legal) and the benchmark
+  scores (0–1: `gpqa_score`, `aime_2025_score`, `swe_bench_verified_score`,
+  `arc_agi_v2_score`, `mrcr_v2_score`, `terminal_bench_score`,
+  `tau_bench_retail_score`, plus `hle_score`, `simpleqa_score`, `mmmu_score`,
+  `mmmu_pro_score`, `mmmlu_score`, `browsecomp_score`, `swe_bench_pro_score`,
+  `mcp_atlas_score`, `apex_agents_score`, `osworld_score`, `scicode_score`,
+  `screenspot_pro_score`, `charxiv_r_score`, `frontiermath_score`,
+  `toolathlon_score`, `coding_arena_score`). `buildModels` maps only the nine
+  indices and seven benchmark scores listed in `Model.metrics`; the rest are
+  fetched and discarded (see the research note on the agentic-engineering
+  benchmarks for the coverage/collinearity of the unmapped ones).
 - **Build**: `buildModels(rows)` maps each row to a `Model`; `metrics` carries
   the index/benchmark values, with `price`/`throughput`/`website`/`writing`
   left `null` for later enrichment.
