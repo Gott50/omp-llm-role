@@ -36,16 +36,34 @@ Three claims, all of which this project already implements or should:
 
 ## The five benchmarks the video picks
 
+Each video link resolves to a concrete id in the project's catalog
+(`cache/benchmark-catalog-fetched-data.json`, 2026-10-05). The mapping uses the
+**exact** variant the video links:
+
 | # | Benchmark | What it measures (video) | Catalog id | Models | Coverage of 400-field |
 |---|---|---|---|---|---|
 | 1 | Terminal-Bench v4.0 | "Cleanest pure agentic coding": real container, real harness loop, verifier checks final state | `terminal-bench-4.0` | 20 | 5.0% |
 | 2 | APEX Agents | Investment banking / management consulting / corporate law; expert-authored knowledge-worker tasks — the non-SWE proxy | `apex-agents` | 10 | 2.5% |
-| 3 | AutomationBench | 600+ tasks across finance/HR/marketing/ops/sales/support; must complete the objective **without tripping guardrails** — alignment at the floor | `automationbench` | 22 | 5.5% |
+| 3 | AutomationBench | Must complete the objective **without tripping guardrails** — alignment at the floor. Video links Artificial Analysis's independent run (657 tasks, 40 simulated apps) | `automationbench-aa` | 1 | 0.25% |
 | 4 | AA-Omniscience | The hallucination benchmark: correct / incorrect / partial / **not attempted**, zero penalty for "I don't know" | `aa-omniscience-index` | 3 | 0.75% |
 | 5 | DeepSWE v1.1 | Long-horizon SWE from short, realistic prompts | `deepswe-1.1` | 40 | 10.0% |
 
-Counts measured from `cache/benchmark-catalog-fetched-data.json` (2026-10-05);
-coverage is against the 400-model ranking field used in scoring.md.
+Notes on the mapping:
+
+- All five ids **already exist in the catalog** — none needs to be added. The
+  learning is coverage + weighting, not discovery.
+- The video's AutomationBench link (`artificialanalysis.ai/evaluations/automationbench-aa`)
+  is the AA-run variant, `automationbench-aa` (1 model). The base
+  `automationbench` (22 models) and `automationbench-1.0.6` (5) are separate
+  catalog entries.
+- **No shipped role weights any of the five** (or any catalog benchmark). The
+  weighted metric set is `general`, `code`, `agents`, `tool_calling`,
+  `throughput`, `price`, `vision`, `reasoning`, `long_context`, `website`. The
+  `terminal_bench` name that appears in `KNOWN_METRICS` is a *different* thing —
+  the older llm-stats raw pass rate, and it is shipped-but-**unweighted** (as are
+  the other five raw pass rates).
+
+Coverage is against the 400-model ranking field used in scoring.md.
 
 ## What this means for `omp-llm-role`
 
@@ -73,7 +91,8 @@ So even where coverage were adequate, they would not separate roles. The video's
 - **Alignment / guardrails** (AutomationBench): the video stresses the ranking
   *flips hard* when guardrail violations are counted. `omp-llm-role` has no
   guardrail/safety metric. The catalog carries `siren-agentdojo-attack-success`
-  and `siren-agentdojo-utility` (safety), but at 1 model each — unusable.
+  and `siren-agentdojo-utility` (safety) and `automationbench-aa` (the
+  guardrail-scored variant), but at 1 model each — unusable.
 - **Hallucination / truthfulness** (AA-Omniscience): "one hallucination upstream
   poisons every agent downstream in a long-running pipeline." The project has no
   truthfulness metric; `omniscience-non-hallucination-rate` covers 1 model.
@@ -100,9 +119,10 @@ benchmarks that map to the work you actually do" is the per-role weight design.
 
 ## Actionable takeaways
 
-- **No new benchmark sources.** The video's five are low-coverage and (where
-  reachable) collinear — do not add them as weighted metrics. This matches the
-  existing "none added" finding.
+- **Weight none of them.** All five already exist in the catalog, but each is
+  low-coverage (best: DeepSWE 1.1 at 10%) and, where reachable, collinear with an
+  existing index — do not weight any as a focus metric. This matches the existing
+  "none added" finding.
 - **Watch two axes:** guardrail/alignment and hallucination/truthfulness. If a
   source ever covers ≥35% of the field, they are the first genuinely independent
   axes since throughput/price.
