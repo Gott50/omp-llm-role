@@ -117,12 +117,12 @@ mapping notes). This is consistent with the project's existing finding —
 adds an independent axis at usable coverage. The video's picks do not change that
 verdict; they reinforce it.
 
-The reason is **not** the coverage floor, though. A `bench:<id>` metric is
-capability-filled at 0.195 (`llmStatsBenchmarkDeclaration` → `applyBenchmarkScores`
-fills every uncovered model), so weighting one does **not** turn `q` into a
-0-penalty coverage score — absence is a known non-penalty, and the metric is
-never gated by `FOCUS_COVERAGE_FLOOR` (scoring.md, "External metrics"). The real
-objections are:
+The reason is **not** the coverage floor, though. A `bench:<id>` metric that
+loads is capability-filled at 0.195 (`llmStatsBenchmarkDeclaration` →
+`applyBenchmarkScores` fills every uncovered model), so weighting one does **not**
+turn `q` into a 0-penalty coverage score — absence is a known non-penalty, and
+the metric is never gated by `FOCUS_COVERAGE_FLOOR` (scoring.md, "External
+metrics"). The real objections are:
 
 - **Collinearity.** Where reachable, each is r 0.80–0.94 with an existing index
   (§2), so it adds no axis.
@@ -130,6 +130,13 @@ objections are:
   constant 0.195, so the metric carries almost no information — and the fill can
   *reward* absence: an uncovered model scores 0.195 while a measured weak model
   scores lower.
+- **The two dotted ids do not even load.** `catalogMetric` normalizes the id
+  (`.`→`_`), so `deepswe-1.1` becomes `bench:deepswe-1_1` and the generic source
+  fetches `.../benchmarks/deepswe-1_1` — HTTP 404 (verified 2026-10-05; same for
+  `terminal-bench-4.0` → `terminal-bench-4_0`). The source fails, the metric
+  stays null for every model, and it contributes 0 to all — ordering-neutral dead
+  weight, not the 0.195 fill. Only a declared source (raw dotted id in its fetch
+  URL) reaches them.
 - **Loadable coverage is capped at 20 models.** The zeroeval per-benchmark
   endpoint returns at most 20 `entries`, and the plugin's generic source reads
   `entries` with no pagination, so **no `bench:<id>` metric can ever clear the
@@ -154,7 +161,7 @@ So even where coverage were adequate, they would not separate roles. The video's
   guardrail/safety metric. The catalog carries `siren-agentdojo-attack-success`
   and `siren-agentdojo-utility` (safety) and `automationbench-aa` (the
   guardrail-scored variant), but at 1 model each — unusable. This is the one
-  genuine gap: no fetched source carries it.
+  genuine gap: no source at usable coverage.
 - **Hallucination / truthfulness** (AA-Omniscience): *"one hallucination is going
   to cause… every subsequent agent gets a messed up result."* The project does
   not weight a truthfulness metric — but the llm-stats leaderboard it already
@@ -165,10 +172,16 @@ So even where coverage were adequate, they would not separate roles. The video's
 The same holds for the video's "domain proxies over SWE tunnel vision" point: the
 fetched leaderboard carries `index_finance` (228/400 = 57%), `index_legal`
 (213/400 = 53.3%) and `index_healthcare` (248/400 = 62%) — all clear the 35% bar
-— plus `index_communication` (114/400 = 28.5%). None is mapped. They are not
-three axes, though: finance↔healthcare r 0.942, finance↔legal r 0.953,
+— plus `index_communication` (114/400 = 28.5%; llm-stats' communication index,
+the WritingBench table's sort key — verbal quality, *not* the video's
+agent-to-agent axis). None is mapped. The three domain indices are not three
+axes, though: finance↔healthcare r 0.942, finance↔legal r 0.953,
 healthcare↔legal r 0.946 — one latent "domain knowledge" factor, 0.70–0.85
-correlated with `general`.
+correlated with `general`. And they are `index_*`, so they are **0-filled**: a
+missing value scores 0, not the 0.195 capability fill, so weighting one at 57%
+coverage penalizes the other 43% of the pool. Adding one needs a `CAPABILITY_FILL`
+entry (as `long_context`/`website` got) or it is the same coverage lottery §1
+objects to.
 
 So guardrail/alignment is the only true gap; truthfulness and domain knowledge
 are already in hand at marginal-to-usable coverage, and the work is mapping +
@@ -200,15 +213,19 @@ index"* is the per-role weight design.
   low-coverage (best: 5% loadable) and, where reachable, collinear with an
   existing index — do not weight any as a focus metric. This matches the existing
   "none added" finding. The reason is collinearity + fill-dominated variance, not
-  the coverage floor (a `bench:<id>` metric is capability-filled, §1).
+  the coverage floor (a `bench:<id>` metric is capability-filled, or — for a
+  dotted id — dead weight, §1).
 - **Watch one true gap and two in-hand axes.** Guardrail/alignment has no source
-  at all. Truthfulness (`simpleqa_score` 11.8%) and domain knowledge
+  at usable coverage (the catalog's safety entries are 1 model each).
+  Truthfulness (`simpleqa_score` 11.8%) and domain knowledge
   (`index_finance`/`index_legal`/`index_healthcare` 53–62%, one latent factor)
-  are already in the fetched leaderboard and need only a `buildModels` mapping +
-  a `KNOWN_METRICS` entry + a weight. If a domain axis is added, weight **one**
-  metric (they are r 0.94–0.95 with each other) and take the share from the
-  collinear capability block (`code`+`agents` in `default`/`slow`/`task`, r
-  0.947), not from `throughput`/`price`.
+  are already in the fetched leaderboard and need a `buildModels` mapping + a
+  `KNOWN_METRICS` entry + a weight — and, for the `index_*` domain metrics, a
+  `CAPABILITY_FILL` entry (they are 0-filled, so a 57%-coverage weight penalizes
+  the other 43%). If a domain axis is added, weight **one** metric (they are
+  r 0.94–0.95 with each other) and take the share from the collinear capability
+  block (`code`+`agents` in `default`/`slow`/`task`, r 0.947), not from
+  `throughput`/`price`.
 - **Keep the 3-D posture.** Performance + cost + speed as one unit is the
   project's core; the video is independent confirmation, not a change.
 - **Per-task cost is the open modelling gap.** The video's "useful agent output
