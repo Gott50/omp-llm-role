@@ -32,9 +32,11 @@ which this project already implements or should:
 2. **Model selection is three-dimensional: performance, cost, speed — as one
    unit.** *"Choosing a model is a three-dimensional problem… the tradeoff
    triangle."* Worked example: on Terminal-Bench v4.0 Astra and Fable 5.1 look
-   close on score, but *"about four times cheaper to run Astra than Fable, and
-   about 2.4 times better than Fable 5.1"* → This is `value = q − λ·priceEff`
-   with `throughput` weighted in every role (scoring.md rule 3).
+   close on score, but on the **cost** chart — *"about four times cheaper to run
+   Astra than it is Fable, and about 2.4 times better than running Claude Fable
+   5.1"* (verbatim; "better" here is the cost axis) → This is
+   `value = q − λ·priceEff` with `throughput` weighted in every role (scoring.md
+   rule 3).
 3. **Hunt variance, not saturation.** *"If you see a benchmark that has a flat
    line, just don't spend your time… The information isn't valuable."* The video
    names the saturation threshold at ~85–90%. → This is the project's collinearity
