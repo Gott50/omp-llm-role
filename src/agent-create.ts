@@ -155,7 +155,7 @@ function buildBody(request: CreateAgentRequest, archetype: Archetype, readOnly: 
  * half-enforces (it accepts Σ ∈ [0.99, 1.01]; `rankRole` computes
  * `q = Σ (wᵢ/(1−w_price))·tᵢ`, so any other split silently rescales q against λ).
  */
-function checkWeightMath(name: string, weights: Record<string, number>, required: readonly string[]): string[] {
+export function checkWeightMath(name: string, weights: Record<string, number>, required: readonly string[]): string[] {
   const errors: string[] = [];
   const metrics = Object.keys(weights);
   if (metrics.length === 0) return [`role ${name}: no weights given`];

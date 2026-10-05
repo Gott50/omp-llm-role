@@ -45,6 +45,22 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Changed
 
+- **Blend weight basis aligned with the router's sort key** — the `1/price²`
+  blend now weights routes by the **input (prompt) price** (the router's sort
+  key) while reporting the **billed 3:1 in:out blend** under that distribution;
+  previously both used the billed blend. Each route carries `weightPrice`
+  (input-only $/M) alongside `price`, `parseFindData` emits a parallel
+  `endpoint_weight_price` map, and a route with no input price drops from the
+  pool. The endpoints cache rejects records lacking `weightPrice` and refetches.
+  Basis verified against Tarun Chitra's *Caching Cheaters on OpenRouter*
+  (2026-08-14): 64/64 informative splits picked the cheapest-input provider and
+  the recovered inverse-square exponent is r = 1.968. (issue #21)
+- **Domain-knowledge axis evaluated and not landed** — the llm-stats
+  `index_finance`/`index_legal`/`index_healthcare` scores were measured as a
+  domain-knowledge axis and left unweighted: they correlate 0.66–0.84 with
+  `general`, the 0-fill flips the `default` leader on a coverage lottery, and the
+  capability fill still flips it on the reachable pool. Numbers and verdict in
+  `docs/dev/scoring.md`. (issue #23)
 - **Updater keyed-catalog fast path** — the updater now consumes the shared
   `KeyAvailability` primitive: when the account's OpenRouter "Filter the model catalog
   for API keys" setting is on, allowed candidates skip the probe and key-blocked

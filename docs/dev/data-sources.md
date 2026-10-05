@@ -66,9 +66,10 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
   `analytics`, `benchmarks`, `benchmark_ranges`, `categories`,
   `modality_counts`.
 - **Parse**: `parseFindData(v)` narrows `find` (models, `endpoint_perf`,
-  `endpoint_price` blended to $/M at 3:1 in:out) and keeps the full `data`
-  object verbatim for the cache; it also extracts the Design Arena mirror
-  (`extractDesignElo`, see below).
+  `endpoint_price` blended to $/M at 3:1 in:out, and the parallel
+  `endpoint_weight_price` input-only $/M map — the router's sort key, see "The
+  1/price² blend") and keeps the full `data` object verbatim for the cache; it
+  also extracts the Design Arena mirror (`extractDesignElo`, see below).
 - **Cache**: `cache/openrouter-fetched-data.json` —
   `{ fetchedAt, source, modelCount, data }` where `data` is the verbatim
   `find?fmt=cards` response data (sorted keys). Throughput/price maps are
@@ -90,23 +91,42 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
   fallback.
 - **Cache**: `cache/openrouter-endpoints-fetched-data.json` —
   `{ fetchedAt, source, slugCount, slugs }` where `slugs` maps each fetched
-  model slug to its narrowed per-provider route records.
+  model slug to its narrowed per-provider route records. `readEndpointsCache`
+  rejects a cache whose records lack `weightPrice` (the pre-#21 shape) and
+  refetches, rather than silently dropping every route from the blend.
 
 ### The 1/price² blend
 
 `buildOpenRouterEnrichment(data, pages)` computes the expected price/throughput
 of one request under OpenRouter's default price-based load balancing (a request
 goes to ONE provider, picked among the stable standard-tier routes with
-probability proportional to `1/price²`):
+probability proportional to `1/price²`). The weight basis is the **input
+(prompt) price** — the router's sort key — while the reported price is the
+**billed 3:1 in:out blend** under that distribution.
 
 - **Pool**: the page's per-provider routes, plus any find-row endpoint the page
   does not list (the page is normally a superset).
 - **Eligible**: standard tier (`serviceTier === null`), `status === 0`, not
-  `:free`, `price > 0`, not `:batch`. flex/priority tiers are excluded (only the
-  `:floor`/`:nitro` variants make them eligible); degraded routes (`status ≠ 0`)
-  are fallbacks and drop out.
-- **Blend**: `price = Σ(1/p²)·p / Σ(1/p²)`; `throughput = Σ(1/p²)·t / Σ(1/p²)`
-  renormalized over the routes that have p50 data; latency likewise.
+  `:free`, `price > 0`, `weightPrice > 0`, not `:batch`. flex/priority tiers are
+  excluded (only the `:floor`/`:nitro` variants make them eligible); degraded
+  routes (`status ≠ 0`) are fallbacks and drop out.
+- **Weight basis**: the input-only $/M (`pricing.prompt * 1e6`, carried as
+  `weightPrice` on each route and `endpoint_weight_price` in the find payload).
+  OpenRouter's docs say only "weighted by inverse square of the price" and never
+  define the basis; the input price is the measured one. Tarun Chitra (Robot
+  Ventures), *Caching Cheaters on OpenRouter* (2026-08-14,
+  https://robvc.com/research/caching-cheaters): 64/64 informative provider
+  splits picked the cheapest-**input** provider (including menus where that
+  provider quoted the most expensive output price), output price carries ≲6
+  cents per dollar of input, and the inverse-square exponent recovered from
+  1,648 choices is r = 1.968 (95% CI [1.856, 2.098]); cached-token price adds no
+  measurable predictive power. The authors' caveat: behaviour-measured, not
+  source-read.
+- **Blend**: `price = Σ(1/p_in²)·p_billed / Σ(1/p_in²)` — the w-weighted mean of
+  the billed 3:1 blend (what a caller pays), weighted by the input price;
+  `throughput = Σ(1/p_in²)·t / Σ(1/p_in²)` renormalized over the routes that
+  have p50 data; latency likewise. A route with no input price drops from the
+  pool (`1/p²` blows up at 0, and the router cannot score a route without one).
 - **Fallback** (no eligible route carries throughput): throughput = highest-p50
   variant (`:free` included — it rescues otherwise-unranked models), price =
   cheapest billed route (a $0 free tier never sets the price).
@@ -365,9 +385,9 @@ the source does not cover.
   the routes that have p50 data, so a stable route with no recent requests
   contributes price weight but no throughput. A degraded cheapest route
   (`status ≠ 0`) drops out entirely until it recovers, and the price can jump.
-  The blend weights by the documented `1/p²` formula, not by the page's observed
-  request counts (which aggregate ALL OpenRouter traffic, `:nitro`/`:floor` and
-  `sort` users included).
+  The blend weights by the `1/p_in²` formula (input price, see "The 1/price²
+  blend"), not by the page's observed request counts (which aggregate ALL
+  OpenRouter traffic, `:nitro`/`:floor` and `sort` users included).
 - **The find route and the page record for the same endpoint id can disagree**
   by a few percent (price revisions, status flips, p50 windows); the page copy
   wins the pool merge, the find row joins only when the page does not list its

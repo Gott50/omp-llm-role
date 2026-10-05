@@ -202,12 +202,18 @@ export type RankData = {
 // OpenRouter's default routing is price-based load balancing: a request goes to
 // ONE provider, picked among the stable standard-tier routes with probability
 // proportional to 1/price² (docs: "select one weighted by inverse square of the
-// price"). The enrichment is therefore the expected value over that distribution:
-// price = Σ(1/p²)·p / Σ(1/p²), throughput = Σ(1/p²)·t / Σ(1/p²) over the routes
-// that have throughput data (renormalized — a provider without recent traffic
-// can't contribute). flex/priority service tiers are excluded (only the :floor /
-// :nitro variants make them eligible), as are degraded routes (status ≠ 0 — they
-// are fallbacks), :batch variants and $0 :free tiers (1/p² blows up at 0).
+// price"). The router sorts on the INPUT (prompt) price alone — verified against
+// Tarun Chitra's "Caching Cheaters on OpenRouter" (64/64 splits, a 1,648-choice
+// fit r=1.968); OpenRouter's docs are silent on the basis. The enrichment is
+// therefore the expected value over that distribution, weighted by the input
+// price: reported price = Σ(1/p_in²)·p_billed / Σ(1/p_in²) (the billed 3:1 blend
+// is what a caller pays, so it stays the reported price), throughput =
+// Σ(1/p_in²)·t / Σ(1/p_in²) over the routes that have throughput data
+// (renormalized — a provider without recent traffic can't contribute).
+// flex/priority service tiers are excluded (only the :floor / :nitro variants
+// make them eligible), as are degraded routes (status ≠ 0 — they are fallbacks),
+// :batch variants, $0 :free tiers and routes with no input price (1/p² blows up
+// at 0, and the router cannot score a route without an input price).
 // Without page data the pool is the find route(s) alone (a :free variant never
 // contributes there either — it is a separate slug default routing never requests);
 // the pre-page max-p50/min-price path remains only for pools where no eligible
@@ -224,6 +230,9 @@ type OpenRouterFindData = {
   endpoint_perf: Record<string, OpenRouterPerf>;
   /** endpoint id -> blended $/M (3:1 in:out); only endpoints with usable prompt+completion pricing */
   endpoint_price: Record<string, number>;
+  /** endpoint id -> input-only $/M (prompt price) — the router's sort key and the 1/price² weight basis;
+   * only endpoints with usable prompt pricing */
+  endpoint_weight_price: Record<string, number>;
 };
 
 /** One provider route from a model page, narrowed: pricing blended to $/M (3:1
@@ -236,7 +245,10 @@ export type OpenRouterEndpointRecord = {
   status: number;
   free: boolean;
   variant: string;
+  /** billed $/M, 3:1 in:out blend — the reported price */
   price: number | null;
+  /** input-only $/M (prompt price) — the router's sort key, the 1/price² weight basis */
+  weightPrice: number | null;
   tput: number | null;
   latency: number | null;
 };
@@ -249,9 +261,11 @@ export type OrEnrichment = { tput: number; latency: number | null; price: number
 /**
  * Build llm-stats model_id -> OpenRouter enrichment (throughput, latency, blended
  * price, thinking support). :batch variants are skipped (no perf data, half-price
- * async tier). Price and throughput are the 1/price²-weighted means over the pool's
- * stable standard-tier billed routes — the expected values under OpenRouter's default
- * price-based load balancing. The pool is the page's per-provider routes plus any
+ * async tier). Price and throughput are the 1/input-price²-weighted means over the
+ * pool's stable standard-tier billed routes — the expected values under OpenRouter's
+ * default price-based load balancing, whose sort key is the input (prompt) price
+ * alone. The reported price is the w-weighted mean of the BILLED 3:1 blend (what a
+ * caller pays); the weight basis is the input price. The pool is the page's per-provider routes plus any
  * find-row endpoint the page doesn't list; without page data it is the find route(s)
  * alone, so a :free variant never contributes there either (it is a separate slug
  * default routing never requests). Only when no eligible route carries throughput
@@ -261,7 +275,7 @@ export type OrEnrichment = { tput: number; latency: number | null; price: number
  * variant row advertising `supports_reasoning`.
  */
 export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: OpenRouterEndpointPages): Record<string, OrEnrichment> {
-  type Cand = { slug: string; id: string; free: boolean; think: boolean; status: number | null; variant: string; perf: OpenRouterPerf | null; price: number | null };
+  type Cand = { slug: string; id: string; free: boolean; think: boolean; status: number | null; variant: string; perf: OpenRouterPerf | null; price: number | null; weightPrice: number | null };
   const bySuffix: Record<string, Cand[]> = {};
   for (const m of data.models) {
     const ep = m.endpoint;
@@ -278,6 +292,7 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: Open
       variant,
       perf: data.endpoint_perf[ep.id] ?? null,
       price: data.endpoint_price[ep.id] ?? null,
+      weightPrice: data.endpoint_weight_price?.[ep.id] ?? null,
     });
   }
   const out: Record<string, OrEnrichment> = {};
@@ -300,18 +315,29 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: Open
         free: c.free,
         variant: c.variant,
         price: c.price,
+        weightPrice: c.weightPrice,
         tput: c.perf?.p50_throughput ?? null,
         latency: c.perf?.p50_latency ?? null,
       };
     }
     const eligible = Object.values(pool).filter(
-      (r) => r.serviceTier === null && r.status === 0 && !r.free && r.price !== null && r.price > 0 && !r.variant.endsWith(":batch"),
+      (r) =>
+        r.serviceTier === null &&
+        r.status === 0 &&
+        !r.free &&
+        r.price !== null &&
+        r.price > 0 &&
+        r.weightPrice !== null &&
+        r.weightPrice > 0 &&
+        !r.variant.endsWith(":batch"),
     );
     const withTput = eligible.filter((r) => r.tput !== null);
     if (eligible.length > 0 && withTput.length > 0) {
       // Expected price/throughput of one request under price-based load balancing:
-      // P(route i) ∝ 1/price_i². Throughput renormalizes over the routes with data.
-      const weighted = eligible.map((r) => ({ r, w: 1 / (r.price * r.price) }));
+      // P(route i) ∝ 1/input_price_i² — the router sorts on the input (prompt) price
+      // alone, so the weight basis is `weightPrice`, not the reported 3:1 billed blend.
+      // Throughput renormalizes over the routes with data.
+      const weighted = eligible.map((r) => ({ r, w: 1 / (r.weightPrice * r.weightPrice) }));
       const wSum = weighted.reduce((a, x) => a + x.w, 0);
       const price = weighted.reduce((a, x) => a + x.w * x.r.price, 0) / wSum;
       const tputKnown = weighted.filter((x) => x.r.tput !== null);
@@ -379,9 +405,11 @@ function narrowEndpointRecord(row: unknown): OpenRouterEndpointRecord | null {
   const free = "is_free" in row && row.is_free === true;
   const variant = "model_variant_permaslug" in row && typeof row.model_variant_permaslug === "string" ? row.model_variant_permaslug : "";
   let price: number | null = null;
+  let weightPrice: number | null = null;
   if ("pricing" in row && typeof row.pricing === "object" && row.pricing !== null) {
     const prompt = "prompt" in row.pricing ? Number(row.pricing.prompt) : Number.NaN;
     const completion = "completion" in row.pricing ? Number(row.pricing.completion) : Number.NaN;
+    if (Number.isFinite(prompt) && prompt >= 0) weightPrice = prompt * 1e6; // input-only $/M: the router's sort key
     if (Number.isFinite(prompt) && Number.isFinite(completion) && prompt >= 0 && completion >= 0) {
       price = ((3 * prompt + completion) / 4) * 1e6; // USD/token -> blended $/M, 3:1 in:out
     }
@@ -392,7 +420,7 @@ function narrowEndpointRecord(row: unknown): OpenRouterEndpointRecord | null {
     if ("p50_throughput" in row.stats && typeof row.stats.p50_throughput === "number") tput = row.stats.p50_throughput;
     if ("p50_latency" in row.stats && typeof row.stats.p50_latency === "number") latency = row.stats.p50_latency;
   }
-  return { id: row.id, providerSlug: row.provider_slug, serviceTier: tier, status, free, variant, price, tput, latency };
+  return { id: row.id, providerSlug: row.provider_slug, serviceTier: tier, status, free, variant, price, weightPrice, tput, latency };
 }
 
 /** Extract the per-provider endpoint records from a model page's RSC flight. The
@@ -586,6 +614,7 @@ export function parseFindData(v: unknown): ParsedFindData {
     perf[id] = { p50_latency: latency, p50_throughput: tput };
   }
   const price: Record<string, number> = {};
+  const weightPrice: Record<string, number> = {};
   for (const row of d.models) {
     if (typeof row !== "object" || row === null || !("endpoint" in row)) continue;
     const ep: unknown = row.endpoint;
@@ -595,10 +624,11 @@ export function parseFindData(v: unknown): ParsedFindData {
     if (typeof id !== "string" || typeof pr !== "object" || pr === null) continue;
     const prompt = "prompt" in pr ? Number(pr.prompt) : Number.NaN;
     const completion = "completion" in pr ? Number(pr.completion) : Number.NaN;
+    if (Number.isFinite(prompt) && prompt >= 0) weightPrice[id] = prompt * 1e6; // input-only $/M: the router's sort key
     if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt < 0 || completion < 0) continue;
     price[id] = ((3 * prompt + completion) / 4) * 1e6; // USD/token -> blended $/M, 3:1 in:out
   }
-  return { find: { models: d.models, endpoint_perf: perf, endpoint_price: price }, data: d, designElo: extractDesignElo(d.models, "benchmarks" in d ? d.benchmarks : null) };
+  return { find: { models: d.models, endpoint_perf: perf, endpoint_price: price, endpoint_weight_price: weightPrice }, data: d, designElo: extractDesignElo(d.models, "benchmarks" in d ? d.benchmarks : null) };
 }
 
 /**
@@ -1024,6 +1054,10 @@ function readEndpointsCache(path: string, requireFresh: boolean): EndpointsCache
     return null;
   }
   if (typeof parsed?.slugs !== "object" || parsed.slugs === null || Object.keys(parsed.slugs).length === 0) return null;
+  // Records narrowed before the input-price weight basis lack `weightPrice`; refetch rather than
+  // silently dropping every route from the blend (the old cache cannot supply the router's sort key).
+  const sample = Object.values(parsed.slugs).find((recs) => Array.isArray(recs) && recs.length > 0)?.[0];
+  if (typeof sample !== "object" || sample === null || !("weightPrice" in sample)) return null;
   if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
   return parsed;
 }

@@ -3,7 +3,7 @@
  * overrides from the omp plugin settings map.
  *
  * Source of truth (decision D1): `~/.omp/plugins/omp-plugins.lock.json` ->
- * `settings["omp-llm-role"]`, with `<anchor>/.omp/plugins/omp-plugins.lock.json`
+ * `settings["omp-llm-role"]`, with `<cwd>/.omp/plugins/omp-plugins.lock.json`
  * merged under it (project wins). Keys are flat and dotted
  * (`roles.slow.weights.code=0.2`, written by `omp plugin config omp-llm-role
  * --set=k=v`) and are nested here; a `config` key holding JSON is accepted as a
@@ -369,9 +369,12 @@ function setNested(target: Record<string, unknown>, path: string[], value: unkno
   else node[leaf] = value;
 }
 
-/** Nearest ancestor dir (or cwd itself) containing a `.omp` or `.git` anchor; null when none. */
-function findProjectAnchor(): string | null {
-  let dir = process.cwd();
+/** Nearest ancestor dir (or `cwd` itself) containing a `.omp` or `.git` anchor; null when none.
+ * Exported for the `/project-roles` divergence warning: omp reads `<cwd>/.omp` with no
+ * walk-up, so a session launched in a subdirectory has an anchor that differs from the dir
+ * omp actually reads. */
+export function findProjectAnchor(cwd: string = process.cwd()): string | null {
+  let dir = cwd;
   for (;;) {
     if (existsSync(join(dir, ".omp")) || existsSync(join(dir, ".git"))) return dir;
     const parent = dirname(dir);
@@ -380,15 +383,26 @@ function findProjectAnchor(): string | null {
   }
 }
 
+/** The project plugin settings lock file omp reads for `cwd`:
+ * `<cwd>/.omp/plugins/omp-plugins.lock.json`. omp resolves the project dir as
+ * `<cwd>/.omp` with no walk-up, so the project-scope read must use the same dir
+ * (not the walk-up anchor `findProjectAnchor` returns). */
+export function projectLockPath(cwd: string = process.cwd()): string {
+  return join(cwd, ".omp", "plugins", "omp-plugins.lock.json");
+}
+
 /**
  * Read the raw `settings["omp-llm-role"]` map: user-level lock file, with the
- * project-anchor lock file merged over it. Missing files (or missing settings
+ * project lock file (`<cwd>/.omp/plugins/omp-plugins.lock.json`, omp's project
+ * dir with no walk-up) merged over it. Missing files (or missing settings
  * entries) yield {}; unparseable lock files warn and yield {}.
  */
-export function readPluginSettingsMap(paths?: { global?: string; project?: string }): Record<string, unknown> {
+export function readPluginSettingsMap(paths?: { global?: string; project?: string | null }): Record<string, unknown> {
   const globalPath = paths?.global ?? PLUGIN_SETTINGS_PATH;
-  const anchor = paths?.project === undefined ? findProjectAnchor() : null;
-  const projectPath = paths?.project ?? (anchor ? join(anchor, ".omp", "plugins", "omp-plugins.lock.json") : null);
+  // omp reads the project dir as `<cwd>/.omp` with no walk-up, so the default
+  // project source is that dir's lock file (not the walk-up anchor). A missing
+  // file yields {} and the global path stands alone.
+  const projectPath = paths?.project === undefined ? projectLockPath() : paths?.project;
 
   const read = (path: string): Record<string, unknown> => {
     let parsed: unknown;

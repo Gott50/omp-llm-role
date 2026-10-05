@@ -68,11 +68,17 @@ that cannot add back information that was never stored.
    every 12 GLM5 tool calls** to an endpoint that would break it. But only ~15%
    of users include tools, so **85% of requests still route by price**.
 9. **Cache pricing is ignored by the router.** Tarun Chitra (Aug): the formula
-   sorts on *listed* price (input alone, or a 95:5 in:out blend) while real usage
-   is closer to 6:1, and it ignores cache pricing entirely. DeepSeek's own
-   endpoint has a **94.5% cache hit rate** vs 51–69% for most third parties, so
-   the router ranks DeepSeek **10th by listed price but 1st by invoice**. Chitra
-   estimated ~\$3.5M/yr of value extracted by this misalignment.
+   sorts on the **input (prompt) price alone** — measured, not inferred: 64/64
+   informative provider splits picked the cheapest-input provider, and output
+   price carries ≲6 cents per dollar of input (the inverse-square exponent
+   recovered from 1,648 choices is r = 1.968, 95% CI [1.856, 2.098]) — while
+   real usage is closer to 6:1, and it ignores cache pricing entirely. DeepSeek's
+   own endpoint has a **94.5% cache hit rate** vs 51–69% for most third parties,
+   so the router ranks DeepSeek **10th by listed price but 1st by invoice**.
+   Chitra estimated ~\$3.5M/yr of value extracted by this misalignment. Primary
+   source: *Caching Cheaters on OpenRouter*, 2026-08-14,
+   https://robvc.com/research/caching-cheaters (behaviour-measured, not
+   source-read).
 10. **The one case where quantization is real.** GLM 5.3 (ZAI) ships in FP8
     (confirmed in the repo). 11 of its 42 endpoints are tagged FP4/NVFP4 — a
     genuine downcast. ZAI's own endpoint charges \$1.40 in / \$4.40 out, while

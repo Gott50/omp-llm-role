@@ -14,9 +14,13 @@ function makeFind(id: string, price: number | null, tput: number | null, over: P
     models: [{ slug: "org/m", supports_reasoning: false, endpoint }],
     endpoint_perf: tput === null ? {} : { [id]: { p50_latency: null, p50_throughput: tput } },
     endpoint_price: price === null ? {} : { [id]: price },
+    endpoint_weight_price: price === null ? {} : { [id]: price },
   };
 }
 
+// `weightPrice` defaults to `price` so the fixtures below pin the billed-price
+// regression: with the weight basis equal to the billed blend, the blend reduces
+// to the pre-input-basis behaviour. Tests that exercise the input basis override it.
 function makeRec(id: string, price: number, tput: number | null, over: Partial<OpenRouterEndpointRecord> = {}): OpenRouterEndpointRecord {
   const base: OpenRouterEndpointRecord = {
     id,
@@ -26,6 +30,7 @@ function makeRec(id: string, price: number, tput: number | null, over: Partial<O
     free: false,
     variant: "org/m-1",
     price,
+    weightPrice: price,
     tput,
     latency: null,
   };
@@ -77,6 +82,7 @@ test("without pages the find-route pool blends the same way — a :free variant 
     ],
     endpoint_perf: { f: { p50_latency: null, p50_throughput: 100 }, c: { p50_latency: null, p50_throughput: 10 } },
     endpoint_price: { f: 0, c: 3 },
+    endpoint_weight_price: { f: 0, c: 3 },
   };
   const enrichment = buildOpenRouterEnrichment(data);
   assert.ok(enrichment.m);
@@ -92,6 +98,7 @@ test("a :free tier still rescues a model whose billed routes have no throughput"
     ],
     endpoint_perf: { f: { p50_latency: null, p50_throughput: 100 } },
     endpoint_price: { f: 0, c: 3 },
+    endpoint_weight_price: { f: 0, c: 3 },
   };
   const enrichment = buildOpenRouterEnrichment(data);
   assert.ok(enrichment.m);
@@ -110,4 +117,51 @@ test("a page whose eligible routes all lack throughput falls back to the find ro
 test("a model with no throughput anywhere is not enriched", () => {
   const enrichment = buildOpenRouterEnrichment(makeFind("a", 2, null));
   assert.equal(enrichment.m, undefined);
+});
+
+// --- input-price weight basis (the router's sort key) -------------------------
+
+test("the 1/price² weight follows the input price, not the billed blend", () => {
+  // Two routes with the SAME billed 3:1 blend ($2/M) but different input prices
+  // ($1 vs $2): the router sorts on the input price, so w = 1 and 0.25.
+  const routes = [makeRec("a", 2, 10, { weightPrice: 1 }), makeRec("b", 2, 40, { weightPrice: 2 })];
+  const enrichment = buildOpenRouterEnrichment(makeFind("a", 2, 10), { "org/m": routes });
+  assert.ok(enrichment.m);
+  // Throughput exposes the weight basis: (1·10 + 0.25·40) / 1.25 = 16, not the
+  // equal-weight 25 the billed basis would give.
+  assert.ok(Math.abs(enrichment.m.tput - 16) < 1e-9);
+  // The reported price is the billed blend under that input-based distribution.
+  assert.ok(Math.abs(enrichment.m.price - 2) < 1e-9);
+});
+
+test("the reported price is the billed blend, weighted by the input price", () => {
+  // Billed $1 and $3, input $1 and $2: w = 1 and 0.25.
+  const routes = [makeRec("a", 1, 10, { weightPrice: 1 }), makeRec("b", 3, 40, { weightPrice: 2 })];
+  const enrichment = buildOpenRouterEnrichment(makeFind("a", 1, 10), { "org/m": routes });
+  assert.ok(enrichment.m);
+  assert.ok(Math.abs(enrichment.m.price - 1.4) < 1e-9); // (1·1 + 0.25·3) / 1.25
+});
+
+test("a route with no input price drops from the blend pool", () => {
+  const routes = [makeRec("a", 1, 10, { weightPrice: 1 }), makeRec("b", 2, 40, { weightPrice: null })];
+  const enrichment = buildOpenRouterEnrichment(makeFind("a", 1, 10), { "org/m": routes });
+  assert.ok(enrichment.m);
+  assert.equal(enrichment.m.price, 1); // route b cannot be scored by the router
+  assert.equal(enrichment.m.tput, 10);
+});
+
+test("a find-only route carries its input price into the blend", () => {
+  const data = {
+    models: [
+      { slug: "org/m", supports_reasoning: false, endpoint: { id: "a", model_variant_permaslug: "org/m-1", is_free: false, status: 0 } },
+      { slug: "org/m", supports_reasoning: false, endpoint: { id: "b", model_variant_permaslug: "org/m-1", is_free: false, status: 0 } },
+    ],
+    endpoint_perf: { a: { p50_latency: null, p50_throughput: 10 }, b: { p50_latency: null, p50_throughput: 40 } },
+    endpoint_price: { a: 2, b: 2 },
+    endpoint_weight_price: { a: 1, b: 2 },
+  };
+  const enrichment = buildOpenRouterEnrichment(data);
+  assert.ok(enrichment.m);
+  assert.ok(Math.abs(enrichment.m.tput - 16) < 1e-9);
+  assert.ok(Math.abs(enrichment.m.price - 2) < 1e-9);
 });

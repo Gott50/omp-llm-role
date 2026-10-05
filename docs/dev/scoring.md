@@ -383,6 +383,35 @@ actually chosen from.
   provider whitelist changes, `qwen3.8-flash` (same $0.43/M, higher q) strictly
   dominates DeepSeek and takes the reachable #1 with no weight edit.
 
+## Domain-knowledge axis: measured, not landed (2026-10-05, issue #23)
+
+The llm-stats `index_finance`/`index_legal`/`index_healthcare` scores were
+evaluated as a domain-knowledge axis and **not landed** — no role weights them.
+Measured over the 2026-10-05 400-model field (clean HEAD `a201a3b`, throwaway
+worktree):
+
+- **Coverage**: `index_finance` 228/400 (57.0%), `index_legal` 213/400 (53.3%),
+  `index_healthcare` 248/400 (62.0%), `general` 377/400 (94.3%).
+- **Correlation with `general`** (full covered pool): finance 0.6981, legal
+  0.6632, healthcare 0.8449. Among the domains: finance↔legal 0.9529,
+  finance↔healthcare 0.9417, legal↔healthcare 0.9464 — one latent factor.
+- **On the eligible covered pool** (domain + `general` + price + throughput):
+  finance 0.408, legal 0.388, healthcare 0.797.
+- **0-fill leader flip** (`default`, share taken from `code`+`agents`): full pool
+  flips at 0.03–0.06 (DeepSeek-V4.1-Flash $0.24 → Muse Spark 1.3 $2.00 /
+  GPT-5.6 Sol $6.13); reachable pool (73 models) at 0.04–0.17; covered pool at
+  0.17–0.20.
+- **Capability-fill measurement** (real fill branch): no leader flip on the full
+  pool at shares 0.05–0.20; on the reachable pool it flips at 0.05
+  (finance/legal) and 0.20 (healthcare), always to the **cheaper** model.
+
+**Verdict: do not land.** r with `general` is 0.66–0.84, the 0-fill is a coverage
+lottery (the cheap leader has no domain data), and the capability fill still
+flips the leader on the reachable pool — neither posture is stable.
+Counter-evidence for the record: on the eligible covered pool finance/legal
+correlate only 0.39–0.41 with `general`, so the metric does carry independent
+signal mid-ranking; it just does not move the leader at a plausible share.
+
 ## Changing a weight — checklist
 
 1. Keep Σ = 1 and Σ(non-price) = 1 − w_price (rescale the others; do not touch
