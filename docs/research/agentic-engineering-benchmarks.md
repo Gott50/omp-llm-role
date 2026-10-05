@@ -220,12 +220,12 @@ index"* is the per-role weight design.
   Truthfulness (`simpleqa_score` 11.8%) and domain knowledge
   (`index_finance`/`index_legal`/`index_healthcare` 53–62%, one latent factor)
   are already in the fetched leaderboard and need a `buildModels` mapping + a
-  `KNOWN_METRICS` entry + a weight — and, for the `index_*` domain metrics, a
-  `CAPABILITY_FILL` entry (they are 0-filled, so a 57%-coverage weight penalizes
-  the other 43%). If a domain axis is added, weight **one** metric (they are
-  r 0.94–0.95 with each other) and take the share from the collinear capability
-  block (`code`+`agents` in `default`/`slow`/`task`, r 0.947), not from
-  `throughput`/`price`.
+  `KNOWN_METRICS` entry + a weight — and, for any sparse one, a `CAPABILITY_FILL`
+  entry (every unmapped leaderboard metric is 0-filled, so a 57%-coverage weight
+  penalizes the other 43%). If a domain axis is added, weight **one** metric
+  (they are r 0.94–0.95 with each other) and take the share from the collinear
+  capability block (`code`+`agents` in `default`/`slow`/`task`, r 0.947), not
+  from `throughput`/`price`.
 - **Keep the 3-D posture.** Performance + cost + speed as one unit is the
   project's core; the video is independent confirmation, not a change.
 - **Per-task cost is the open modelling gap.** The video's "useful agent output
