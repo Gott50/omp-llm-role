@@ -29,10 +29,15 @@ payload; there is no public JSON API.
   `mmmu_pro_score`, `mmmlu_score`, `browsecomp_score`, `swe_bench_pro_score`,
   `mcp_atlas_score`, `apex_agents_score`, `osworld_score`, `scicode_score`,
   `screenspot_pro_score`, `charxiv_r_score`, `frontiermath_score`,
-  `toolathlon_score`, `coding_arena_score`). `buildModels` maps only the nine
-  indices and seven benchmark scores listed in `Model.metrics`; the rest are
-  fetched and discarded (see the research note on the agentic-engineering
-  benchmarks for the coverage/collinearity of the unmapped ones).
+  `toolathlon_score`, `coding_arena_score`). `buildModels` maps the nine
+  short-key indices plus the four new `index_*` fields (communication, finance,
+  healthcare, legal) and the seven short-key benchmark scores plus the fifteen
+  new `*_score` benchmarks — 13 indices and 22 benchmarks in all. The new
+  metrics keep the **raw leaderboard field name as the metric key**
+  (`index_communication`, `simpleqa_score`, …), unlike the original nine/seven
+  short keys. `coding_arena_score`, `latency` and `context` are fetched but
+  discarded (see the research note on the agentic-engineering benchmarks for the
+  coverage/collinearity of the unmapped ones).
 - **Build**: `buildModels(rows)` maps each row to a `Model`; `metrics` carries
   the index/benchmark values, with `price`/`throughput`/`website`/`writing`
   left `null` for later enrichment.
@@ -218,15 +223,24 @@ mapping to a `KNOWN_METRICS` key. A source whose data the engine already fetches
 ### The generic llm-stats benchmark
 
 `GET https://api.zeroeval.com/leaderboard/benchmarks/<id>` returns
-`{ benchmark_id, benchmark_name, max_score, entries[] }`; each entry carries
-`model_id` (the bare llm-stats id, so the join is **direct**) and
+`{ benchmark_id, benchmark_name, max_score, total_models, entries[] }`; each
+entry carries `model_id` (the bare llm-stats id, so the join is **direct**) and
 `normalized_score` (0-1). Any `llm-stats.com/benchmarks/<id>` link (or a bare
 benchmark id) resolves to a source whose metric is `bench:<normalized-id>`, cache
 file `bench-<normalized-id>-fetched-data.json`, transform `identity`, and a
 capability fill of 0.195. The raw id is preserved for the fetch URL (the real id
 `alpacaeval-2.0` normalizes to the metric `bench:alpacaeval-2_0`), so the source
 is persisted as a declaration (below) — the metric key alone cannot reconstruct
-the raw id.
+the raw id. `catalogBenchmarkDeclaration` builds that declaration for a dotted
+catalog id at discovery/authoring time, carrying the raw id in `fetch.url`.
+
+The endpoint caps `entries` at `BENCHMARK_ENTRY_CAP` (20) regardless of
+`limit`/`offset`/`page`/`per_page`, so a generic metric can never load more and
+no pagination loop helps. `total_models` still reports the full set, so
+`loadBenchmarkScores` returns `loaded` (the entries actually read) alongside
+`total`; `loaded < total` marks a capped load (annotated to stderr) and the
+post-fetch coverage count is the loadable `loaded`, never the catalog's
+`model_count`.
 
 ### The benchmark catalog (discovery)
 
@@ -310,9 +324,9 @@ fresh checkout needs no setup.
 | `cache/openrouter-endpoints-fetched-data.json` | `{ fetchedAt, source, slugCount, slugs }` | non-fatal (single-route fallback) |
 | `cache/designarena-fetched-data.json` | `{ fetchedAt, source, categories }` | non-fatal (OR mirror alone) |
 | `cache/writing-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (`writing` unfilled) |
-| `cache/bench-<id>-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (the external metric is unfilled) |
+| `cache/bench-<id>-fetched-data.json` | `{ fetchedAt, source, scores, total }` | non-fatal (the external metric is unfilled) |
 | `cache/benchmark-catalog-fetched-data.json` | `{ fetchedAt, source, entries }` | non-fatal (discovery skipped) |
-| `cache/<declared-id>-fetched-data.json` | `{ fetchedAt, source, scores }` | non-fatal (the external metric is unfilled) |
+| `cache/<declared-id>-fetched-data.json` | `{ fetchedAt, source, scores, total }` | non-fatal (the external metric is unfilled) |
 
 The last two are the registry's generic scores cache (`loadBenchmarkScores`),
 shared by the generic llm-stats benchmark and every declared source.

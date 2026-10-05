@@ -16,9 +16,9 @@ rank compression (real magnitude gaps now count) and field-dependent scales.
 
 | Class | Metrics | Transform | Anchors |
 |---|---|---|---|
-| index | `general`, `reasoning`, `math`, `code`, `agents`, `search`, `vision`, `tool_calling`, `long_context` | `(v+20)/80` | −20→0, +60→1; extrapolates outside (no clamp) |
+| index | `general`, `reasoning`, `math`, `code`, `agents`, `search`, `vision`, `tool_calling`, `long_context`, `index_communication`, `index_finance`, `index_healthcare`, `index_legal` | `(v+20)/80` | −20→0, +60→1; extrapolates outside (no clamp) |
 | benchmark, chance-anchored | `gpqa` | `(v−0.25)/0.75` | 4-way multiple choice, chance 0.25 |
-| benchmark, raw | `mrcr`, `aime`, `swe_bench`, `arc_agi`, `terminal_bench`, `tau_bench` | identity | pass rate 0–1, chance ≈ 0 |
+| benchmark, raw | `mrcr`, `aime`, `swe_bench`, `arc_agi`, `terminal_bench`, `tau_bench`, `simpleqa_score`, `hle_score`, `mmmu_score`, `mmmu_pro_score`, `mmmlu_score`, `browsecomp_score`, `swe_bench_pro_score`, `mcp_atlas_score`, `apex_agents_score`, `osworld_score`, `scicode_score`, `screenspot_pro_score`, `charxiv_r_score`, `frontiermath_score`, `toolathlon_score` | identity | pass rate 0–1, chance ≈ 0 |
 | throughput | `throughput` | `ln(v/10)/ln(30)` | 10→0, 300→1; clamped to [0,1] |
 | percentile / score | `website`, `writing` | identity | already 0–1 |
 | external benchmark | `bench:<id>`, `<ns>:<local>` | identity | normalized to 0–1 at parse time (`score / scoreMax`), so no new transform class |

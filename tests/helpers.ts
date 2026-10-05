@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeKeyAvailability, type CatalogEntry, type KeyAvailability, type KeyMeta } from "../src/availability.ts";
-import type { Model, RankData } from "../src/engine.ts";
+import type { LlmStatsRow, Model, RankData } from "../src/engine.ts";
 import type { Deps } from "../src/updater.ts";
 
 /** Model with uniform quality metrics (general = code = agents = tool = reasoning) so
@@ -33,6 +33,62 @@ export function makeModel(id: string, general: number, price: number, tput: numb
       price,
       throughput: tput,
     },
+  };
+}
+
+/** A full llm-stats leaderboard row with every field null, overridable — the
+ * `buildModels` fixture. Keeps the row shape in one place so a new mapped field
+ * is added here once. */
+export function makeRow(overrides: Partial<LlmStatsRow> = {}): LlmStatsRow {
+  return {
+    model_id: "m",
+    name: "m",
+    organization: "Org",
+    organization_id: "org",
+    context: null,
+    release_date: null,
+    multimodal: null,
+    license: null,
+    input_price: null,
+    output_price: null,
+    throughput: null,
+    latency: null,
+    index_general: null,
+    index_reasoning: null,
+    index_math: null,
+    index_code: null,
+    index_agents: null,
+    index_search: null,
+    index_vision: null,
+    index_tool_calling: null,
+    index_long_context: null,
+    index_communication: null,
+    index_finance: null,
+    index_healthcare: null,
+    index_legal: null,
+    gpqa_score: null,
+    aime_2025_score: null,
+    swe_bench_verified_score: null,
+    arc_agi_v2_score: null,
+    mrcr_v2_score: null,
+    terminal_bench_score: null,
+    tau_bench_retail_score: null,
+    simpleqa_score: null,
+    hle_score: null,
+    mmmu_score: null,
+    mmmu_pro_score: null,
+    mmmlu_score: null,
+    browsecomp_score: null,
+    swe_bench_pro_score: null,
+    mcp_atlas_score: null,
+    apex_agents_score: null,
+    osworld_score: null,
+    scicode_score: null,
+    screenspot_pro_score: null,
+    charxiv_r_score: null,
+    frontiermath_score: null,
+    toolathlon_score: null,
+    ...overrides,
   };
 }
 

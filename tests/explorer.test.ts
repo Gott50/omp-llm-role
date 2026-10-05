@@ -97,6 +97,28 @@ test("inverseCardinal round-trips cardinalMetric and rejects clamped targets", (
     ["mrcr", 0.5],
     ["throughput", 0.25],
     ["throughput", 0.75],
+    // Issue #22: the new index fields must invert through the affine transform
+    // (METRIC_META kind "index"), not fall through to identity.
+    ["index_communication", 0.3],
+    ["index_finance", 0.7],
+    ["index_healthcare", 0.5],
+    ["index_legal", 0.9],
+    // The new 0-1 benchmark scores are identity in both directions.
+    ["simpleqa_score", 0.4],
+    ["hle_score", 0.26],
+    ["mmmu_score", 0.66],
+    ["mmmu_pro_score", 0.72],
+    ["mmmlu_score", 0.51],
+    ["browsecomp_score", 0.67],
+    ["swe_bench_pro_score", 0.6],
+    ["mcp_atlas_score", 0.36],
+    ["apex_agents_score", 0.1],
+    ["osworld_score", 0.21],
+    ["scicode_score", 0.24],
+    ["screenspot_pro_score", 0.26],
+    ["charxiv_r_score", 0.58],
+    ["frontiermath_score", 0.17],
+    ["toolathlon_score", 0.42],
   ];
   for (const [metric, t] of cases) {
     const raw = inverseCardinal(metric, t);

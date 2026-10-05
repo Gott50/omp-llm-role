@@ -87,6 +87,10 @@ export type LlmStatsRow = {
   index_vision: number | null;
   index_tool_calling: number | null;
   index_long_context: number | null;
+  index_communication: number | null;
+  index_finance: number | null;
+  index_healthcare: number | null;
+  index_legal: number | null;
   // Benchmarks (0-1)
   gpqa_score: number | null;
   aime_2025_score: number | null;
@@ -95,6 +99,21 @@ export type LlmStatsRow = {
   mrcr_v2_score: number | null;
   terminal_bench_score: number | null;
   tau_bench_retail_score: number | null;
+  simpleqa_score: number | null;
+  hle_score: number | null;
+  mmmu_score: number | null;
+  mmmu_pro_score: number | null;
+  mmmlu_score: number | null;
+  browsecomp_score: number | null;
+  swe_bench_pro_score: number | null;
+  mcp_atlas_score: number | null;
+  apex_agents_score: number | null;
+  osworld_score: number | null;
+  scicode_score: number | null;
+  screenspot_pro_score: number | null;
+  charxiv_r_score: number | null;
+  frontiermath_score: number | null;
+  toolathlon_score: number | null;
 };
 
 export type Model = {
@@ -697,6 +716,10 @@ const INDEX_METRICS: Record<string, true> = {
   vision: true,
   tool_calling: true,
   long_context: true,
+  index_communication: true,
+  index_finance: true,
+  index_healthcare: true,
+  index_legal: true,
 };
 
 /** Chance-level pass rates for benchmark metrics (guessing baseline = true zero
@@ -806,6 +829,10 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
       vision: r.index_vision,
       tool_calling: r.index_tool_calling,
       long_context: r.index_long_context,
+      index_communication: r.index_communication,
+      index_finance: r.index_finance,
+      index_healthcare: r.index_healthcare,
+      index_legal: r.index_legal,
       gpqa: r.gpqa_score,
       aime: r.aime_2025_score,
       swe_bench: r.swe_bench_verified_score,
@@ -813,6 +840,21 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
       mrcr: r.mrcr_v2_score,
       terminal_bench: r.terminal_bench_score,
       tau_bench: r.tau_bench_retail_score,
+      simpleqa_score: r.simpleqa_score,
+      hle_score: r.hle_score,
+      mmmu_score: r.mmmu_score,
+      mmmu_pro_score: r.mmmu_pro_score,
+      mmmlu_score: r.mmmlu_score,
+      browsecomp_score: r.browsecomp_score,
+      swe_bench_pro_score: r.swe_bench_pro_score,
+      mcp_atlas_score: r.mcp_atlas_score,
+      apex_agents_score: r.apex_agents_score,
+      osworld_score: r.osworld_score,
+      scicode_score: r.scicode_score,
+      screenspot_pro_score: r.screenspot_pro_score,
+      charxiv_r_score: r.charxiv_r_score,
+      frontiermath_score: r.frontiermath_score,
+      toolathlon_score: r.toolathlon_score,
       price: null, // set by OpenRouter enrichment; the λ·$ penalty axis, never blended
       throughput: null,
       website: null, // set by applyDesignPercentiles (percentile + capability-consistent fill)

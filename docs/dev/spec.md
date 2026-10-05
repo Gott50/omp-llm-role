@@ -494,8 +494,13 @@ and any nested entry, backup + atomic write).
 
 Validation (fail the run, notify, no write): weights > 0, each role's weights sum to
 1.0 ± 0.01, `required` entries ∈ {general, reasoning, math, code, agents, search,
-vision, tool_calling, long_context, mrcr, website, writing, gpqa, aime, swe_bench,
-arc_agi, terminal_bench, tau_bench, price, throughput} (the eligibility gate,
+vision, tool_calling, long_context, index_communication, index_finance,
+index_healthcare, index_legal, mrcr, website, writing, gpqa, aime, swe_bench,
+arc_agi, terminal_bench, tau_bench, simpleqa_score, hle_score, mmmu_score,
+mmmu_pro_score, mmmlu_score, browsecomp_score, swe_bench_pro_score,
+mcp_atlas_score, apex_agents_score, osworld_score, scicode_score,
+screenspot_pro_score, charxiv_r_score, frontiermath_score, toolathlon_score,
+price, throughput} (the eligibility gate,
 independent of weights), weightable metric names ∈ the same set, `roles.<role>.thinking` ∈
 {off, minimal, low, medium, high, xhigh, max, auto}, `switchMargin` and
 `priceSwitchFraction` ∈ [0, 1], `roles.<role>.enabled` a boolean. A role entry with
@@ -504,11 +509,14 @@ from the resolved set (the `designer` default) and keeps any agent whose `model:
 pins it in `task.disabledAgents` (§6.2). Legacy `suffixes.*` keys are rejected with a migration hint
 (moved into `roles.<role>.thinking`).
 
-Six metrics are the raw llm-stats benchmark pass rates — `gpqa` (chance-anchored at
-0.25), `aime`, `swe_bench`, `arc_agi`, `terminal_bench`, `tau_bench` (raw 0-1). They are
+Six short-key metrics are the raw llm-stats benchmark pass rates — `gpqa`
+(chance-anchored at 0.25), `aime`, `swe_bench`, `arc_agi`, `terminal_bench`,
+`tau_bench` (raw 0-1). They are
 weightable (so `/create-agent`'s "another benchmark" step can name one) but sparse
 (gpqa 62.5%, aime 30.5%, swe_bench 29.0%, arc_agi/terminal_bench/tau_bench ~5-6% of the
-field), so they are differentiators, never `required` gates.
+field), so they are differentiators, never `required` gates. The fifteen newly mapped
+`*_score` benchmarks (`simpleqa_score` … `toolathlon_score`) are the same raw 0-1
+class — weightable and 0-filled.
 
 Three metrics are **capability-filled**: `website`, `long_context` and `writing`. A
 model missing one is scored at `CAPABILITY_FILL[metric]` instead of 0 — absence is not

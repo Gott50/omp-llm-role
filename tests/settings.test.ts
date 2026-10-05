@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_SETTINGS, resolveSettings } from "../src/settings.ts";
+import { DEFAULT_SETTINGS, isKnownMetric, resolveSettings } from "../src/settings.ts";
 
 test("opt-in roles: designer ships disabled and is dropped unless enabled", () => {
   const { settings, errors } = resolveSettings({});
@@ -64,4 +64,36 @@ test("an external metric key is weightable, but a dotted one is rejected", () =>
 
   const required = resolveSettings({ roles: { x: { weights: { general: 0.5, price: 0.5 }, required: ["bench:alpacaeval-2_0"] } } });
   assert.deepEqual(required.errors, []);
+});
+
+test("the newly mapped leaderboard metrics are weightable", () => {
+  // Issue #22: every mapped field is a KNOWN_METRICS key, so isKnownMetric
+  // accepts it and resolveSettings validates a role that weights or requires it.
+  const names = [
+    "index_communication",
+    "index_finance",
+    "index_healthcare",
+    "index_legal",
+    "simpleqa_score",
+    "hle_score",
+    "mmmu_score",
+    "mmmu_pro_score",
+    "mmmlu_score",
+    "browsecomp_score",
+    "swe_bench_pro_score",
+    "mcp_atlas_score",
+    "apex_agents_score",
+    "osworld_score",
+    "scicode_score",
+    "screenspot_pro_score",
+    "charxiv_r_score",
+    "frontiermath_score",
+    "toolathlon_score",
+  ];
+  for (const name of names) assert.ok(isKnownMetric(name), `${name} should be a known metric`);
+
+  const { errors } = resolveSettings({
+    roles: { x: { weights: { simpleqa_score: 0.5, price: 0.5 }, required: ["index_legal"] } },
+  });
+  assert.deepEqual(errors, []);
 });

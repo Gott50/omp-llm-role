@@ -32,6 +32,16 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 - **Differentiation warning** — the create report warns when the new role's top
   pick equals the `default` role's top pick, so a role that adds nothing is
   visible before it is wired.
+- **Mapped the remaining llm-stats leaderboard fields** — `buildModels` now maps
+  four more `index_*` scores (communication, finance, healthcare, legal; affine
+  transform) and fifteen more 0–1 benchmark scores (`simpleqa_score`,
+  `hle_score`, `mmmu_score`, `mmmu_pro_score`, `mmmlu_score`, `browsecomp_score`,
+  `swe_bench_pro_score`, `mcp_atlas_score`, `apex_agents_score`, `osworld_score`,
+  `scicode_score`, `screenspot_pro_score`, `charxiv_r_score`, `frontiermath_score`,
+  `toolathlon_score`), all registered in `KNOWN_METRICS` and `METRIC_META` and
+  keyed by their raw leaderboard field names. They are 0-filled by default and no
+  shipped role weights them, so `DEFAULT_ROLES` is unchanged; `coding_arena_score`,
+  `latency` and `context` stay unmapped. (issue #22)
 
 ### Changed
 
@@ -102,6 +112,17 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   keys (`loadRankData({ roles, extraMetrics: Object.keys(KNOWN_METRICS) })`), so
   its dataset is a superset of any def the UI can rank; `extraMetrics` also
   forces the `website`/`writing` fetches even when no role weights them.
+- **Generic llm-stats benchmarks: dotted ids and the 20-entry cap** — a dotted
+  catalog id (`deepswe-1.1`) normalizes to the metric key `bench:deepswe-1_1`,
+  which the updater's metric-key fallback could not turn back into the raw
+  (200-returning) fetch URL, so the metric was dead weight; the new
+  `catalogBenchmarkDeclaration` builds a declaration carrying the raw id in
+  `fetch.url`, persisted at discovery/authoring time. The per-benchmark
+  endpoint's hard 20-entry cap (`BENCHMARK_ENTRY_CAP`) is now surfaced as
+  `loaded` vs `total_models` (`BenchmarkPayload = { scores, loaded, total }`,
+  `annotateCappedLoad`), and `loadBenchmarkScores` returns the loadable count so
+  the post-fetch coverage annotation uses it instead of the catalog's
+  `model_count`. No pagination — the API caps at 20. (issue #25)
 
 ## [1.0.0] - 2026-10-01
 

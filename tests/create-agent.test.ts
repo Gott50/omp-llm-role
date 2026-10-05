@@ -355,6 +355,18 @@ test("discoverBenchmarks filters by coverage, ranks lexically, and maps metrics"
   assert.equal(called, false);
 });
 
+test("discoverBenchmarks carries the declaration a dotted catalog id needs", async () => {
+  const catalog: BenchmarkCatalogEntry[] = [
+    { id: "deepswe-1.1", name: "DeepSWE v1.1", description: "coding agentic", categories: ["coding"], modelCount: 40 },
+  ];
+  const result = await discoverBenchmarks("agentic coding", catalog, async () => ["deepswe-1.1"], [], null);
+  assert.deepEqual(result.discovered.map((d) => d.metric), ["bench:deepswe-1_1"]);
+  const declaration = result.discovered[0].declaration;
+  assert.ok(declaration);
+  // The raw dotted id rides in the fetch URL, so the updater can re-fetch it.
+  assert.equal(declaration.fetch.url, "https://api.zeroeval.com/leaderboard/benchmarks/deepswe-1.1");
+});
+
 test("discoverBenchmarks drops a fill-0 benchmark whose coverage is below the share floor", async () => {
   // `swe-bench-verified` maps to the fill-0 `swe_bench` metric; 20/400 = 5% is
   // far below the 35% bar, so it must not become a decisive focus weight.

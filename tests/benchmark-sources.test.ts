@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   applyBenchmarkScores,
+  BENCHMARK_ENTRY_CAP,
+  catalogBenchmarkDeclaration,
   catalogMetric,
   declarationToSource,
   declaredSourceForLink,
@@ -55,7 +57,7 @@ test("parseBenchmarkPayload reads the llm-stats entries shape and rejects junk",
         "junk",
       ],
     }),
-    { a: 0.5 },
+    { scores: { a: 0.5 }, loaded: 1, total: null },
   );
   assert.equal(parseBenchmarkPayload(source, {}), null);
   assert.equal(parseBenchmarkPayload(source, null), null);
@@ -64,8 +66,58 @@ test("parseBenchmarkPayload reads the llm-stats entries shape and rejects junk",
 test("parseBenchmarkPayload reads the writing evidence shape", () => {
   const source = sourceForMetric("writing");
   assert.ok(source);
-  assert.deepEqual(parseBenchmarkPayload(source, { records: [{ modelId: "q", writingBenchScore: 0.883 }, { modelId: "x" }] }), { q: 0.883 });
+  assert.deepEqual(parseBenchmarkPayload(source, { records: [{ modelId: "q", writingBenchScore: 0.883 }, { modelId: "x" }] }), {
+    scores: { q: 0.883 },
+    loaded: 1,
+    total: null,
+  });
   assert.equal(parseBenchmarkPayload(source, { records: "nope" }), null);
+});
+
+test("the llm-stats cap is surfaced: loaded count vs total_models", () => {
+  const source = resolveBenchmarkSource("deepswe-1.1");
+  assert.ok(source);
+  const entries = Array.from({ length: BENCHMARK_ENTRY_CAP }, (_, i) => ({ model_id: `m${i}`, normalized_score: 0.5 }));
+  const parsed = parseBenchmarkPayload(source, { benchmark_id: "deepswe-1.1", total_models: 40, entries });
+  assert.ok(parsed);
+  assert.equal(parsed.loaded, BENCHMARK_ENTRY_CAP);
+  assert.equal(parsed.total, 40);
+  assert.equal(Object.keys(parsed.scores).length, parsed.loaded);
+});
+
+test("loadBenchmarkScores reports the loadable count (post-fetch coverage) and the total", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bench-cap-"));
+  const source = declarationToSource({ ...llmStatsBenchmarkDeclaration("deepswe-1.1"), id: "cap-src" });
+  const originalFetch = globalThis.fetch;
+  try {
+    const entries = Array.from({ length: BENCHMARK_ENTRY_CAP }, (_, i) => ({ model_id: `m${i}`, normalized_score: 0.5 }));
+    globalThis.fetch = (async () => new Response(JSON.stringify({ total_models: 40, entries }))) as typeof fetch;
+    const loaded = await loadBenchmarkScores(source, true, dir);
+    assert.ok(loaded);
+    // The coverage count is the loadable count, not the catalog's 40.
+    assert.equal(loaded.loaded, BENCHMARK_ENTRY_CAP);
+    assert.equal(loaded.total, 40);
+    assert.equal(loaded.loaded, Object.keys(loaded.scores).length);
+    // The cap rides in the cache, so a cache hit still reports loaded < total.
+    const cached = await loadBenchmarkScores(source, false, dir);
+    assert.equal(cached?.loaded, BENCHMARK_ENTRY_CAP);
+    assert.equal(cached?.total, 40);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalogBenchmarkDeclaration carries a dotted id's raw form, null when unneeded", () => {
+  const decl = catalogBenchmarkDeclaration("deepswe-1.1");
+  assert.ok(decl);
+  assert.equal(decl.metric, "bench:deepswe-1_1");
+  assert.equal(decl.fetch.url, "https://api.zeroeval.com/leaderboard/benchmarks/deepswe-1.1");
+  // Persisted, the declaration makes the normalized metric key resolve to the raw-id URL.
+  assert.equal(sourceForMetric("bench:deepswe-1_1", [decl])?.fetch?.url, "https://api.zeroeval.com/leaderboard/benchmarks/deepswe-1.1");
+  // A dot-free id needs no declaration (the generic fallback reconstructs it) …
+  assert.equal(catalogBenchmarkDeclaration("creative-writing-v3"), null);
+  // … and a shipped id resolves through its static source.
+  assert.equal(catalogBenchmarkDeclaration("gpqa"), null);
 });
 
 test("applyBenchmarkScores fills uncovered models and leaves no metric null", () => {

@@ -19,7 +19,7 @@ import { metricMeta } from "./explorer/explain.ts";
 import { ARCHETYPES, archetypeById, fitArchetype, type Archetype } from "./role-archetypes.ts";
 import { writeRoleSettings, type RoleWriteResult } from "./role-settings.ts";
 import { isKnownMetric, KNOWN_METRICS, PLUGIN_SETTINGS_PATH } from "./settings.ts";
-import { catalogMetric, sourceForMetric, type BenchmarkCatalogEntry, type SourceDeclaration } from "./benchmark-sources.ts";
+import { catalogBenchmarkDeclaration, catalogMetric, sourceForMetric, type BenchmarkCatalogEntry, type SourceDeclaration } from "./benchmark-sources.ts";
 
 /** The architect's output (omp's `/agents` hub contract): the routing rule and
  * the system prompt, plus the identifier omp would use for the file name. */
@@ -362,9 +362,12 @@ export function applyFocusBenchmarks(
   return { weights: next, added, duplicates, unknown, dropped, coverage: coverageMap };
 }
 
-/** A benchmark discovered for a purpose: the metric it feeds, its label, and the
- * catalog's model count (the coverage numerator). */
-export type DiscoveredBenchmark = { metric: string; label: string; covered: number };
+/** A benchmark discovered for a purpose: the metric it feeds, its label, the
+ * catalog's model count (the pre-fetch coverage numerator for the report
+ * annotation), and — for an id whose raw form the metric key cannot reconstruct
+ * (a dotted id) — the declaration the caller must persist so the updater can
+ * re-fetch it. */
+export type DiscoveredBenchmark = { metric: string; label: string; covered: number; declaration?: SourceDeclaration };
 
 /** A candidate the discovery gate dropped, with the reason (for the report). */
 export type DroppedBenchmark = { metric: string; label: string; reason: string };
@@ -475,7 +478,8 @@ export async function discoverBenchmarks(
       });
       continue;
     }
-    discovered.push({ metric, label: entry.name, covered: entry.modelCount });
+    const declaration = catalogBenchmarkDeclaration(entry.id);
+    discovered.push({ metric, label: entry.name, covered: entry.modelCount, ...(declaration !== null ? { declaration } : {}) });
   }
   return { discovered, dropped };
 }

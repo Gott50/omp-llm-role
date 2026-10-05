@@ -121,6 +121,16 @@ export function catalogMetric(benchmarkId: string): string {
   return SHIPPED_CATALOG_METRICS[benchmarkId] ?? externalMetricKey("bench", benchmarkId);
 }
 
+/** The declaration a catalog benchmark id needs so its metric key resolves on
+ * the next update, or `null` when none is needed: a shipped id (its static
+ * source already resolves) or a dot-free id the generic metric-key fallback
+ * reconstructs. `normalizeMetricKey` folds separators (`.`, case, …), so a
+ * dotted id's raw form survives only here — the declaration must carry it. */
+export function catalogBenchmarkDeclaration(benchmarkId: string): SourceDeclaration | null {
+  if (SHIPPED_CATALOG_METRICS[benchmarkId] !== undefined) return null;
+  return normalizeMetricKey(benchmarkId) !== benchmarkId ? llmStatsBenchmarkDeclaration(benchmarkId) : null;
+}
+
 // ---------------------------------------------------------------------------
 // Parsers
 // ---------------------------------------------------------------------------
@@ -193,9 +203,32 @@ export function parseBenchmarkCatalog(v: unknown): BenchmarkCatalogEntry[] | nul
   return out;
 }
 
-/** Pure: run a source's parser over a payload. */
-export function parseBenchmarkPayload(source: BenchmarkSource, payload: unknown): Record<string, number> | null {
-  return source.parse(payload);
+/** The llm-stats per-benchmark endpoint's hard cap on `entries`: it returns at
+ * most this many rows regardless of `limit`/`offset`/`page`/`per_page`, so a
+ * generic `bench:<id>` metric can never load more and no pagination loop can
+ * help. `total_models` still reports the full set, so `loaded < total` marks a
+ * capped load. */
+export const BENCHMARK_ENTRY_CAP = 20;
+
+/** A parsed benchmark payload: the joined scores plus the loadable entry count
+ * and the payload's declared total (`total_models`), so the caller can annotate
+ * a capped load. */
+export type BenchmarkPayload = {
+  scores: Record<string, number>;
+  /** Entries actually read from the payload — the loadable count. */
+  loaded: number;
+  /** The payload's declared total model count, when it carries one. */
+  total: number | null;
+};
+
+/** Pure: run a source's parser over a payload, carrying the loadable count (the
+ * post-fetch coverage count) and the payload's declared total so the caller can
+ * annotate `loaded < total` — never the catalog's `model_count`. */
+export function parseBenchmarkPayload(source: BenchmarkSource, payload: unknown): BenchmarkPayload | null {
+  const scores = source.parse(payload);
+  if (scores === null) return null;
+  const total = isRecord(payload) && typeof payload.total_models === "number" && Number.isFinite(payload.total_models) ? payload.total_models : null;
+  return { scores, loaded: Object.keys(scores).length, total };
 }
 
 // ---------------------------------------------------------------------------
@@ -587,7 +620,7 @@ export function applyBenchmarkScores(models: Model[], source: BenchmarkSource, s
 // Cache chain
 // ---------------------------------------------------------------------------
 
-type ScoresCacheFile = { fetchedAt: string; source: string; scores: Record<string, number> };
+type ScoresCacheFile = { fetchedAt: string; source: string; scores: Record<string, number>; total?: number | null };
 
 /** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
 function readScoresCache(path: string, requireFresh: boolean): ScoresCacheFile | null {
@@ -603,14 +636,32 @@ function readScoresCache(path: string, requireFresh: boolean): ScoresCacheFile |
 }
 
 /** Pretty-printed with sorted keys for scannable diffs, mirroring the other caches. */
-function writeScoresCache(path: string, fetchedAt: string, source: string, scores: Record<string, number>): void {
-  const cache: ScoresCacheFile = { fetchedAt, source, scores };
+function writeScoresCache(path: string, fetchedAt: string, source: string, scores: Record<string, number>, total: number | null): void {
+  const cache: ScoresCacheFile = { fetchedAt, source, scores, total };
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(cache, null, 2));
   console.error(`wrote ${path}`);
 }
 
-export type BenchmarkScores = { scores: Record<string, number>; label: string };
+/** Annotate a capped load: the llm-stats endpoint returns at most
+ * `BENCHMARK_ENTRY_CAP` entries, so the loadable count (the post-fetch coverage
+ * count) is below the payload's `total_models`. */
+function annotateCappedLoad(source: BenchmarkSource, loaded: number, total: number | null): void {
+  if (total !== null && loaded < total) {
+    console.error(
+      `${source.id}: loaded ${loaded}/${total} models — the endpoint caps entries at ${BENCHMARK_ENTRY_CAP}; ${source.metric} covers only the loadable ${loaded}`,
+    );
+  }
+}
+
+export type BenchmarkScores = {
+  scores: Record<string, number>;
+  label: string;
+  /** Entries actually loaded — the post-fetch coverage count, never the catalog count. */
+  loaded: number;
+  /** The payload's declared total model count, when known. */
+  total: number | null;
+};
 
 /** Fetch a URL as JSON (the cache chain and the authoring dry-run). Throws on a
  * non-200 or a non-JSON body. */
@@ -646,16 +697,20 @@ export async function loadBenchmarkScores(source: BenchmarkSource, refresh: bool
     const cached = readScoresCache(path, true);
     if (cached) {
       console.error(`using cache ${path} (fetched ${cached.fetchedAt})`);
-      return { scores: cached.scores, label: source.label };
+      const loaded = Object.keys(cached.scores).length;
+      const total = cached.total ?? null;
+      annotateCappedLoad(source, loaded, total);
+      return { scores: cached.scores, label: source.label, loaded, total };
     }
   }
   if (source.fetch) {
     try {
       const payload = await fetchJson(source.fetch.url, source.fetch.method, source.fetch.body);
-      const scores = parseBenchmarkPayload(source, payload);
-      if (scores && Object.keys(scores).length > 0) {
-        writeScoresCache(path, new Date().toISOString(), source.fetch.url, scores);
-        return { scores, label: source.labelFromPayload?.(payload) ?? source.label };
+      const parsed = parseBenchmarkPayload(source, payload);
+      if (parsed && parsed.loaded > 0) {
+        writeScoresCache(path, new Date().toISOString(), source.fetch.url, parsed.scores, parsed.total);
+        annotateCappedLoad(source, parsed.loaded, parsed.total);
+        return { scores: parsed.scores, label: source.labelFromPayload?.(payload) ?? source.label, loaded: parsed.loaded, total: parsed.total };
       }
       console.error(`${source.id}: unexpected payload shape; skipping`);
     } catch (err) {
@@ -665,7 +720,10 @@ export async function loadBenchmarkScores(source: BenchmarkSource, refresh: bool
   const stale = readScoresCache(path, false);
   if (stale) {
     console.error(`using stale cache ${path} (fetched ${stale.fetchedAt})`);
-    return { scores: stale.scores, label: source.label };
+    const loaded = Object.keys(stale.scores).length;
+    const total = stale.total ?? null;
+    annotateCappedLoad(source, loaded, total);
+    return { scores: stale.scores, label: source.label, loaded, total };
   }
   return null;
 }

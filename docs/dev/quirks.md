@@ -98,7 +98,16 @@ the home for the things that only bite someone changing or debugging the code.
 - **`api.zeroeval.com/leaderboard/benchmarks/<id>` is case- and
   separator-sensitive**: `alpacaeval-2.0` returns 200, `alpacaeval-2_0` and
   `ALPACAEVAL-2.0` return 404. The declaration's `fetch.url` must carry the raw
-  id exactly as the site spells it.
+  id exactly as the site spells it. The generic path normalizes the id to the
+  metric key (`deepswe-1.1` → `bench:deepswe-1_1`), so the updater's metric-key
+  fallback would fetch the normalized (404-ing) URL; the declaration
+  `catalogBenchmarkDeclaration` builds at discovery/authoring time is what
+  carries the raw id, and without it the metric is dead weight.
+- **The per-benchmark endpoint caps `entries` at 20** (`BENCHMARK_ENTRY_CAP`),
+  regardless of `limit`/`offset`/`page`/`per_page`, so a generic `bench:<id>`
+  metric can never load more and no pagination loop helps. `total_models` still
+  reports the full set, so `loaded < total` marks a capped load and the coverage
+  count is the loadable count, never the catalog's `model_count`.
 
 ## Runtime
 

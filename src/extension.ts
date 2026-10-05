@@ -17,7 +17,7 @@ import { countMetricCoverage, createAgent, CREATE_AGENT_USAGE, differentiationWa
 import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
 import { generateAgentSpec } from "./agent-architect.ts";
 import { authorBenchmarkSource } from "./benchmark-author.ts";
-import { declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
+import { BENCHMARK_ENTRY_CAP, declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson, fetchKeyAvailability, type KeyAvailability } from "./availability.ts";
 import { loadRankData, type Model } from "./engine.ts";
@@ -252,11 +252,23 @@ async function resolveBenchmarkLinks(ctx: ExtContext, links: readonly string[], 
       source = await authorLink(ctx, link, yes);
       if (source === null) return null;
     }
+    // A generic llm-stats benchmark's raw id lives only in its declaration (the
+    // metric key folds `.`→`_`), so persist it before the update run — otherwise
+    // the updater's metric-key fallback fetches the wrong, 404-ing URL.
+    const declaration = source.declaration;
+    if (declaration !== undefined && source.labelFromPayload !== undefined && !declared.some((d) => d.metric === declaration.metric)) {
+      const saved = saveDeclaredSource(declaration);
+      if (saved.ok) declared.push(declaration);
+      else notifyLines(ctx, `create-agent: could not persist ${source.metric} source: ${saved.error}`);
+    }
     const loaded = await loadBenchmarkScores(source, false);
     if (loaded === null) {
       notifyLines(ctx, `create-agent: ${source.metric} (${source.label}) — no data fetched; the role will rank on its other weights`);
     } else {
-      notifyLines(ctx, `create-agent: ${source.metric} (${loaded.label}) — ${Object.keys(loaded.scores).length} rows`);
+      notifyLines(
+        ctx,
+        `create-agent: ${source.metric} (${loaded.label}) — ${loaded.loaded} rows${loaded.total !== null && loaded.loaded < loaded.total ? ` of ${loaded.total} (endpoint caps entries at ${BENCHMARK_ENTRY_CAP})` : ""}`,
+      );
     }
     metrics.push(source.metric);
     labels.push(loaded?.label ?? source.label);
@@ -445,6 +457,14 @@ export default function (pi: ExtensionAPI) {
             parsed.request.extraBenchmarks = [...(parsed.request.extraBenchmarks ?? []), ...outcome.discovered.map((d) => d.metric)];
             parsed.request.benchmarkLabels = [...(parsed.request.benchmarkLabels ?? []), ...outcome.discovered.map((d) => d.label)];
             for (const d of outcome.discovered) discoveredCovered.set(d.metric, d.covered);
+            // A dotted id's raw form cannot be reconstructed from its metric key,
+            // so persist its declaration now — otherwise the updater fetches the
+            // normalized (404-ing) URL and the metric is dead weight.
+            for (const d of outcome.discovered) {
+              if (d.declaration === undefined) continue;
+              const saved = saveDeclaredSource(d.declaration);
+              if (!saved.ok) notifyLines(ctx, `create-agent: could not persist ${d.metric} source: ${saved.error}`);
+            }
             notifyLines(ctx, `create-agent: discovered benchmarks: ${outcome.discovered.map((d) => `${d.label} (${d.metric})`).join(", ")}`);
           }
         }
