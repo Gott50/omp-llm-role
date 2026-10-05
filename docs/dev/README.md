@@ -63,3 +63,10 @@ External material that informs (but does not bind) the design. Not contracts.
   (guardrails, hallucination), the missing agentic categories, and the
   per-task-vs-$/M cost gap. Source transcript alongside it
   (`agentic-engineering-benchmarks.transcript.txt`).
+- **[../research/openrouter-endpoint-routing.md](../research/openrouter-endpoint-routing.md)**
+  — Kai's "OpenRouter is quietly giving nerfed AI models" video, mapped onto the
+  project's OpenRouter data model; confirms the `1/price²` blend, argues
+  quantization labels are not a quality signal, and records the per-endpoint
+  capability ceilings (context, max output, tool support) the project already
+  fetches but discards, plus the cache-pricing cost gap. Source transcript
+  alongside it (`openrouter-endpoint-routing.transcript.txt`).
