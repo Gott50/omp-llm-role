@@ -1,0 +1,21 @@
+#!/bin/sh
+# omp-llm-role commit gate (wired via: git config core.hooksPath .githooks).
+#   1. refuse staged cache/ paths — daily UTC caches are regenerated, never committed
+#   2. run the test suite, quiet on success
+set -e
+
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^cache/'; then
+	echo "pre-commit: refusing to commit cache/ (daily UTC caches, regenerated on every run)." >&2
+	exit 1
+fi
+
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+
+if ! node --test tests/ >"$out" 2>&1; then
+	cat "$out" >&2
+	echo "pre-commit: tests failed." >&2
+	exit 1
+fi
+
+echo "pre-commit: tests passed — $(grep -c '^✔' "$out" || true) cases."

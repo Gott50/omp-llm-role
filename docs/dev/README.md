@@ -4,6 +4,18 @@ Maintainer docs for the omp-llm-role plugin. `README.md` is for people *using*
 the plugin; everything here is for people *changing* it. A fact has exactly one
 home — if it is here, it is not in the README.
 
+## Development setup
+
+Clone, then install the dev dependency and wire the commit gate:
+
+```sh
+npm install
+git config core.hooksPath .githooks
+```
+
+`.githooks/pre-commit` refuses staged `cache/` paths (daily UTC caches,
+regenerated on every run) and runs the test suite (`node --test tests/`).
+
 ## Where to start
 
 | If you are changing… | Read |

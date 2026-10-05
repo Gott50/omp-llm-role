@@ -82,7 +82,8 @@ src, web, agents, skills,
 docs/dev, docs/llm-role-rankings.md
 ```
 
-Caches and tests stay out. Gate: `node --test tests/`.
+Caches, tests and `.githooks` stay out. Gate: `node --test tests/` (also run by
+the pre-commit hook — see `docs/dev/README.md`).
 
 ## Changelog rules
 

@@ -31,23 +31,10 @@ After your work is done — every time, no exceptions:
    the bump is a release-time act, and the number comes from the `## [Unreleased]`
    scope, not the open issues. Rules: `docs/dev/releasing.md`.
 3. **Commit your work.** Stage the code change, the updated docs, the changelog
-   entry, and the regenerated report together as one commit. Short imperative
-   message (e.g. `Use OpenRouter pricing instead of llm-stats`).
-
-## Before committing (when `src/cli/llm-role-rank.ts` changed)
-
-- Run `node src/cli/llm-role-rank.ts --top 5` and sanity-check stderr: OpenRouter
-  match/priced counts and eligible counts. Node type-stripping does not
-  typecheck — typos surface as `undefined` at runtime, so a dropped count is
-  your only signal.
-- Regenerate the report: `node src/cli/llm-role-rank.ts --all --out docs/llm-role-rankings.md`
-  (`--all` + the default `--top 10` matches the committed report's shape — it
-  includes the opt-in `designer` role, which the default run excludes). It is a
-  committed artifact — commit the refreshed version with your change.
-
-## Never commit
-
-- `cache/` (daily UTC caches, gitignored — regenerated on every run).
+   entry, and — when the ranking CLI changed — the regenerated
+   `docs/llm-role-rankings.md` (command in `docs/dev/releasing.md`), as one
+   commit. Short imperative message (e.g. `Use OpenRouter pricing instead of
+   llm-stats`).
 
 ## Agent skills
 
