@@ -60,4 +60,6 @@ External material that informs (but does not bind) the design. Not contracts.
 - **[../research/agentic-engineering-benchmarks.md](../research/agentic-engineering-benchmarks.md)**
   — IndyDevDan's "top 5 agentic-engineering benchmarks" video, mapped onto the
   project's coverage/collinearity rules; records the two axes the project lacks
-  (guardrails, hallucination) and the per-task-vs-$/M cost gap.
+  (guardrails, hallucination), the missing agentic categories, and the
+  per-task-vs-$/M cost gap. Source transcript alongside it
+  (`agentic-engineering-benchmarks.transcript.txt`).

@@ -1,0 +1,245 @@
+IndyDevDan — "Agentic Engineering Benchmarks: How I RANK Astra, Fable 5.1, and Open-Weights"
+https://youtu.be/9weiIHy9T_0
+Auto-generated English captions (yt-dlp --write-auto-subs, lang en-orig), cleaned of rolling-caption duplication. Machine transcript; expect caption artifacts.
+
+What's up engineers? Any Dev Dan here. As the intelligence explosion continues and new models like Claude Fable 5.1 and Open AI's GPT-6 Astra continue to push the frontier, the signal that benchmarks are giving us is getting blurry. The Artificial Analysis Index is where most engineers go to get their information. It's recently been updated to the 4.3 version and this benchmark itself is a bit overloaded.
+
+There's a lot of compressed information here in an attempt to create a broad sweeping statement around what models are the best. The problem with indexes is that not all benchmarks are created equally. Some are vastly more important than others, but that depends on what you're trying to accomplish as an engineer. Do you know what benchmarks matter most for your work and why? Part of the problem is that benchmarks are moving target.
+
+The way we used to use agents just 2 months ago is not the way we should use agents now or in 2 months. On this channel, we move where the ball is going, not where it is. I've been building with language models since it was first possible way back in 2023 and as you've likely noticed, no single benchmark is perfect, but each benchmark does tell a story about what each model can do for you. Here's a question I think every agentic engineer should be able to answer. If you could only pick five benchmarks, which five [music] would you pick?
+
+In this video, that's exactly what we're going to do. I'll share which benchmarks I would pick if I could only choose five. This forces decision-making criteria and it forces you to prioritize and push away [music] from these catch-all indices that are valuable, but only to a point. By the end of this video, you'll have a deeper understanding of how to select and [music] analyze benchmarks for your agentic engineering. Let's create a top five benchmark for agentic &gt;&gt; [music] &gt;&gt; engineering.If I only had access to five benchmarks, here's what I would pick.
+
+We'll start roughly with the most important one, but they all matter. What I want to do here is show that although the AA index is very powerful, you can quickly outperform it and pick better models at better prices by just picking benchmarks that align with the work you specifically want to accomplish. Let's start with the number one and potentially most important pick. Terminal Bench is the clearest pure agentic coding benchmark. Here's what it looks like.
+
+You send it a task prompt, an agent runs inside of a prepared container with code, data, and system state. It runs your usual harness loop, looping over commands and results, and then a verifier validates the resulting state for a pass or fail. It has over 60 tasks that span software engineering, machine learning, science, operations, security, hardware, and media. Choosing a model is a three-dimensional problem. It's about performance, cost, and speed together as a single unit.
+
+This is the tradeoff triangle, and you have to consider all three when you're choosing models. Terminal Bench tells us that Astra is in the lead on performance. Cloud fable 5.1 trailing, and interestingly, there's a big drop-off in models at that 40 to 42% level. When I'm choosing benchmarks, I'm constantly looking for actual variance. It's important that I see models falling off a curve because that means there's some alpha in using the top state-of-the-art models.
+
+Interestingly here, you can see Kimik 3 is not great here. Why is that? Did all that distillation miss something? On the flip side, we can see GLM 5.3 performing a lot better, and this creates a serious gap in my own model ranking. I like to separate models into three chunks: state-of-the-art, workhorse, and lightweight.
+
+And you can see here there's a huge gap and a misplaced model where Kimik 3 is technically above GLM 5.3. So, how can we reconcile this? We do this by looking at multiple benchmarks. One benchmark is not enough, but of course score isn't all that matters. How many tokens did it take you to get there?
+
+How long did it take? How much did it cost? If we search for Astra, the like very clear state-of-the-art winner right now, we can see something incredible. Astra Max is using 2.7x less than Cloud Fable 5 and about 2.5x less than Cloud Fable 5.1. So again, performance, speed, and cost all matter together.
+
+A lot of these models burn a ton of tokens to get to the result. As you can see here, GLM 5.3 is an example of one of those models. Same with Gemini 3.8 Flash or GLM 5.3 Flash. A lot of these powerful workhorse models in that A and B tier, very powerful, and they're a lot more affordable, trade-off token usage to get you there. As we look at Terminal Bench, we can see that.
+
+And of course, when we look at score versus output tokens, we can very, very clearly see that Astra is the winner. It's not just about performance, it's about what it costs to get the performance. The big equation I like to use now is not tokens versus result or output tokens per task, it's useful agent output per hour, which is a little bit harder to measure, as you can imagine, right? It's what are the actual valuable outputs I'm getting per hour of token spend that's going into this system. Every benchmark we're going to look at here is going to lead up to that big idea.
+
+What you're trying to accomplish directly dictates the benchmarks you should pay attention to. So you can see Astra here is absolutely smashing. And we can even pull in a couple of the other Astra levels, right? Medium and low, and you can see they're all near or right at the frontier for the cost. Now, let's move on to cost.
+
+This is where things get really wacky. We can use Astra as our primary model. As I'm looking through these benchmarks, I like to use one model as my kind of control group for the rest of the benchmark, and you can see here once again, we have an insane split in actual cost. This is input and output tokens put together, GPT-6 and cache tokens, of course, but GPT-6 Max, look at that price difference from Fable. And so, if you were just looking at performance, you would look at this benchmark, or you would look at the headlining artificial analysis index, and you might just go, "These two models are tied.
+
+It doesn't matter which one I use." That's not the case. If you care about in terminal agent coding, Astra is a clear, clear winner because performance might be your top priority, but then you have a second priority. Is it speed or cost? For most of us, it's going to be cost. Look at this huge gap here.
+
+This is more like four times. 8, 16, 24, 32. Yeah, about four times cheaper to run Astra than it is Fable, and about 2.4 times better than running Claude Fable 5.1. Astra, clear winner here on Terminal Bench, and you know, we can see that in the chart as well. It's in that sweet spot.
+
+Now, speed is the kind of third variable that I always look at across benchmarks, although this is the one that I'm willing to give up the most. You can see Astra, not great, but not terrible in terms of speed. Very, you know, workable. This is a time per task. This is more aligned with that key equation that I'm looking for.
+
+It's useful agent output per hour. Useful agent work per hour. And then it scales all the way up. You can see, unfortunately, a lot of our great open weights models spending a lot of time thinking in order to get that result. That means that it's going to slow down the model.
+
+The more you have to think to solve a problem, the slower you'll be able to solve the problem. Simple, but important to emphasize. Terminal Bench is a really important one because it puts together those three key variables against a very, very simple benchmark. And of course, you can always dive into the details here. I'm not going to over fixate on every single detail, but if you're interested, there's a great breakdown of every single task that Terminal Bench V4 goes through.
+
+You can see for this specific task, the task metadata, the type of machine the agent will be working on, agent timeout for this sandbox, the difficulty explanation, and then we have the instruction.md for the actual task. Reverse engineer the layout and write output.config.json with the following format. So, for this specific task, the agent has to read this image, understand the components, and then reverse engineer and write this layout in this specific format. Image, component, text, yada yada yada. So, it has to output all the details of every single component here.
+
+It has constraints, do not cheat, here's a time limit, here's the output. So, you can imagine a bunch of tasks like this that make up the terminal bench. So, this is a pure agentic coding benchmark for AI agents with a clear focus on software engineering tasks. Our next benchmark that I paid close attention to for agentic engineering work is Apex Agents.So, Apex Agents is interesting because it's a measure of agent performance over three data-rich professions. The professions are investment banking analysis, management consulting, and corporate lawyers.
+
+So, three concrete roles, three non-trivial knowledge work professions. And I use the Apex Agents benchmark as a proxy for other digital domains, further knowledge worker domains. These are very hard domains. All the tasks have been vetted from experts at McKinsey, BCG, Deloitte, Goldman Sachs, Morgan Stanley, JP Morgan. We have experts creating these tasks that our agents are working against.
+
+And you can see here they're getting closer to that saturation point. I think benchmarks get saturated at about that 85 and of course 90 plus percentage. But we can see a nice breakdown here. It's nice and simple. Who's winning, who's losing?
+
+We are missing information from this benchmark, specifically the cost and the time taken to accomplish this work. That's important information, but nonetheless, I like this benchmark because we're looking at real knowledge work tasks. Let's dial into the management consultant. As you would expect, we have Astra, Fable, and then surprise, MuSpark 1.1. Imagine where MuSpark 1.3 is going to place.
+
+Okay, Kimik 3 is up here, Grok 4.6, Fable 5 a lot worse for some reason on this benchmark. And the whole idea here is we have agents taking in inputs in their workspace. They're reading documents and they're doing real digital knowledge work outside of the software engineering domain. And this is important to not over fixate on software engineering. We want to look at real tasks, real domains that you and your company might be building around.
+
+Real domains that you're deploying software engineering and deploying your AI agents against. And so, the best way to do that is just to look for hard domains that your agents have to work really hard for and then treat that as a proxy for your domain. Every benchmark is a proxy, but by looking at this benchmark, we get a clearer idea of how specific models will perform in other tangential knowledge worker domains. So, for example, one of the management consultant tasks looks like this. This is a sample task.
+
+Use the estimated market share chart and Brightpath customer segmentation. Please calculate the potential revenue for the SMB accounting segment if it achieved the target share. A nice high-level prompt. And another great part about this benchmark is that it better resembles knowledge worker prompts. So, you and I as engineers, we can use and manipulate our agents in really powerful ways to create powerful skills, powerful system prompts as we did a couple weeks ago to fix Opus 5's smart-ass output.
+
+We can do a lot of different things. But when you're having internal users or customers use your product, you're going to have to engineer your system to take in their types of prompts. And that's why this is important, right? They're not going to be writing full-on engineering plans. You can imagine some deeper level of understanding from a knowledge worker, from a management consultant, but nothing like what you can do as a software engineer.
+
+So, it's important to have a benchmark that reflects those types of inputs. And then we have, of course, the environments. So, give them access to specific tools, show the actual file structure. This sample task here shows down the actual breakdown, the actual trajectory of the agent, which is great to see. So, Apex agent is an important benchmark.
+
+I pay attention to this. They also just have their Apex Suite, which is a little bit more broad. They have one for accounting, they have one for software engineering. But specifically in trying to diversify my five benchmarks, if I had to pick five, this would be my number two because it pulls away from our big but small world of software engineering. There are hundreds and thousands of other domains you can apply agents into and that you probably are inside of your business and this gives us a proxy for understanding how agents will perform in hard domains.
+
+[music] All right, so next up we have a really important benchmark. We have automation bench.So before we dive into automation bench and the importance of it, I just want to take a quick break here to shout out everyone that's watching, everyone that's been viewing the channel, everyone that's been returning week after week. And if you're new, you know, big shout out to you. We've been on a nice smooth growth curve for the past year here. We're almost at that 150,000 mark and every time this channel moves closer to a big milestone, I always think we were never supposed to get this big.
+
+I started this channel to share engineering ideas that I thought were missing in the market surrounding language models, surrounding prompt engineering, surrounding keeping that core of what software engineering is as we move into this new age of AI. It's been really incredible to have engineers that consistently join the journey and follow and learn. The industry has changed a lot, but we have continued throughout to evolve throughout it. So I just want to say, you know, a big thank you to everyone that's subscribed, to everyone that's been watching videos, everyone that likes and shares and all that. I really, really appreciate you being here.
+
+It feels so great to have other engineers who are interested in pushing what you can do with brand new technology. It feels great to have optimists that are commenting, that are paying attention, that are watching week after week. Even if you don't leave any comments, right? Most engineers watching this, you don't leave any comments, but you show up to get information to help you decide how you want to build and how you want to leverage this technology. So I just want to thank you and of course I want to shout out every agenticengineer.com member.
+
+The phase three product is on the way, so stay tuned for that. Everyone that's a member is going to receive a discount on what's coming next. I'm so excited to share the ideas there. The things we can do with this technology is not well understood, and week after week, I'm going to keep sharing so that you can make that career leap, so that you can start that business, so that you can move up in the company you're already working at. That's the goal here.
+
+It's real tangible engineering values. What a single engineer can do is no longer limited, and on this channel and on a geneticengineer.com, we're going to prove it. Huge thanks to you. Smash that subscribe button. Let's push past 150K, and let's jump back into automation bench.
+
+So, automation bench is more of a classical software automation across different applications. We're still in that realm of knowledge work, right? We're doing digital work with agents, but here agents start acting more like employees. Okay? And so, this is the interesting part about this benchmark.
+
+We have over 600 tasks across six business domains: finance, HR, marketing, operations, sales, support, and a bunch of common tools that you and I use every single day, right? Communication tools. So, our agents are not just doing the work, they're pulling information from common applications and resources, and they're getting work done across applications. Okay? So, this is super important, and a key key idea here is that the model has to complete objectives without triggering guardrail violations.
+
+Okay? This is a big big big really important piece that a lot of benchmarks don't capture. They capture pass or fail. This says, "Here's the goal. You need to do this to accomplish, and if you bump against a guardrail, you also fail.
+
+You also lose points." Guardrails are critically important. What is this? Is it what it looks like to be aligned at a low level? What does alignment really mean? It means the model is doing things you asked it to do, and it's not doing things you did not want it to do.
+
+And so, again, that comes down to being great at prompt, context, harness engineering, but also, this is just what the core four is, right? And part of the core four is the model. Some models are just going to break guidelines. They're going to break your guardrails more often than other agents. So, I really like Automation Bench for this specific reason.
+
+It is doing common knowledge work tasks, and it's asking, "Did you bust something on your way up?" Right? Did you break something on your way to completion? Right? Imagine a co-worker where they accomplished the task, but they broke something else along the way. That's not as valuable.
+
+That's very clearly not as valuable. So, you can see a couple interesting things here. Where is that orange Claude line? Instead, we have Grok 4.6 up here. We have GLM 5.3.
+
+And tracing it, we have GLM 5.3 Flash. Fascinating. And below that, we have GPT 5.6 Soul. So, again, if you were just looking at one benchmark, you would miss this. If you were looking at an index, you would miss this.
+
+It's important to understand what you're trying to accomplish. And so, again, as I'm working through this, try to really think about, "What am I optimizing for? Why did I pick these five benchmarks? What story am I trying to complete? What proxy am I building for the capabilities I'm looking for in language models?" Make a good guess as we work through this.
+
+And so, all the way down here, we have Claude 5.1. Okay? And by all the way down here, we're really only down, you know, let's say, 8%. Okay? Or 9%.
+
+So, it's not a massive amount, but for a state-of-the-art model that just came out, you would expect this to be a bit better. And then, we just go downhill from here. A decent amount of variance here on the score of Automation Bench. And again, the key here is what makes this trickier and very important and valuable is that there are no guardrail violations. So, that's key.
+
+You have to accomplish the task while not breaking guardrail violations. Very important. You can see most agents completed the work, but that's not what this is about. objectives completed regardless of guardrail violations. So, all of a sudden, you can see Opus jumped up here.
+
+Fable jumped up here. But again, this is taking out the guardrail violations. So, now you're looking at this, right? You have more information. Holy If I need a very strict performant model that's going to really follow the instructions to the T and not break guardrails, maybe I shouldn't use Fable.
+
+Maybe I shouldn't use Opus. It's all about the use case you're looking for. Again, Astra, big winner here. Now, of course, as you know, it's about performance, speed, and cost. What about tokens?
+
+So, here's another good view of the violations. Higher is better. Did you accomplish the task while not triggering a bunch of violations? It's another great one you can take a look at here. Right, here's a bunch of domains, finance, HR, marketing, operations, sales.
+
+You can see here, for some reason, Fable having a hard time with finance, while Astra looks a lot more aligned. And again, I'm not just trying to sit here and glaze Astra. This is just what's showing up across domains, right? Across benchmarks. Same kind of trend here.
+
+Looking at performance across all these applications, check out Astra. You can see where it's strong, where it's weak. For instance, you know, digging into the benchmark just a little bit, going a depth two, depth three in some of the work you're doing, some of the research you're doing on benchmarks is going to help you a lot. For example, if you're using Gmail a lot, you're building a Gmail software factory, or Gmail AI developer workflow, what options do you have outside of the state of the art? Well, take a look at this.
+
+Rock 4.6, not looking too bad. And look at this, crazy option, Quinn 3.8, not too bad. We also have GLM 5.3, not looking bad at all. But, if we take a look at DeepSeek here, maybe you want to stay away from DeepSeek, right? You don't just want to default to a cheap model that's in the workhorse level, A-tier, B-tier.
+
+It's not that simple to just pick a model and stick with it. This is why I always advocate you want to model stack. It's too small-brained to just think that one model can do everything you need across every domain, right? Especially if you're doing and scaling real product agents, agents working in your product that you build via SDKs, one model is not the answer. Combine compute, don't select compute.
+
+There's different slots here. If you're willing to take a performance hit in a specific domain, on a specific tool, that's important to know about. Automation Bench gives you a little insight into that. Returning to time and token, how fast, how much does it cost? And token usage is a piece of that puzzle.
+
+Once again, let's just look at our control model, look at how low Astra is. It's using basically no tokens when you compare it to the rest. Well, really GPT-OSS 120 billion is using no tokens, but it's also on the result. But you can see the rest of these models are really, really consuming more and more tokens. And actually we have to give Fable a little bit of credit here.
+
+It's actually performing in a nice range of token usage here. Of course, we know that this picture changes a bit when we look at costs. Astra here on the higher range of our costs, but still almost half as cheap as these Fable 5.1 and Fable 5 models. A lot of value here in understanding your performance, speed, cost trade-off. So I really like automation bench.
+
+Feel free to dive in, obviously, to the details of any one of these benchmarks. All of them all linked in the description for you. So this is my number three pick. Now the next two are very important. I'm getting five picks here.
+
+The next two really, really complete the picture. It's not just about performance, it's not just about breaking guardrails. The next benchmark tells us if our agent is telling the truth. [music]My fourth pick for benchmarks, if I could only pick five, the Omniscience benchmark. The Artificial Analysis Omniscience benchmark is basically the hallucination benchmark, right?
+
+That's the simplest way to put this. It gives us information into one of the most important and criticized aspects of language models. It's the hallucination rate. And specifically, we can make this more real, right? It's really answering what does it cost for your agent to be honest?
+
+What's the cost of reducing hallucination? And it's really answering which model can you actually trust as you scale up your tasks? That's what AI Omniscience is really telling you. Now you probably stop noticing that hallucinations are occurring. As people and engineers stop looking at their code, stop looking at all the details of their plan, do less and less review, we're going to miss these things.
+
+And so, one of the best ways to continue missing it is to pick a model that doesn't do it at all. Pick a model that bails out when it doesn't have an answer. That's the important part of this. One of the key parts about this benchmark is this. Each answer is graded as correct, incorrect, partial, or not attempted.
+
+The agents can opt to not answer at all. This is super key. As we talked about in last week's agent swarm video where I showcased a V1 version of my simple swarm system inspired and unlocked, honestly, by OpenAI's GPT-6 Astra Swarms where they hacked themselves and they hacked Hugging Face. The prototype agent swarm, which of course I'll link in the description for you. That video absolutely exploded for a good reason.
+
+One of the things that they failed to do in one of their benchmark tests that caused their agents to hack themselves and hack Hugging Face is they didn't give it away to say I don't know, right? They didn't give it away to say I can't answer this, so I'm going to stop. Now, obviously this is a little tricky cuz you want your agent to keep trying, to keep working toward that goal even in the face of difficulty. But, you need to give your agent a way to say I can't do this. I'm done.
+
+I can't, right? I don't know. And the nice part about Omniscience, the way that this is graded, is that they have no score change for saying that they don't know. And so, you can see that right here, right? This is super, super important.
+
+The value of these benchmarks is in the details, right? It rewards correct answers, penalizes hallucinations, and has no penalty for refusing to answer. Very powerful. The agent can say I don't know. A lot of benchmarks miss this and it's a nice thing to add to your benchmark.
+
+There's pass, there's fail, and there's I don't know. All right? There's an honest, I'm not sure, and this gives your agent a way to back out. So, why would this be important? Keep your mind on that as we work through our last two benchmarks here.
+
+Why would it be important for your agent to be able to say not sure? Looking at the actual raw numbers, our most trustworthy models are the ones you would expect, the ones you have to pay the most for. You have to pay for honesty and consistency, but we do have a couple great runner-ups. Looks like these other models are actually more truthy than Grok 4.6. We have Gemini 3.8 Flash.
+
+Love to see that. That's one of my favorite workhorse models right now. We have the surprising Muse Spark 1.3. And then, of course, Soul. But things really kind of fall off a cliff after this point.
+
+So, you can bet that a lot of the safety and alignment research and training that's going on in our top two labs, Anthropic and OpenAI, is paying off. You can see that in this benchmark. So, again, this is why the specific benchmark matters. You lose information in indices. The index is a quick proxy of a proxy.
+
+You're getting pretty far away from what you're really looking at, okay? And I say that as we're building up my top five index as well, right? So, that looks good. If you're looking for honest models, you can see which models you should stay away from, right? You got to be careful.
+
+Or not stay away from, but just models to be more aware of. 5.3 Flash, mhm, might hallucinate on you. GLM 5.3, a little bit better, or not a little bit, twice as good. So, if you're looking for consistent, non-hallucinating models, you're going to want to move up the scale. And zero here means as many correct answers as incorrect answers.
+
+All right, so this zero point is basically a 50/50 shot on a factual answer. Okay, so very risky, and you can see it just falls off a cliff here. And so, you know, looking at Qwen 3.8, 27 billion, and Luna, small models uh having a hard time finding that factual information for you, right? So, super powerful one. Here's the overall accuracy.
+
+Uh you can see there's a lot of value here in choosing state-of-the-art models, but also Gemini Flash, really good. DeepSeek V2 Pro, pretty good. Grok, Kimmy, not bad, right? Unfortunately, we have GLM 5.3 falling off a cliff here. So, again, just digging into more of the details, understanding where models are strong and weak across performance, speed, and cost across different benchmarks.
+
+That looks good. Interesting thing that they have here is a language performance. Um it looks like Muse Spark, although it performs pretty well, starts getting kind of rough on software engineering QA tasks and truthiness across software engineering tasks. I definitely would not use any of these models down in this range if you need reliable, consistent outputs. This range here, all usable models, right?
+
+These are all shippable, usable models. And that continues our story here of you want to use a model stack, not an individual model. Combine compute, don't select compute. Truthiness, right? We're looking at how honest our model is and we're not penalizing our model for saying, "I don't know." Which is going to be increasingly important as we scale up our compute to scale up our impact.
+
+Our last benchmark is one you would expect with one key focus. We're looking at Deep SWE.Deep SWE is a relatively new benchmark that pushes on SWE-bench Pro and other variants by forcing the agent to do longer-running tasks. Okay, so here's the old version, here's the updated 1.1. Um, this is missing FABLE 5.1, so just to call that out. This is something that I also look for when I'm looking for benchmark providers.
+
+You want to see that they're actively maintaining the models and rolling out the fresh updates as soon as possible. I imagine they'll have FABLE 5.1 in here pretty soon. One thing I hate to see is model provider bias. I immediately just disregard benchmarks that are not including specific models on purpose because as engineers with our boots on the ground, we just have to be real about where the leverage is. But you can see here, we have a nice surprise.
+
+Deep SWE, right? Performing long-running software engineering tasks. The key here is, let me emphasize this, right? It's long-horizon work. This is one of the big, big things I'm focused on more and more and more is long-horizon work.
+
+One of the things I also liked about this benchmark is that they use realistic short prompts. So, why would I like that? If you've been following the channel, you know that I'm a big advocate of planning your work. What is a plan? It's a prompt scaled up.
+
+It's a big prompt. What I like about this is this emphasizes that idea even more. If you can hand a shitty, short, high-level prompt into one of these agents and they can accomplish a large amount of engineering work on your behalf, guess what they can do with a ton of details and a detailed plan you've written out and you've invested effort into. I know that there's a large cohort of engineers that are more agent take the wheel, more less input, more do less, try to get more out. I think that's veering towards the floor of what's possible, which is tending toward live coding.
+
+I'm pushing toward agentic engineering. This is the maximum capability. This is what you could do if you invested. That's what I'm interested in, not the floor, the ceiling. The short prompts tell us that if you made it a big prompt, a detailed prompt, the agents will do even better.
+
+Okay, so what do we have here? We have a couple nice surprises. We have Astra coming in first place once again with a killer 30K tokens out in only 29 steps and a low average cost. But then right below that, we have Gemini 3.8 Flash, my favorite workhorse model right now, right? In my model stack, I can throw on my favorites here and you can see all the models I'm actively using.
+
+So, of course, all the S-tier models I'm using pretty rapidly, pretty aggressively. But then, you know, right in that workhorse level where we're trying to push down our costs by literally an order of magnitude by pushing away from these insane state-of-the-art models, right? We can go down 10x in cost and with insane models like GLM 5.3 Flash, we can go down 20x in cost. We can get a lot of work done with the workhorse level models. Gemini 3.8 Flash, I'm having a really great time with this model.
+
+It's really nice to see that that far up because as you can see, you get paid to use this model. That's another way to look at cost savings. You get paid to pick the right model for the right tasks and you can learn what the right tasks are by picking the right benchmarks that best align with the work you're trying to accomplish. So, I hope that all makes sense, right? Um on the flip side, you can see here once again, we can see our workhorse models using a lot of alpha tokens, using a lot of steps.
+
+It takes longer for Gemini 3.8 Flash to get there, but it can get there. So, if you can sacrifice speed for performance and cost, pick Gemini 3.8 Flash for your long horizon deep software engineering tasks. Again, this is only information you'll find if you dig a little bit deeper, right? Two levels deep, three levels deep. Don't just look at the index, look at what you need to do and then pick the benchmarks that align most closely to what you're trying to accomplish.
+
+No real surprises after that. Fable coming in here. So, you can imagine, you know, Fable is going to be up here, maybe in the top spot, maybe right below. It doesn't really matter because we know it's going to be far more expensive than Astro. Couple of nice mentionables here.
+
+GLM 5.3 looking really good. Kimmy looking nice. And then it just kind of falls off from here. If you want to go really cheap, the best option is going to be your Luna and your of course GLM 5.3 flash. And then down here, if you're willing to really sack performance on software engineering or maybe do some sub-agent delegation with some really, really well-designed handoff prompts, maybe you can get value out of Deep Seek before flash.
+
+I personally wouldn't risk it though. So, Deep Sweep, longer horizon software engineering tasks, you can imagine what this is like. Public benchmarks sourced from GitHub issues and pull requests that carry more details, blah blah blah blah blah. So, again, feel free to dive into the details of all these.Now, what I want to do is up-level all this. Why did I pick these five benchmarks?
+
+What is the common pattern here? What am I working toward? Why didn't I pick a long context benchmark? Why didn't I pick more software engineering focused stuff, right? Why isn't the artificial analysis clump of 10 different benchmarks enough?
+
+Let's break it down. I'm focused on one big idea in my agentic engineering. I'm working toward agentic systems that run autonomously with no oversight. So, what's the common theme between all the benchmarks I've mentioned here? We have Terminal Bench before, Apex Agents, Automation Bench, Amnesiance, and Deep Sweep.
+
+What picture am I painting here? What am I trying to accomplish? You know, viewers of the channel, this is not going to be a surprise for you at all. I am working toward since December, even before that. Really, it was like the midway point of 2025.
+
+Everything I started to do veered toward one bigger concept, Outloop agentic coding. Going even further, Outloop agentic engineering. So, we're building systems that build systems. We're building a team of agents plus code that operate better than they could alone. And the key kicker here is that they operate without you and I, or with much less oversight than most engineers are used to right now.
+
+Let's first off talk about a really simple idea for every benchmark I look at, which is variance in performance. Okay, so what do I mean by that? Here's a benchmark that I don't pay any attention to. It doesn't matter what this benchmark is saying. If I see this pattern, and you know, see if you can spot the pattern here.
+
+If I see this pattern, I walk away from the benchmark. AA long context retrieval V1.1 for measuring the agent's ability to pull information from a long context window. If I see this, I don't care. Right? This benchmark is dead to me.
+
+Why? This is what saturation looks like. It's a flat line. This is the tell. If you see a benchmark that has a flat line, just don't spend your time.
+
+Don't focus on this. The information isn't valuable. Now, again, if the work you're doing is constantly about maxing out a context window and getting that 3% on Kimi K3 to recall something in the 900k context. If that's an advantage for you, of course this benchmark matters. But for me, this is the signal of a saturated benchmark.
+
+It's a flat line. Everyone can do it. There's no value here. And so, you know, as you saw, there is a decent amount of variation in the other benchmarks that I showed here. Deep Swee, I'm fissients.
+
+And it's not always what you would expect. Obviously, we see our state-of-the-art models near the top, but sometimes we don't. Automation bench is a great example of that. That's one of the big things I look for is variance in performance. Where's the alpha?
+
+Where's the information gain? You know, why did I choose these five benchmarks? There are themes we've been building up on the channel week after week. Let's just like walk through some of these, right? Alignment, aka guardrail following, right?
+
+Not breaking the guardrails you set up. And guardrails is everything down to like instructions in your prompt. And what you want to do with those like cannot fail guardrails or warning-triggering guardrails is harness engineer them into your agent harness, right? You want those to be part of the law or build them into your AI developer workflow as a code step, right? A validation step, which then turns into your software factory.
+
+So, another big idea, as you know, is long-horizon tasks. That's what Deep Seek is all about. There are a couple other like the meter-long running benchmark is really important, but a lot of those aren't getting updated or they're only held privately or like But that's a big theme I'm looking for. It's long-horizon engineering work. I want to know that my agents can run off for a long time and accomplish a nice set of work.
+
+Now, the other kind of big theme you saw here throughout is performance and cost being the most important thing because the OpenAI engineers are doing a great job here. AGI you can't pay for is irrelevant. That is just a factual statement for almost every engineer. AGI you can't pay for doesn't matter at all. GPT-6 Astra is an incredible state-of-the-art model.
+
+It is, of course, very expensive still, but as you can see here, cost per task is a cliff compared to Opus and Fable, right? It's a cliff. They're doing a great job here. Obviously, we want these prices to come down. Obviously, they will.
+
+It'll take time. But, of course, then we have great models right behind them. We're talking about Kimmy, we're talking about GLM, Gemini doing a really, really great job here. One of the best models available right now, frankly. I'm looking for that performance and cost balance.
+
+Why? Again, long-running agentic engineering work that's happening without me. And this is going to be hard. Most engineers won't get here. Very, very important to have low deception, to not hallucinate because guess what one hallucination is going to cause in your long-running agent pipeline, your long-running software factory, your long-running chain of agents plus code.
+
+What happens in your AI developer workflows then? Every subsequent agent gets a messed up result because one of them hallucinated. So, omniscients is really important to pay attention to for long-running agent tasks. Once again, just calling out some models, really happy about Gemini 3.8 Flash hitting that performance cost sweet spot. Grok not bad, they really kicked things up with the Grok 4.6 series.
+
+But then we have things like, of course, Astra absolutely killing it. The nice part is all of these state-of-the-art models are basically the same here. So, if you use one of them, you'll get all of it for long-running tasks in a affordable way that's not going to break your bank as you're running and scaling up agents. Again, last week we talked about agent swarms. Paying for a GPT-6 Astra swarm &gt;&gt; [laughter] &gt;&gt; or Fable swarm is going to break the bank, but I've run many of the Gemini 3.8 Flash swarms or the GLM swarms, much more affordable.
+
+Again, I'll link last week's video, that one went absolutely viral for a good reason. Check that one out. I showcased my V1 agent swarm system and really dug into the implications of what OpenAI's Astra swarm hugging face incident really told us, right? Really unlocked for us. And the answer is, I'll spoil it for you a little bit, is swarms.
+
+Agent swarms are viable. They're real. I ran a swarm the other day, it did a ton of work for me in an unstructured way. Definitely check that one out. What else am I looking for, right?
+
+Low deception is key, but also, as you saw with automation bench and Apex agents, it's not good enough to just have your agents do software work. We know that that is one domain, and if you're building real products, you need to be able to operate across finance, HR, marketing, operations, sales, support, and then your specific domain, whatever you're actually in. So, that's where proxies for domain-specific work that's very challenging comes into play, right? Some of the greatest examples you can pull from is investment banking analysis, management consulting, and of course, legal research, client advice, regulatory, you know, litigation, mergers, acquisitions, compliance, high-stakes, high-reward domain-specific problems. If agents can perform well here, they'll probably be able to perform well in your domain.
+
+So, you want to look for proxies for that. And then, of course, raw engineering skills, right? Deep Swede or others. You could have pulled Cursor Bench. We looked at Terminal Bench as well.
+
+Any of these other proxies for software engineering also going to be valuable. You just don't want to fixate on software engineering. You know, the big theme is long horizon, no human in the loop, honest agents we can trust shipping on our behalf. That's what it takes to build a system that builds a system. AI agents, AI developer workflows, software factories, everything we discussed last week surrounding this new multi-agent paradigm of agent swarms, and eventually dark factories all require these ideas, and that's why I'm focused on these five benchmarks.
+
+So, of course, you know, these five benchmarks are also limited in nature. I'm looking at a ton of other ones. These are just the top five if I had to pick these five. Here are a couple other ideas I'm looking for in my benchmarks: delegation, small agent teams, agent handoffs, of course, bigger ideas like agent swarms. But, I want to know things like, can this model coordinate with a several other versions of itself or versions of itself plus a few other agents?
+
+Right, small agent teams, or I like to call SATs. I want to know if the agent can recover from failure. Can it work without me coming in and repairing the process? You know, that all kind of fits under the theme of self-healing, self-validation, and agent-to-agent communication, right? I would pay a ton for benchmarks like that.
+
+I have a whole list of benchmarks I wish I had. That's a video for another day. And these all are just big ideas that we keep tapping into week after week here on the channel. Next generation agentic engineering is about investing into systems that work on your behalf. So, check out last week's video on the simple swarm system as a practical continuation for this.
+
+You can see the exact models I picked in that video. As you now know, this video has helped you understand why I've chosen those models. Comment down below. Let me know what your favorite benchmarks are. Don't say the index.
+
+You know, give me a specific benchmark. I'm super curious what you pay attention to. Have you dialed your benchmarking process into more specific benchmarks? Fixating on one isn't the move, but fixating on a few that align with your domain is clearly where there is serious alpha in choosing a model stack, not a single individual model. As you can see, I've arranged my model stack in that order with the models that make the most sense for the work I'm doing.
+
+Always keep one eye on the index, but then always keep an eye on your own personal index for the best results. That's what I do. I recommend you do the same. It's not about performance, it's about performance, cost, [music] and speed. And the big takeaway is of course you want to make sure your benchmarks are aligned with the work you do, not some global [music] index.
+
+If you got value out of this video, you know what to do. Like, comment, subscribe. Huge shout out to everyone that's been along the ride. This is going to be a great [music] end of the year. We have so many big ideas to cover and discuss and share.
+
+So, thanks to every engineer that's been along with the journey for years now, and for every engineer that's going to come next. Let's blast past that 150k mark. You know where to find me every single Monday. Stay focused and keep building.
