@@ -27,7 +27,9 @@ After your work is done — every time, no exceptions:
 2. **Add a `CHANGELOG.md` entry.** Every user-visible change gets a line under
    `## [Unreleased]` in the Keep a Changelog section that fits (`Added`,
    `Changed`, `Fixed`, `Removed`). On release, move the entries under the new
-   `## [<version>] - <date>` heading.
+   `## [<version>] - <date>` heading. **Never bump the version per change** —
+   the bump is a release-time act, and the number comes from the `## [Unreleased]`
+   scope, not the open issues. Rules: `docs/dev/releasing.md`.
 3. **Commit your work.** Stage the code change, the updated docs, the changelog
    entry, and the regenerated report together as one commit. Short imperative
    message (e.g. `Use OpenRouter pricing instead of llm-stats`).

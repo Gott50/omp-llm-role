@@ -14,7 +14,7 @@ home — if it is here, it is not in the README.
 | a config write, the state/history/lock files, or the write gate | [writes-and-state.md](writes-and-state.md) |
 | the explorer surface (server, explain layer, SPA) | [explorer.md](explorer.md) |
 | the dated numbers (matched/priced/eligible counts, per-role leaders) | [current-state.md](current-state.md) |
-| a release (version bump, npm/git/marketplace channels) | [releasing.md](releasing.md) |
+| a release (version bump, SemVer, CHANGELOG rules, npm/git/marketplace channels) | [releasing.md](releasing.md) |
 | the agent `.md` contract (frontmatter, routing, read-only rules) | [agent-authoring.md](agent-authoring.md) |
 | a normative decision (what the plugin MUST do) | [spec.md](spec.md) |
 | a debugging-only oddity (a quirk, not a contract) | [quirks.md](quirks.md) |
@@ -41,9 +41,10 @@ home — if it is here, it is not in the README.
 - **[current-state.md](current-state.md)** — the dated snapshot:
   matched/priced/eligible counts, per-role leaders, and the open defects.
   Refresh it with each run.
-- **[releasing.md](releasing.md)** — the release switch (`package.json`
-  `version`), the npm/git/marketplace channels, the tarball `files` whitelist,
-  and the install-route verification.
+- **[releasing.md](releasing.md)** — when and how to bump the version (the
+  `package.json` release switch, the SemVer surface), how to cut a release,
+  the CHANGELOG entry rules, the npm/git/marketplace channels, the tarball
+  `files` whitelist, and the install-route verification.
 - **[agent-authoring.md](agent-authoring.md)** — the agent `.md` contract:
   frontmatter (`model: "@<role>, @default"`, `tools:`), the routing
   description, read-only classification, and where agents are discovered.
