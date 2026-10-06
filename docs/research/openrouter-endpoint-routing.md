@@ -163,6 +163,18 @@ endpoint can actually call tools.
 
 ### 5. Cache pricing is a real cost axis the project doesn't model
 
+> **Update (2026-10-06, issue #30):** this axis has since **landed**, opt-in.
+> `narrowEndpointRecord` now reads the endpoint's `pricing.input_cache_read`
+> (`cacheReadPrice`), and a role may declare an assumed cache-hit rate
+> (`roles.<role>.cacheHitRate`, 0–1; `0`/absent = off). The role's effective
+> input price blends the cache-read price with the full input price
+> (`h·cacheRead + (1−h)·input`) before the 3:1 billed blend and the thinking
+> factor; the `1/price²` weight basis stays the **listed** input price (the
+> router's sort key), so a cheap cache on a lightly-weighted route cannot
+> dominate. The paragraphs below record the pre-landing state that motivated the
+> change. The remaining gap is that the rate is a **declared assumption**, not
+> measured per-endpoint hit data (the video's 94.5% vs 51–69%).
+
 The project's price is the `1/price²` blend of **listed** prices. The video (via
 Chitra) says the listed-price sort mis-ranks cache-heavy workloads: DeepSeek's
 own endpoint is 10th by listed price but 1st by invoice (94.5% cache hit vs
@@ -171,6 +183,15 @@ dominates real cost. The project's price axis is a listed-price proxy, not an
 invoice proxy.
 
 ### 6. Provider pinning is the mitigation — and it opts out of auto-Exacto
+
+> **Update (2026-10-06):** the project now writes provider routing, opt-in: a
+> role may declare `roles.<role>.providerPin` (a provider slug, optionally
+> tiered like `deepinfra/fp8`), and the updater emits the `@<slug>` selector
+> (`openrouter/<id>@<slug>`), which omp applies as
+> `compat.openRouterRouting = { only: [slug] }`, pricing the role on that route.
+> The video's fuller recipe — `require_parameters: true`, an explicit
+> `max_tokens`, a `quantizations` floor — is **not** written; the pin is the
+> `only`-list subset. No shipped role sets a pin.
 
 If the project ever writes provider routing into config, the video's recipe is
 `provider.order` + `require_parameters: true` + explicit `max_tokens` (+ a
@@ -194,5 +215,9 @@ default.
 - **Cache pricing is the open cost gap.** The project prices listed, not
   invoiced; a cache-heavy role is mispriced. Not actionable without per-endpoint
   cache-hit data (the video cites DeepSeek 94.5% vs 51–69%).
+  *(Landed 2026-10-06, issue #30: a role may declare an assumed `cacheHitRate`
+  and the endpoint's `cacheReadPrice` is blended in, opt-in. The rate is a
+  declared assumption, not measured per-endpoint hit data — that remains the
+  gap.)*
 - **The activity log is the ground-truth per-request provider** — useful for
   debugging a bad output, not for ranking.

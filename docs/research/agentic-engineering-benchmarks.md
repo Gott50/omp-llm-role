@@ -137,6 +137,14 @@ metrics"). The real objections are:
   stays null for every model, and it contributes 0 to all — ordering-neutral dead
   weight, not the 0.195 fill. Only a declared source (raw dotted id in its fetch
   URL) reaches them.
+
+  > **Update (2026-10-06, issue #25):** the create flow now auto-declares a
+  > dotted catalog id — `catalogBenchmarkDeclaration` returns a declaration
+  > carrying the raw id in `fetch.url`, so a role created via `/create-agent`
+  > reaches `deepswe-1.1`/`terminal-bench-4.0` (at the 20-entry cap). A
+  > hand-written role weighting `bench:deepswe-1_1` with no declaration still
+  > 404s on the generic path. The verdict below is unchanged: coverage and
+  > collinearity, not the load path, are why none is weighted.
 - **Loadable coverage is capped at 20 models.** The zeroeval per-benchmark
   endpoint returns at most 20 `entries`, and the plugin's generic source reads
   `entries` with no pagination, so **no `bench:<id>` metric can ever clear the

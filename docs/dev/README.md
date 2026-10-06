@@ -81,5 +81,6 @@ External material that informs (but does not bind) the design. Not contracts.
   project's OpenRouter data model; confirms the `1/price²` blend, argues
   quantization labels are not a quality signal, and records the per-endpoint
   capability ceilings (context, max output, tool support) the project now uses as
-  role filters (issue #18), plus the cache-pricing cost gap. Source transcript
-  alongside it (`openrouter-endpoint-routing.transcript.txt`).
+  role filters (issue #18), the opt-in cache-read pricing (issue #30) and
+  provider pinning, and the remaining declared-rate-vs-measured-hit gap. Source
+  transcript alongside it (`openrouter-endpoint-routing.transcript.txt`).
