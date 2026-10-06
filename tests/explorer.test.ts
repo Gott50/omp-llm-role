@@ -10,7 +10,7 @@ import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer } from "../src/explorer/server.ts";
 import { isRecord } from "../src/guards.ts";
-import { mergeExport, validateRole } from "../src/role-settings.ts";
+import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
 import { DEFAULT_ROLES, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 import { makeModel } from "./helpers.ts";
 
@@ -187,6 +187,47 @@ test("mergeExport normalizes a pre-existing nested role to flat keys", () => {
     slow: { description: "old", weights: { general: 1 }, required: [] },
     other: { description: "keep" },
   });
+});
+
+// Issue #18: the four normative endpoint filters must serialize as flat dotted
+// keys like `filters.image` (omp's /settings Plugins tab shallow-merges), and a
+// `0`/`false` value is a real setting that must survive the round-trip.
+test("mergeExport emits every endpoint filter as a flat dotted key", () => {
+  const def = {
+    ...DEFAULT_ROLES.slow,
+    filters: { image: true, tools: false, minContextTokens: 0, minOutputTokens: 4096, maxPriceUsdPerM: 2.5 },
+  };
+  const merged = mergeExport({ settings: {} }, { slow: def });
+  assert.ok("lock" in merged);
+  const lock = merged.lock as { settings: { "omp-llm-role": Record<string, unknown> } };
+  const plugin = lock.settings["omp-llm-role"];
+  assert.equal(plugin["roles.slow.filters.image"], true);
+  assert.equal(plugin["roles.slow.filters.tools"], false);
+  assert.equal(plugin["roles.slow.filters.minContextTokens"], 0);
+  assert.equal(plugin["roles.slow.filters.minOutputTokens"], 4096);
+  assert.equal(plugin["roles.slow.filters.maxPriceUsdPerM"], 2.5);
+});
+
+test("endpoint filters round-trip through writeRoleSettings/resolveSettings, and removal deletes them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "role-filters-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+
+  const filters = { image: true, tools: false, minContextTokens: 0, minOutputTokens: 4096, maxPriceUsdPerM: 2.5 };
+  const result = writeRoleSettings(lockPath, { slow: { ...DEFAULT_ROLES.slow, filters } });
+  assert.equal(result.ok, true);
+
+  const { settings, errors } = resolveSettings(readPluginSettingsMap({ global: lockPath, project: null }));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(settings.roles.slow.filters, filters);
+
+  const removed = removeRoleSettings(lockPath, ["slow"]);
+  assert.equal(removed.ok, true);
+  const after = JSON.parse(readFileSync(lockPath, "utf8")) as { settings: { "omp-llm-role": Record<string, unknown> } };
+  const plugin = after.settings["omp-llm-role"];
+  for (const key of ["image", "tools", "minContextTokens", "minOutputTokens", "maxPriceUsdPerM"]) {
+    assert.equal(plugin[`roles.slow.filters.${key}`], undefined);
+  }
 });
 
 test("export writes the lock file with a backup and stays valid", async () => {

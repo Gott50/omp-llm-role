@@ -10,6 +10,41 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Endpoint capability ceilings as role filters** — a role may now gate its pool
+  on the per-endpoint capability ceilings the model pages already carry:
+  `filters.tools` (require a tool-capable route), `filters.minContextTokens` and
+  `filters.minOutputTokens` (drop routes below the endpoint's `context_length` /
+  `max_completion_tokens`), and `filters.maxPriceUsdPerM` (drop a model whose
+  thinking-adjusted blend exceeds the cap). The gate runs on the eligible
+  standard-tier route pool **before** the `1/price²` blend: a route failing any
+  declared filter drops, a `null` capability field is kept (missing data is not a
+  failure), and a model whose every route fails is ineligible — the single
+  find-route fallback does not resurrect it. `minContextTokens` now filters the
+  **endpoint** context, not the model-level `context`. A dropped model is
+  recorded on the decision (`endpoint-blocked: …`) and explained by
+  `explainModel`. No shipped role sets an endpoint filter. (issue #18)
+- **Four-axis benchmark-quality gate** — `/create-agent` discovery now assesses
+  each focus metric on four axes, not coverage alone: **coverage** (share of the
+  pool carrying the metric), **dispersion** (IQR/median of the cardinal-normalized
+  covered values — a saturated metric cannot separate models), **composition**
+  (a pool org above 10% share absent from the covered set) and **freshness** (the
+  newest covered model's release date against the pool's newest). A discovered
+  candidate below-bar on any axis is dropped non-fatally with a reason naming the
+  axis; a user-named metric is never dropped — it is annotated and warned. The
+  gate probe-fetches each candidate's source and assesses the joined pool; an
+  empty pool or an unloaded metric reports every axis `unknown`, never a silent
+  `ok`. The create report prints the four signals, the explorer renders them in a
+  focus table, and the CLI report annotates a role's focus metrics. (issue #17)
+- **`/project-roles` command and a project-scoped updater** — a new command
+  discovers the project's usecase from its own artifacts (README, package.json,
+  AGENTS.md, docs listing, git log, file tree) through an in-process profile
+  architect, proposes a project-scoped role set, authors the new roles' agents,
+  and applies the project's `modelRoles` to `<cwd>/.omp/config.yml`. When the
+  project carries its own `omp-llm-role` settings entry, the updater scopes the
+  config, the settings read, and the state/history/lock to `<cwd>/.omp` — the
+  global `~/.omp/agent/config.yml` is never written in project mode, and the day
+  gate is per scope. `--dry-run` writes nothing; without `--force` an existing
+  project role config is refused. The explorer stays user-level only. (issue #27)
 - **Explorer key-availability marking** — the explorer now overlays every ranked
   model with a **usable** / **key-blocked** / **unknown** badge derived from the
   key-authenticated `GET /api/v1/models` (the account setting "Filter the model
@@ -45,6 +80,12 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Changed
 
+- **Truthfulness axis evaluated and not landed** — the llm-stats
+  `simpleqa_score` was measured as a truthfulness axis and left unweighted: it
+  covers 11.8% of the field (0/3 on the probe-walk-reachable pool), correlates
+  0.68–0.89 with `general`, and the 0-fill flips the `default` leader to a model
+  1.9× more expensive — a pure coverage lottery for exactly the models the
+  selector chooses from. Numbers and verdict in `docs/dev/scoring.md`. (issue #24)
 - **Blend weight basis aligned with the router's sort key** — the `1/price²`
   blend now weights routes by the **input (prompt) price** (the router's sort
   key) while reporting the **billed 3:1 in:out blend** under that distribution;

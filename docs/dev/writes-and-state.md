@@ -59,6 +59,15 @@ All under the agent dir (`agentDir()` in `src/state.ts`), next to the config
 they describe. Agent-dir resolution: `OMP_LLM_ROLE_AGENT_DIR` (test hook) →
 `PI_CODING_AGENT_DIR` → non-default `OMP_PROFILE` → `~/.omp/agent`.
 
+**Project scope (issue #27).** `runUpdater` resolves the project dir as
+`<cwd>/.omp` (omp's project dir, no walk-up). When
+`<cwd>/.omp/plugins/omp-plugins.lock.json` carries a non-empty `omp-llm-role`
+settings entry, the whole run is scoped to the project: the config
+(`<cwd>/.omp/config.yml`), the settings read (project lock over the user-level
+one), and the state/history/lock files all live under `<cwd>/.omp`. The global
+`~/.omp/agent/config.yml` is **never** written in project mode. Without a project
+settings entry the global behavior is unchanged.
+
 | File | Shape | Purpose |
 |---|---|---|
 | `llm-role-state.json` | `{ lastRunDay, managedRoles, roleLastSelector, pluginWrittenChainKeys, previousModelRoles, managedDisabledAgents }` | day gate, managed-role set, last selectors, plugin-owned chain keys, pre-write `modelRoles` snapshot, **managed `task.disabledAgents` names** |
@@ -82,7 +91,9 @@ they describe. Agent-dir resolution: `OMP_LLM_ROLE_AGENT_DIR` (test hook) →
   keyed catalog was active for that role, else `"probe"`) and `keyBlockedCount` (the
   candidates pruned as key-blocked). The keyed-blocked set itself is deliberately
   **not** enumerated — it can be hundreds of ids; `blocked[]` keeps its old meaning,
-  the probe-blocked ids examined in the walk.
+  the probe-blocked ids examined in the walk. `endpointBlocked[]` records the ranking
+  ids the role's endpoint filters dropped (no capable standard-tier route), rendered
+  `; endpoint-blocked: …` on the decision line.
 - Role removal (`/remove-agent`) goes through `removeRoleSettings` in
   `src/role-settings.ts` — the same validate/backup/atomic-write path as
   `writeRoleSettings`, deleting the role's flat dotted keys and any nested entry.
@@ -97,7 +108,8 @@ no-op. `/refresh-roles` passes `force` and always runs.
 A concurrent second starter loses the lock and finds the day already stamped →
 no-op. Session-start runs are **awaited** before the first prompt is dispatched
 (a deferred timer would be cleared when a short-lived session exits before it
-fires).
+fires). The gate is **per scope**: a project run loads the project's own
+`llm-role-state.json`, so a project and the global config each refresh once a day.
 
 ## `task.disabledAgents` sync (pin-derived, not day-gated)
 

@@ -10,20 +10,22 @@
  */
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { countMetricCoverage, createAgent, CREATE_AGENT_USAGE, differentiationWarning, discoverBenchmarks, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, tokenizeArgs, type DiscoveryOutcome } from "./agent-create.ts";
+import { assessFocusMetric, countMetricCoverage, createAgent, CREATE_AGENT_USAGE, differentiationWarning, discoverBenchmarks, formatArchetypes, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, tokenizeArgs, type DiscoveryOutcome, type FocusAssessor, type FocusMetricAssessment } from "./agent-create.ts";
 import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
-import { generateAgentSpec } from "./agent-architect.ts";
+import { generateAgentSpec, generateProjectProfile } from "./agent-architect.ts";
 import { authorBenchmarkSource } from "./benchmark-author.ts";
-import { BENCHMARK_ENTRY_CAP, declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
+import { applyBenchmarkScores, BENCHMARK_ENTRY_CAP, declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, sourceForMetric, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson, fetchKeyAvailability, type KeyAvailability } from "./availability.ts";
-import { loadRankData, type Model } from "./engine.ts";
+import { loadRankData, rankRole, type Model } from "./engine.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { isRecord } from "./guards.ts";
-import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "./settings.ts";
+import { applyProfileOverrides, formatProjectRolesReport, parseProjectRolesArgs, PROJECT_ROLES_USAGE, setupProject, type ProjectProfile } from "./project-setup.ts";
+import { DEFAULT_ROLES, findProjectAnchor, KNOWN_METRICS, projectLockPath, readPluginSettingsMap, resolveSettings } from "./settings.ts";
 import { runUpdater, type Deps } from "./updater.ts";
 
 /** SPA directory shipped beside this extension (repo `web/`). */
@@ -282,7 +284,7 @@ async function resolveBenchmarkLinks(ctx: ExtContext, links: readonly string[], 
  * role. `fieldSize` is the ranking universe's model count (null when unknown),
  * for the coverage gate. Returns null when discovery could not run.
  */
-async function discoverForPurpose(ctx: ExtContext, purpose: string, exclude: readonly string[], fieldSize: number | null): Promise<DiscoveryOutcome | null> {
+async function discoverForPurpose(ctx: ExtContext, purpose: string, exclude: readonly string[], fieldSize: number | null, assess: FocusAssessor): Promise<DiscoveryOutcome | null> {
   let catalog: BenchmarkCatalogEntry[] | null;
   try {
     catalog = await loadBenchmarkCatalog(false);
@@ -295,11 +297,55 @@ async function discoverForPurpose(ctx: ExtContext, purpose: string, exclude: rea
     return null;
   }
   try {
-    return await discoverBenchmarks(purpose, catalog, (p, candidates) => judgeBenchmarkRelevance(p, candidates, ctx.cwd), exclude, fieldSize);
+    return await discoverBenchmarks(purpose, catalog, (p, candidates) => judgeBenchmarkRelevance(p, candidates, ctx.cwd), exclude, fieldSize, assess);
   } catch (err) {
     notifyLines(ctx, `create-agent: benchmark discovery failed (${err instanceof Error ? err.message : err}) — skipping`);
     return null;
   }
+}
+
+/** Bounded repository artifacts for the `/project-roles` profile architect:
+ * README, package.json, AGENTS.md, a docs listing, the recent git log and a
+ * shallow file tree. Every read is best-effort — a missing file or a non-git cwd
+ * just contributes nothing. */
+function gatherProjectArtifacts(cwd: string): string {
+  const parts: string[] = [];
+  const readBounded = (rel: string, cap = 4000): string | null => {
+    try {
+      return readFileSync(join(cwd, rel), "utf8").slice(0, cap);
+    } catch {
+      return null;
+    }
+  };
+  for (const rel of ["README.md", "package.json", "AGENTS.md", "pyproject.toml", "Cargo.toml", "go.mod"]) {
+    const text = readBounded(rel);
+    if (text !== null) parts.push(`### ${rel}\n${text}`);
+  }
+  try {
+    const docs = readdirSync(join(cwd, "docs"), { recursive: true })
+      .map(String)
+      .filter((p) => p.endsWith(".md"))
+      .slice(0, 40);
+    if (docs.length > 0) parts.push(`### docs/\n${docs.join("\n")}`);
+  } catch {
+    // no docs dir
+  }
+  try {
+    const log = execFileSync("git", ["log", "--oneline", "-20"], { cwd, encoding: "utf8", timeout: 5000 });
+    parts.push(`### git log\n${log}`);
+  } catch {
+    // not a git repo
+  }
+  try {
+    const entries = readdirSync(cwd, { withFileTypes: true })
+      .filter((entry) => !entry.name.startsWith(".") && entry.name !== "node_modules")
+      .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+      .slice(0, 60);
+    parts.push(`### files\n${entries.join("\n")}`);
+  } catch {
+    // unreadable cwd
+  }
+  return parts.join("\n\n");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -442,16 +488,33 @@ export default function (pi: ExtensionAPI) {
       }
       const fieldSize = rankModels === null ? null : rankModels.length;
 
+      // 1a-bis. The focus-metric gate must not run on the score-less create-agent
+      //     pool: it carries no `bench:<id>` scores, so a gate over it would see
+      //     nothing for exactly the benchmarks it targets. Probe-fetch each
+      //     candidate's source, join it onto a copy of the pool, and assess the
+      //     joined pool. A metric whose scores were not loaded reports every new
+      //     axis `unknown` (never a silent `ok`).
+      const declared = loadDeclaredSources();
+      const focusPool: Model[] = rankModels === null ? [] : rankModels.map((m) => ({ ...m, metrics: { ...m.metrics } }));
+      const assess: FocusAssessor = async (metric) => {
+        const source = sourceForMetric(metric, declared);
+        if (source !== null) {
+          const loaded = await loadBenchmarkScores(source, false);
+          if (loaded !== null) applyBenchmarkScores(focusPool, source, loaded.scores);
+        }
+        return assessFocusMetric(focusPool, metric, declared);
+      };
+
       // 1b. Discover the catalog benchmarks relevant to the purpose (unless
       //     --no-discover or an explicit --benchmarks list was given). Non-fatal:
       //     a catalog or judge failure just skips discovery. A candidate whose
       //     coverage is too low to rank on is dropped, not folded in.
       const discoveredCovered = new Map<string, number>();
       if (!parsed.noDiscover && !parsed.explicitBenchmarks && parsed.request.purpose.trim() !== "") {
-        const outcome = await discoverForPurpose(ctx, parsed.request.purpose, parsed.request.extraBenchmarks ?? [], fieldSize);
+        const outcome = await discoverForPurpose(ctx, parsed.request.purpose, parsed.request.extraBenchmarks ?? [], fieldSize, assess);
         if (outcome !== null) {
           if (outcome.dropped.length > 0) {
-            notifyLines(ctx, `create-agent: dropped benchmarks (coverage): ${outcome.dropped.map((d) => `${d.label} (${d.metric}) — ${d.reason}`).join(", ")}`);
+            notifyLines(ctx, `create-agent: dropped benchmarks: ${outcome.dropped.map((d) => `${d.label} (${d.metric}) — ${d.reason}`).join(", ")}`);
           }
           if (outcome.discovered.length > 0) {
             parsed.request.extraBenchmarks = [...(parsed.request.extraBenchmarks ?? []), ...outcome.discovered.map((d) => d.metric)];
@@ -518,15 +581,17 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // 3b. Coverage of the focus metrics: a discovered metric's coverage is the
+      // 3b. Assess the focus metrics: a discovered metric's coverage is the
       //     catalog's model count; a named metric's is the loaded models that
-      //     carry it. The gate and the report share `focusCoverageOk`.
-      const declared = loadDeclaredSources();
+      //     carry it. The four-axis assessment is computed over the joined pool
+      //     (the same object the gate and the report consume).
       const covered: Record<string, number> = {};
+      const assessments: Record<string, FocusMetricAssessment> = {};
       for (const metric of parsed.request.extraBenchmarks ?? []) {
-        covered[metric] = discoveredCovered.get(metric) ?? (rankModels === null ? 0 : countMetricCoverage(rankModels, metric, declared));
+        assessments[metric] = await assess(metric);
+        covered[metric] = discoveredCovered.get(metric) ?? countMetricCoverage(focusPool, metric, declared);
       }
-      parsed.request.coverage = { total: fieldSize, covered, declared };
+      parsed.request.coverage = { total: fieldSize, covered, declared, assessments };
 
       // 4. Write the role + the agent file, then wire `modelRoles.<name>` in-process.
       const result = createAgent(parsed.request);
@@ -539,6 +604,167 @@ export default function (pi: ExtensionAPI) {
       if (parsed.json) notifyLines(ctx, JSON.stringify({ ...result, differentiation }, null, 2));
       else notifyLines(ctx, formatCreateAgentReport(result, "ranking the new role…", { differentiation }));
       if (result.dryRun) return;
+      try {
+        await runUpdater("manual", extDeps(pi, ctx), { force: true });
+      } catch (err) {
+        ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
+      }
+    },
+  });
+
+  // Discover the project's usecase from its own artifacts and apply a
+  // project-scoped role set: the project plugin settings, the new roles' agents,
+  // and the project's modelRoles in <cwd>/.omp/config.yml. The project-aware
+  // updater (run in-process at the end) keeps the global config untouched.
+  pi.registerCommand("project-roles", {
+    description: "Discover the project's usecase and apply a project-scoped role set",
+    handler: async (args, ctx: ExtContext) => {
+      const parsed = parseProjectRolesArgs(typeof args === "string" ? args : "");
+      if (!parsed.ok) {
+        notifyLines(ctx, parsed.error);
+        return;
+      }
+      if (parsed.help) {
+        notifyLines(ctx, PROJECT_ROLES_USAGE);
+        return;
+      }
+
+      const cwd = ctx.cwd;
+      const projectDir = join(cwd, ".omp");
+      const lockPath = projectLockPath(cwd);
+      const configPath = join(projectDir, "config.yml");
+
+      // omp reads <cwd>/.omp with no walk-up; the plugin's walk-up anchor may
+      // differ (a session launched in a subdirectory). The written config is what
+      // omp reads, but the anchor would read/write a different .omp — warn.
+      const warnings: string[] = [];
+      const anchor = findProjectAnchor(cwd);
+      if (anchor !== null && anchor !== cwd) {
+        warnings.push(
+          `the session cwd (${cwd}) is not the project anchor (${anchor}); the config is written to ${projectDir}, which is what omp reads — the plugin's walk-up anchor would read a different .omp`,
+        );
+      }
+
+      // 1. Gather the repo artifacts and run the profile architect.
+      notifyLines(ctx, "project-roles: reading the project…");
+      let profile: ProjectProfile;
+      try {
+        profile = await generateProjectProfile({
+          artifacts: gatherProjectArtifacts(cwd),
+          cwd,
+          model: ctx.models?.current(),
+          modelRegistry: ctx.modelRegistry,
+          purpose: parsed.purpose,
+        });
+      } catch (err) {
+        notifyLines(ctx, `project-roles: profile discovery failed: ${err instanceof Error ? err.message : err}`);
+        return;
+      }
+      profile = applyProfileOverrides(profile, { purpose: parsed.purpose, roles: parsed.roles });
+
+      // 2. Load the ranking universe once: the coverage denominator, the focus
+      //    assessment pool and the top picks all need it. Non-fatal.
+      let rankModels: Model[] | null = null;
+      try {
+        rankModels = (await loadRankData({})).models;
+      } catch (err) {
+        notifyLines(ctx, `project-roles: ranking universe unavailable (${err instanceof Error ? err.message : err}) — coverage checks skipped`);
+      }
+      const fieldSize = rankModels === null ? null : rankModels.length;
+      const declared = loadDeclaredSources();
+      const focusPool: Model[] = rankModels === null ? [] : rankModels.map((m) => ({ ...m, metrics: { ...m.metrics } }));
+      const assess: FocusAssessor = async (metric) => {
+        const source = sourceForMetric(metric, declared);
+        if (source !== null) {
+          const loaded = await loadBenchmarkScores(source, false);
+          if (loaded !== null) applyBenchmarkScores(focusPool, source, loaded.scores);
+        }
+        return assessFocusMetric(focusPool, metric, declared);
+      };
+
+      // 3. Per new role: discover benchmarks (judge-backed) and author the agent.
+      const covered: Record<string, number> = {};
+      const assessments: Record<string, FocusMetricAssessment> = {};
+      for (const role of profile.roles) {
+        if (role.keep === false) continue;
+        if (role.name.trim() in DEFAULT_ROLES) continue; // shipped role — no new agent
+        if (role.benchmarks === undefined || role.benchmarks.length === 0) {
+          const outcome = await discoverForPurpose(ctx, role.purpose, [], fieldSize, assess);
+          if (outcome !== null) {
+            if (outcome.dropped.length > 0) {
+              notifyLines(ctx, `project-roles: dropped benchmarks (coverage): ${outcome.dropped.map((d) => `${d.label} (${d.metric}) — ${d.reason}`).join(", ")}`);
+            }
+            role.benchmarks = outcome.discovered.map((d) => d.metric);
+            for (const d of outcome.discovered) {
+              if (d.declaration === undefined) continue;
+              const saved = saveDeclaredSource(d.declaration);
+              if (!saved.ok) notifyLines(ctx, `project-roles: could not persist ${d.metric} source: ${saved.error}`);
+            }
+          }
+        }
+        for (const metric of role.benchmarks ?? []) {
+          assessments[metric] = await assess(metric);
+          covered[metric] = rankModels === null ? 0 : countMetricCoverage(focusPool, metric, declared);
+        }
+        try {
+          role.spec = await generateAgentSpec({
+            description: role.purpose,
+            cwd,
+            model: ctx.models?.current(),
+            modelRegistry: ctx.modelRegistry,
+            benchmarks: role.benchmarks,
+          });
+        } catch (err) {
+          notifyLines(ctx, `project-roles: architect failed for "${role.name}": ${err instanceof Error ? err.message : err}`);
+          return;
+        }
+      }
+
+      // 4. Plan first (a dry run of the same all-or-nothing core), print it, then
+      //    apply. `--dry-run` stops after the plan; without `--force` an existing
+      //    project role config is refused by the core.
+      const planOpts = {
+        projectDir,
+        lockPath,
+        configPath,
+        force: parsed.force,
+        yes: parsed.yes,
+        coverage: { total: fieldSize, covered, declared, assessments },
+      };
+      const plan = setupProject(profile, { ...planOpts, dryRun: true });
+      if (!plan.ok) {
+        notifyLines(ctx, `project-roles: ${plan.errors.join("\n")}`);
+        return;
+      }
+      const topPicks: Record<string, string> = {};
+      if (rankModels !== null) {
+        for (const name of plan.added) {
+          const ranked = rankRole(plan.roles[name], rankModels);
+          if (ranked.length > 0) topPicks[name] = ranked[0].model.id;
+        }
+      }
+      if (parsed.json) notifyLines(ctx, JSON.stringify({ profile, ...plan, warnings }, null, 2));
+      else notifyLines(ctx, formatProjectRolesReport(profile, plan, { topPicks, warnings }));
+      if (parsed.dryRun) return;
+
+      if (!parsed.yes && ctx.hasUI && ctx.ui.select) {
+        const answer = await ctx.ui.select("Apply this project role set?", [
+          { label: "Apply", description: "write the project settings, agents and modelRoles" },
+          { label: "Cancel" },
+        ]);
+        if (answer !== "Apply") {
+          notifyLines(ctx, "project-roles: cancelled");
+          return;
+        }
+      }
+
+      const result = setupProject(profile, { ...planOpts, dryRun: false });
+      if (!result.ok) {
+        notifyLines(ctx, `project-roles: ${result.errors.join("\n")}`);
+        return;
+      }
+
+      // 5. Run the updater in-process so the project's modelRoles land.
       try {
         await runUpdater("manual", extDeps(pi, ctx), { force: true });
       } catch (err) {

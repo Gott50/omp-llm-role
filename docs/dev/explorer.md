@@ -59,7 +59,8 @@ Endpoints:
   `universe` (kind/enabled/locked + effective def per known role), `metrics`
   (`weightableMetrics`: the shipped keys plus any external metric a resolved role
   weights), `metricMeta` (`metricMetaFor`: `METRIC_META` plus a derived entry per
-  external metric), `levels` (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors`
+  external metric), `focusAssessments` (per role, the four-axis assessment of its
+  focus metrics over the resolved dataset), `levels` (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors`
   (per-level billed-blend multiplier from the engine's own `thinkingPriceFactor`,
   so the UI readout cannot drift), `fetchedAt`, `modelCount`, `orMatched`,
   `orPriced`, `lockPath`, and `availability` (the keyed-catalog summary:
@@ -136,7 +137,9 @@ launcher `/explore-roles` uses.
   (the resolved set = what the plugin does today); `roleUniverse(raw, roles)`
   adds the roles it knows but does not rank (shipped opt-ins, lock-file-only
   roles). `getState()` re-runs this read on **every** request, so a page reload
-  after Export reflects the write instead of the state at boot.
+  after Export reflects the write instead of the state at boot. The explorer is
+  **user-level only**: project-scoped roles (from `/project-roles`) never appear
+  here, and the Export never writes the project file.
 - `enrichThinkingLevels(rank.models, opts.catalog)` gates the thinking price
   factor on the omp catalog; `refresh()` re-runs `opts.reload(true)`,
   re-enriches, and — when `opts.reloadAvailability` is supplied — re-derives the
@@ -192,9 +195,16 @@ a scraped third-party site, so the DOM is built with
 
 - **Boot**: `boot()` → `GET /api/bootstrap` → fills `state` (`universe`,
   `effective` = each entry's `def`, `defs` = a structuredClone of it, `defaults`,
-  `metrics`, `metricMeta`, `levels`, `thinkingFactors`, `lockPath`,
-  `availability`), wires the filter/topn/hide-key-blocked/export/copy/download
-  controls, and selects the first role.
+  `metrics`, `metricMeta`, `focusAssessments`, `levels`, `thinkingFactors`,
+  `lockPath`, `availability`), wires the
+  filter/topn/hide-key-blocked/export/copy/download controls, and selects the
+  first role.
+- **Focus table**: the editor renders a `table.focus` for the role's weighted
+  benchmark/percentile metrics (`focusMetricsOf`), one row per metric with the
+  four signals from `focusAssessments[role]` (coverage, dispersion, composition,
+  freshness). A below-bar cell is warned (tint + glyph), `unknown` is muted —
+  never green. A metric the editor just added reads "not assessed" until the next
+  reload (the payload is computed over the resolved definition).
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
   `recompute()`. `recompute()` → `POST /api/rank {role, def}` → `state.rows`,
   `lambda`, `derivedLambda`, `errors`; re-renders the table and readouts, and

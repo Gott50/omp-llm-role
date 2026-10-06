@@ -40,7 +40,9 @@ payload; there is no public JSON API.
   coverage/collinearity of the unmapped ones).
 - **Build**: `buildModels(rows)` maps each row to a `Model`; `metrics` carries
   the index/benchmark values, with `price`/`throughput`/`website`/`writing`
-  left `null` for later enrichment.
+  left `null` for later enrichment. The row's `release_date` is carried onto
+  `Model.releaseDate` (null when absent) and used by the focus-metric freshness
+  axis (scoring.md, the four-axis gate).
 - **Cache**: `cache/llm-stats-fetched-rankings.json` —
   `{ fetchedAt, source, modelCount, rankings[] }` (pretty-printed; each row
   gains a `rank` = array position). Fresh while `fetchedAt` is the current UTC
@@ -79,12 +81,17 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
 
 - **URL**: `https://openrouter.ai/<slug>` (RSC flight payload), fetched only for
   slugs that match a leaderboard model (~150 of ~540).
-- **Shape**: every provider route of a model — pricing, service tier, status and
-  routed-traffic p50 stats — dehydrated as React-Query state (sometimes twice,
-  one copy without stats; records merge by endpoint id, the stats-carrying copy
-  winning). `parseModelPage(html)` narrows each row to
-  `OpenRouterEndpointRecord` (`id`, `providerSlug`, `serviceTier`, `status`,
-  `free`, `variant`, `price`, `tput`, `latency`).
+- **Shape**: every provider route of a model — pricing, service tier, status,
+  routed-traffic p50 stats and the per-endpoint capability ceilings — dehydrated
+  as React-Query state (sometimes twice, one copy without stats; records merge by
+  endpoint id, the stats-carrying copy winning). `parseModelPage(html)` narrows
+  each row to `OpenRouterEndpointRecord` (`id`, `providerSlug`, `serviceTier`,
+  `status`, `free`, `variant`, `price`, `weightPrice`, `tput`, `latency`,
+  `contextLength` (endpoint `context_length`), `maxCompletionTokens` (endpoint
+  `max_completion_tokens`) and `supportsTools` (`supported_parameters` contains
+  `tools`)). The three capability fields are `null` when the field is absent —
+  the role endpoint filters keep a `null` (missing data is not a capability
+  failure, spec §6.3).
 - **Fetch**: `fetchEndpointPages(slugs)` with an 8-worker pool
   (`OPENROUTER_PAGE_CONCURRENCY`), one retry per page, permanent 404/410 gives
   up. A page that fails is absent and that model keeps the single-route
@@ -92,8 +99,14 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
 - **Cache**: `cache/openrouter-endpoints-fetched-data.json` —
   `{ fetchedAt, source, slugCount, slugs }` where `slugs` maps each fetched
   model slug to its narrowed per-provider route records. `readEndpointsCache`
-  rejects a cache whose records lack `weightPrice` (the pre-#21 shape) and
-  refetches, rather than silently dropping every route from the blend.
+  rejects a cache whose records lack `weightPrice` (the pre-#21 shape) **or**
+  `contextLength` (the pre-#18 shape) and refetches, rather than silently
+  dropping every route from the blend or treating every ceiling as unstated.
+- **Per-model routes**: `buildOpenRouterEnrichment` carries the eligible
+  standard-tier pool on `OrEnrichment.routes`, and `applyOpenRouterData` sets it
+  on `Model.routes` — the pool the role endpoint filters gate (spec §6.3). The
+  find-route fallback carries the same field (its capability fields are `null`,
+  since the find payload has no ceilings).
 
 ### The 1/price² blend
 

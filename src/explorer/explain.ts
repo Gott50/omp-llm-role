@@ -12,9 +12,10 @@
  * value — no I/O here; the caller owns the fetch.
  */
 
+import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { CAPABILITY_FILL, cardinalMetric, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { CAPABILITY_FILL, cardinalMetric, modelPassesEndpointFilters, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -100,6 +101,28 @@ export function metricMeta(metric: string, declared: readonly SourceDeclaration[
 export function metricMetaFor(metrics: readonly string[], declared: readonly SourceDeclaration[] = []): Record<string, MetricMeta> {
   const out: Record<string, MetricMeta> = { ...METRIC_META };
   for (const metric of metrics) if (!(metric in out)) out[metric] = metricMeta(metric, declared);
+  return out;
+}
+
+/** A role's focus metrics: the weighted benchmarks (kind `benchmark`/`percentile`),
+ * i.e. the metrics a role was ranked on beyond the index/price/throughput
+ * backbone. Shipped roles weight index metrics, so they carry none. */
+export function focusMetricsOf(def: RoleDef, declared: readonly SourceDeclaration[] = []): string[] {
+  return Object.keys(def.weights).filter((metric) => {
+    const kind = metricMeta(metric, declared).kind;
+    return kind === "benchmark" || kind === "percentile";
+  });
+}
+
+/** Four-axis assessment of each of a role's focus metrics, over the loaded pool
+ * (the same dataset the updater ranks on). */
+export function focusAssessments(
+  models: readonly Model[],
+  def: RoleDef,
+  declared: readonly SourceDeclaration[] = [],
+): Record<string, FocusMetricAssessment> {
+  const out: Record<string, FocusMetricAssessment> = {};
+  for (const metric of focusMetricsOf(def, declared)) out[metric] = assessFocusMetric(models, metric, declared);
   return out;
 }
 
@@ -260,6 +283,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   const missingRequired = def.required.filter((k) => model.metrics[k] == null);
   if (missingRequired.length > 0) reasons.push(`missing required metric(s): ${missingRequired.join(", ")}`);
   if (def.filters?.image && !model.multimodal) reasons.push("role requires image input; model is text-only");
+  if (!modelPassesEndpointFilters(model, def.filters)) reasons.push("no standard-tier route satisfies the role's endpoint filters");
   if (model.price == null) reasons.push("no billed OpenRouter route");
   if (reasons.length > 0) return { eligible: false, reasons };
 

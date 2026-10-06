@@ -152,12 +152,16 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   are direct measures. A selected benchmark resolves to its shipped metric when
   one exists (`writingbench` → `writing`), else `bench:<id>`, and is folded in as
   a focus metric. Discovery is non-fatal: a catalog or judge failure skips it and
-  the role still ranks on its other weights. Discovery is **coverage-safe**: the
-  handler loads the ranking universe once (the same daily-cached chain the updater
-  and explorer use) for the field size, and a selected benchmark whose metric is
-  fill-0 and whose catalog coverage is below `FOCUS_COVERAGE_FLOOR` (35% of the
-  field) is dropped, not folded in. When the field size is unknown the share rule
-  is skipped and only the fill rule applies.
+  the role still ranks on its other weights. Discovery is **quality-gated**: the
+  pre-fetch catalog gate is count-only (`modelCount >= 3`), and the handler then
+  probe-fetches each selected candidate's source (`loadBenchmarkScores`), joins it
+  onto the ranking universe, and assesses the joined pool on four axes
+  (`assessFocusMetric`, the four-axis gate in `scoring.md`): coverage, dispersion, provider
+  composition and freshness. A **discovered** candidate below-bar on any axis is
+  dropped non-fatally with a reason naming the axis; a **user-named** metric is
+  never dropped — it is annotated and warned. An empty pool (unknown field size)
+  or a metric whose scores were not loaded reports every axis `unknown`, never a
+  silent `ok`.
 - **The focus-share fit** (`applyFocusBenchmarks`) replaces the mean-weight fold: a
   named benchmark takes `clamp(specialistShare, 0.25, 0.40)` of the non-price budget
   (split across the named set), the archetype's remaining non-price weights are
@@ -165,9 +169,9 @@ stripping)** — this machine has Node 26, no bun. Code must be dual-runtime saf
   The focus set is capped at `FOCUS_METRIC_CAP` (3) in priority order (named/linked
   first, then discovery order) so one benchmark keeps a decisive share; the metrics
   beyond the cap are reported as dropped. `focusCoverageOk(metric, covered, total)`
-  is the one coverage rule, shared by the discovery gate and the report annotation;
-  the report prints each focus metric's coverage and warns below the bar, and
-  `--dry-run`/`--json` carry the same signal.
+  is the coverage branch of the four-axis assessment (above); the report prints
+  the four signals and warns per below-bar axis, and `--dry-run`/`--json` carry
+  the same signal.
 - **`/create-agent` writes the agent file before the role**: an agent with no role
   is harmless (its `@<name>, @default` chain falls back to `@default`), while a
   role with no agent is a ranked-but-dead entry the updater would still wire. If
@@ -400,13 +404,39 @@ role takes effect on the next session.
 
 **The `/remove-agent` command deletes the agent `.md` file and its role definition, refusing shipped default roles. The plugin now tracks `managedDisabledAgents` to clean up stale `task.disabledAgents` entries when an agent is removed.**
 
-### 6.3 Role filters (schema capability)
+### 6.3 Role filters
 
-Role definitions may declare `filters: { image: true }` (require image input) and
-`filters: { maxPriceUsdPerM, minContextTokens }`. Shipped defaults: `vision` and `designer` set
-`image: true` (matching the existing multimodal eligibility filter). Filters apply
-before ranking eligibility so percentile norms stay on the unfiltered pool (existing
-behavior — vision already filters this way).
+Role definitions may declare `filters`; every filter is enforced by `rankRole`
+before ranking eligibility, so percentile norms stay on the unfiltered pool
+(existing behavior — `vision` already filters this way). `resolveSettings`
+validates all of them.
+
+| Filter | Type | Effect |
+|---|---|---|
+| `image` | boolean | require image input (`m.multimodal`) |
+| `tools` | boolean | require a route whose endpoint `supported_parameters` contains `tools` |
+| `minContextTokens` | number (0 = off) | drop routes whose endpoint `context_length` is below this |
+| `minOutputTokens` | number (0 = off) | drop routes whose endpoint `max_completion_tokens` is below this |
+| `maxPriceUsdPerM` | number (0 = off) | drop a model whose thinking-adjusted `priceEff` exceeds this |
+
+The four endpoint filters (`tools`, `minContextTokens`, `minOutputTokens`,
+`maxPriceUsdPerM`) gate the **eligible standard-tier route pool** — the same pool
+the `1/price²` blend uses (§4.1, decision #14) — before the blend:
+
+- a route failing any declared filter drops from the pool;
+- a `null` capability field is **kept** (missing data is not a capability
+  failure);
+- a model whose every standard-tier route fails is ineligible for that role, and
+  the single-find-route fallback does not resurrect it;
+- `minContextTokens` filters the **endpoint** `context_length`, not the
+  model-level `context`;
+- `maxPriceUsdPerM` caps the thinking-adjusted `priceEff` (the price the role
+  actually pays), not the bare billed blend.
+
+A model dropped by the endpoint gate is recorded on the decision
+(`endpointBlocked[]`, rendered `; endpoint-blocked: …`) and reported by
+`explainModel`. Shipped defaults: `vision` and `designer` set `image: true`; no
+shipped role sets an endpoint filter.
 
 ### 6.4 Fallback chains (decision #11)
 
@@ -547,7 +577,18 @@ per metric would need its own justification for each.
 
 ## 8. State, history, and the write
 
-Files (all under `~/.omp/agent/`, next to the config they describe):
+**Project scope (issue #27).** `runUpdater` resolves the project dir as
+`<cwd>/.omp` (omp's project dir, no walk-up). When
+`<cwd>/.omp/plugins/omp-plugins.lock.json` carries a non-empty `omp-llm-role`
+settings entry, the whole run is scoped to the project: the config
+(`<cwd>/.omp/config.yml`), the settings read (project lock over the user-level
+one), and the state/history/lock files all live under `<cwd>/.omp`. The global
+`~/.omp/agent/config.yml` is **never** written in project mode, and the day gate
+is per scope (the project loads its own `llm-role-state.json`). Without a project
+settings entry the global behavior is unchanged.
+
+Files (all under the agent dir — `~/.omp/agent/` globally, `<cwd>/.omp` in
+project mode — next to the config they describe):
 
 - `llm-role-state.json` — `{ lastRunDay, managedRoles, role→lastSelector,
   pluginWrittenChainKeys[], managedDisabledAgents[], previousModelRoles }`.
@@ -563,8 +604,8 @@ Files (all under `~/.omp/agent/`, next to the config they describe):
 ### 8.1 Surgical edit algorithm (decision #4)
 
 1. Acquire advisory lock `~/.omp/agent/.llm-role-refresh.lock` (serializes concurrent
-   session starts).
-2. Read `~/.omp/agent/config.yml`; parse with the line-oriented reader (no runtime YAML
+   session starts; project mode: `<cwd>/.omp/.llm-role-refresh.lock`).
+2. Read `~/.omp/agent/config.yml` (project mode: `<cwd>/.omp/config.yml`); parse with the line-oriented reader (no runtime YAML
    dependency — required for marketplace installs); validate structure (block-style
    top level, no inline/indented/duplicate blocks).
 3. Build the patched document as **text**, line-oriented: rewrite only value tokens of
@@ -647,6 +688,21 @@ session start so enabling/disabling a role takes effect on the next session.
   role (`DEFAULT_ROLES`), a reserved name, and an invalid name; errors when there is
   nothing to remove. Asks for confirmation in-session unless `--yes` (skipped when
   there is no UI).
+- **`/project-roles [--purpose "<text>"] [--roles <spec>] [--force] [--yes] [--dry-run] [--json] [--help]`**:
+  discovers the project's usecase from its own artifacts (README, package.json,
+  AGENTS.md, pyproject/Cargo/go.mod, a docs listing, the recent git log, a shallow
+  file tree), runs an in-process **profile architect** (`src/prompts/project-profile-architect.md`
+  + `project-profile-user.md`, the same isolated session as the agent architect) to
+  produce a validated `ProjectProfile`, discovers benchmarks and authors an agent per
+  new role, calls `setupProject` (the project plugin settings + the new roles' agents),
+  prints the plan (kept/dropped/added + each new role's archetype/weights/focus/top
+  pick), then runs the updater in-process so the project's `modelRoles` land in
+  `<cwd>/.omp/config.yml`. `--purpose` overrides the discovered usecase; `--roles`
+  overrides the role set (`-name` drops a shipped role, `name` keeps/adds one,
+  `name=purpose` adds a new role); `--dry-run` writes nothing; without `--force` an
+  existing project role config is refused. It warns when `<cwd>/.omp` differs from
+  `findProjectAnchor()` (a session launched in a subdirectory). The explorer stays
+  user-level only — project roles do not appear there.
 - **Role authoring**: `node src/cli/create-role.ts --name <role> --weights m=w,...` writes a
   validated role def into the settings lock file (backup + atomic write); the shipped
   skill `omp-llm-role-create-agent` drives agent authoring + role creation + verification

@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { applyFocusBenchmarks, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_METRIC_CAP, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, type CreateAgentRequest } from "../src/agent-create.ts";
+import { applyFocusBenchmarks, assessFocusMetric, belowBarReason, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_DISPERSION_FLOOR, FOCUS_METRIC_CAP, FOCUS_ORG_MIN_SHARE, FOCUS_STALENESS_MONTHS, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, type CreateAgentRequest, type FocusMetricAssessment } from "../src/agent-create.ts";
 import type { BenchmarkCatalogEntry } from "../src/benchmark-sources.ts";
-import { rankRole, type Model, type RoleDef } from "../src/engine.ts";
+import { buildModels, rankRole, type Model, type RoleDef } from "../src/engine.ts";
 import { isRecord } from "../src/guards.ts";
 import { fitArchetype } from "../src/role-archetypes.ts";
 import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
-import { makeModel } from "./helpers.ts";
+import { makeModel, makeRow } from "./helpers.ts";
 
 /** Temp home: a lock file with a plugins block, plus an agents dir the plugin
  * resolves through `OMP_LLM_ROLE_AGENT_DIR` (src/state.ts `agentDir`). */
@@ -439,14 +439,18 @@ test("applyFocusBenchmarks annotates coverage and warns below the bar", () => {
     total: 400,
     covered: { gpqa: 20, writing: 4 },
   });
-  assert.deepEqual(applied.coverage.gpqa, { covered: 20, total: 400, share: 0.05, fill: 0, status: "below-bar" });
-  assert.equal(applied.coverage.writing.status, "ok");
-  assert.equal(applied.coverage.writing.fill, 0.195);
+  assert.deepEqual(applied.assessments.gpqa.coverage, { covered: 20, total: 400, share: 0.05, fill: 0, status: "below-bar" });
+  assert.equal(applied.assessments.writing.coverage.status, "ok");
+  assert.equal(applied.assessments.writing.coverage.fill, 0.195);
+  // Without a loaded pool the three new axes are unknown, never a silent ok.
+  assert.equal(applied.assessments.gpqa.dispersion.status, "unknown");
+  assert.equal(applied.assessments.gpqa.composition.status, "unknown");
+  assert.equal(applied.assessments.gpqa.freshness.status, "unknown");
 
   // Unknown field size: annotated, not warned.
   const unknown = applyFocusBenchmarks(base, ["gpqa"], { total: null, covered: {} });
-  assert.equal(unknown.coverage.gpqa.status, "unknown");
-  assert.equal(unknown.coverage.gpqa.share, null);
+  assert.equal(unknown.assessments.gpqa.coverage.status, "unknown");
+  assert.equal(unknown.assessments.gpqa.coverage.share, null);
 });
 
 test("extractBenchmarks ignores the always-weighted backbone but keeps reasoning", () => {
@@ -544,4 +548,197 @@ test("parseCreateAgentInput carries the discovery flags", () => {
   assert.equal(explicit.explicitBenchmarks, true);
   assert.deepEqual(explicit.request.extraBenchmarks, ["writing"]);
   assert.equal(explicit.noDiscover, false);
+});
+
+// ---------------------------------------------------------------------------
+// The four-axis focus-metric assessment (issue #17)
+// ---------------------------------------------------------------------------
+
+/** A pool with distinct orgs and release dates, for the assessment axes. */
+function assessmentPool(): Model[] {
+  const models = [makeModel("a", 30, 1, 50), makeModel("b", 40, 1, 50), makeModel("c", 50, 1, 50), makeModel("d", 60, 1, 50)];
+  models[0].org = "Alpha";
+  models[1].org = "Alpha";
+  models[2].org = "Beta";
+  models[3].org = "Gamma";
+  for (const m of models) m.releaseDate = "2025-06-01";
+  return models;
+}
+
+test("assessFocusMetric: dispersion is gated on the floor and unknown below two values", () => {
+  const models = assessmentPool();
+  models[0].metrics.aime = 0.2;
+  models[1].metrics.aime = 0.5;
+  models[2].metrics.aime = 0.8;
+  models[3].metrics.aime = 0.9;
+  const spread = assessFocusMetric(models, "aime");
+  assert.equal(spread.dispersion.status, "ok");
+  assert.ok(spread.dispersion.value !== null && spread.dispersion.value > FOCUS_DISPERSION_FLOOR);
+
+  // Saturated: all ~0.5, IQR/median under the floor.
+  models[0].metrics.aime = 0.5;
+  models[1].metrics.aime = 0.51;
+  models[2].metrics.aime = 0.52;
+  models[3].metrics.aime = 0.53;
+  const flat = assessFocusMetric(models, "aime");
+  assert.equal(flat.dispersion.status, "below-bar");
+  assert.ok(flat.dispersion.value !== null && flat.dispersion.value < FOCUS_DISPERSION_FLOOR);
+
+  // Fewer than two covered values: no scale to divide by.
+  const one = assessmentPool();
+  one[0].metrics.aime = 0.5;
+  assert.equal(assessFocusMetric(one, "aime").dispersion.status, "unknown");
+});
+
+test("assessFocusMetric: the cardinal transform makes index and 0-1 metrics comparable", () => {
+  // Raw index 20/40/60 -> (v+20)/80 = 0.5/0.75/1.0; the same normalized spread as
+  // a 0-1 benchmark at 0.5/0.75/1.0, so one floor covers both.
+  const index = [makeModel("a", 20, 1, 50), makeModel("b", 40, 1, 50), makeModel("c", 60, 1, 50)];
+  const bench = [makeModel("a", 30, 1, 50), makeModel("b", 30, 1, 50), makeModel("c", 30, 1, 50)];
+  bench[0].metrics.aime = 0.5;
+  bench[1].metrics.aime = 0.75;
+  bench[2].metrics.aime = 1.0;
+  const a = assessFocusMetric(index, "general");
+  const b = assessFocusMetric(bench, "aime");
+  assert.ok(a.dispersion.value !== null && b.dispersion.value !== null);
+  assert.ok(Math.abs(a.dispersion.value - b.dispersion.value) < 1e-9, `${a.dispersion.value} vs ${b.dispersion.value}`);
+});
+
+test("assessFocusMetric: composition flags an org the covered set omits, ignoring rare orgs", () => {
+  const models = assessmentPool(); // Alpha×2, Beta, Gamma
+  for (const m of models) m.metrics.gpqa = 0.5;
+  assert.equal(assessFocusMetric(models, "gpqa").composition.status, "ok");
+
+  // Only Alpha covered: Beta and Gamma (each 25% of the pool) are omitted.
+  models[2].metrics.gpqa = null;
+  models[3].metrics.gpqa = null;
+  const skewed = assessFocusMetric(models, "gpqa");
+  assert.equal(skewed.composition.status, "below-bar");
+  assert.deepEqual(skewed.composition.omittedOrgs, ["Beta", "Gamma"]);
+
+  // An org below the minimum pool share is ignored (1/20 = 5% < 10%).
+  const rare: Model[] = [];
+  for (let i = 0; i < 19; i++) rare.push(makeModel(`a${i}`, 30, 1, 50));
+  rare.push(makeModel("rare", 30, 1, 50));
+  rare[19].org = "Rare";
+  for (let i = 0; i < 19; i++) rare[i].metrics.gpqa = 0.5;
+  assert.equal(assessFocusMetric(rare, "gpqa").composition.status, "ok");
+  assert.ok(FOCUS_ORG_MIN_SHARE > 1 / 20);
+});
+
+test("assessFocusMetric: freshness compares the covered set to the pool's newest", () => {
+  const models = assessmentPool();
+  for (const m of models) m.metrics.gpqa = 0.5;
+  assert.equal(assessFocusMetric(models, "gpqa").freshness.status, "ok");
+
+  // The covered set (Alpha, old) trails the pool's newest (Beta/Gamma, new).
+  models[0].releaseDate = "2025-01-01";
+  models[1].releaseDate = "2025-01-01";
+  models[2].metrics.gpqa = null;
+  models[3].metrics.gpqa = null;
+  const stale = assessFocusMetric(models, "gpqa");
+  assert.equal(stale.freshness.status, "below-bar");
+  assert.ok(stale.freshness.monthsBehind !== null && stale.freshness.monthsBehind > FOCUS_STALENESS_MONTHS);
+
+  // A missing date degrades to unknown.
+  for (const m of models) m.releaseDate = null;
+  assert.equal(assessFocusMetric(models, "gpqa").freshness.status, "unknown");
+});
+
+test("assessFocusMetric: an empty pool or an unloaded metric is all-unknown", () => {
+  // Unknown field size: every axis unknown.
+  const empty = assessFocusMetric([], "gpqa");
+  assert.equal(empty.coverage.status, "unknown");
+  assert.equal(empty.dispersion.status, "unknown");
+  assert.equal(empty.composition.status, "unknown");
+  assert.equal(empty.freshness.status, "unknown");
+
+  // A `bench:<id>` absent from the pool: its scores were not loaded, so the new
+  // axes are unknown — never a silent ok.
+  const unloaded = assessFocusMetric(assessmentPool(), "bench:deepswe-1_1");
+  assert.equal(unloaded.coverage.covered, 0);
+  assert.equal(unloaded.coverage.status, "unknown");
+  assert.equal(unloaded.dispersion.status, "unknown");
+  assert.equal(unloaded.composition.status, "unknown");
+  assert.equal(unloaded.freshness.status, "unknown");
+});
+
+test("belowBarReason names the failed axis", () => {
+  const models = assessmentPool();
+  models[0].metrics.aime = 0.5;
+  models[1].metrics.aime = 0.51;
+  models[2].metrics.aime = 0.52;
+  models[3].metrics.aime = 0.53;
+  assert.match(belowBarReason(assessFocusMetric(models, "aime")) ?? "", /dispersion 0\.0\d+ below the 0\.05 bar/);
+  assert.equal(belowBarReason(assessFocusMetric([], "aime")), null);
+});
+
+test("discoverBenchmarks drops a below-bar candidate with the failed axis in the reason", async () => {
+  const catalog: BenchmarkCatalogEntry[] = [
+    { id: "saturated", name: "Saturated", description: "coding", categories: ["coding"], modelCount: 300 },
+  ];
+  const belowBar: FocusMetricAssessment = {
+    coverage: { covered: 300, total: 400, share: 0.75, fill: 0, status: "ok" },
+    dispersion: { value: 0.03, status: "below-bar" },
+    composition: { omittedOrgs: [], status: "ok" },
+    freshness: { newestCovered: "2025-06-01", newestPool: "2025-06-01", monthsBehind: 0, status: "ok" },
+  };
+  const result = await discoverBenchmarks("coding", catalog, async () => ["saturated"], [], 400, async () => belowBar);
+  assert.deepEqual(result.discovered, []);
+  assert.equal(result.dropped.length, 1);
+  assert.match(result.dropped[0].reason, /dispersion 0\.030 below the 0\.05 bar/);
+});
+
+test("the drop/warn split: a discovered below-bar candidate is dropped, a named one kept and warned", async () => {
+  const catalog: BenchmarkCatalogEntry[] = [
+    { id: "saturated", name: "Saturated", description: "coding", categories: ["coding"], modelCount: 300 },
+  ];
+  const belowBar: FocusMetricAssessment = {
+    coverage: { covered: 300, total: 400, share: 0.75, fill: 0, status: "ok" },
+    dispersion: { value: 0.03, status: "below-bar" },
+    composition: { omittedOrgs: [], status: "ok" },
+    freshness: { newestCovered: "2025-06-01", newestPool: "2025-06-01", monthsBehind: 0, status: "ok" },
+  };
+  const discovered = await discoverBenchmarks("coding", catalog, async () => ["saturated"], [], 400, async () => belowBar);
+  assert.deepEqual(discovered.discovered, []);
+  assert.equal(discovered.dropped.length, 1);
+
+  // The same metric named by the user is kept and annotated, never dropped.
+  const base = { general: 0.4, code: 0.2, price: 0.2, throughput: 0.2 };
+  const applied = applyFocusBenchmarks(base, ["bench:saturated"], {
+    total: 400,
+    covered: { "bench:saturated": 300 },
+    assessments: { "bench:saturated": belowBar },
+  });
+  assert.deepEqual(applied.added, ["bench:saturated"]);
+  assert.equal(applied.assessments["bench:saturated"].dispersion.status, "below-bar");
+  assert.ok(applied.weights["bench:saturated"] !== undefined);
+});
+
+test("formatCreateAgentReport prints the four signals and warns per below-bar axis", () => {
+  const { lockPath } = workspace();
+  const belowBar: FocusMetricAssessment = {
+    coverage: { covered: 300, total: 400, share: 0.75, fill: 0, status: "ok" },
+    dispersion: { value: 0.03, status: "below-bar" },
+    composition: { omittedOrgs: ["Beta"], status: "below-bar" },
+    freshness: { newestCovered: "2025-01-01", newestPool: "2025-06-01", monthsBehind: 5, status: "below-bar" },
+  };
+  const result = createAgent(request(lockPath, {
+    dryRun: true,
+    extraBenchmarks: ["gpqa"],
+    coverage: { total: 400, covered: { gpqa: 300 }, assessments: { gpqa: belowBar } },
+  }));
+  assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+  const report = formatCreateAgentReport(result, "ranking…");
+  assert.match(report, /coverage:\s+gpqa 300\/400 \(75\.0%\) ok\s+dispersion 0\.030 below-bar\s+composition omits Beta\s+freshness 5\.0mo below-bar/);
+  assert.match(report, /warning:\s+gpqa dispersion 0\.030 is below the 0\.05 bar/);
+  assert.match(report, /warning:\s+gpqa omits Beta/);
+  assert.match(report, /warning:\s+gpqa trails the pool by 5\.0 months/);
+});
+
+test("buildModels carries the row's release_date onto the model record", () => {
+  const [model] = buildModels([makeRow({ release_date: "2025-01-02" })]);
+  assert.equal(model.releaseDate, "2025-01-02");
+  const [missing] = buildModels([makeRow()]);
+  assert.equal(missing.releaseDate, null);
 });

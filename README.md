@@ -120,6 +120,10 @@ Per-role knobs (`roles.<name>.*`):
 | `weights` | shipped set | Metric weights; must sum to 1.0 ± 0.01 |
 | `required` | shipped set | Eligibility gate (metrics a model must have); independent of weights |
 | `filters.image` | `false` (`vision`/`designer`: `true`) | Restrict the pool to image-capable models |
+| `filters.tools` | `false` | Restrict the pool to models with a tool-capable route |
+| `filters.minContextTokens` | `0` (off) | Drop routes whose endpoint context is below this (tokens) |
+| `filters.minOutputTokens` | `0` (off) | Drop routes whose endpoint output ceiling is below this (tokens) |
+| `filters.maxPriceUsdPerM` | `0` (off) | Drop a model whose thinking-adjusted blend exceeds this ($/M) |
 | `thinking` | shipped level | Thinking level appended to the selector (`off`…`max`, `auto`) |
 | `lambda` | derived | Explicit λ ($ per quality point) override |
 | `locked` | `false` | Leave the role alone: rank it but never rewrite its selector or chain (explorer toggle) |
@@ -144,6 +148,7 @@ with the offending role/key and no write.
 /create-agent <request> [options]       # agent + role + wiring (free text or flags)
 /create-agent --name <n> --purpose <text> [options]   # agent + role + wiring
 /remove-agent --name <n> [--scope user|project] [--lock PATH] [--yes] [--dry-run]   # delete an agent and its role
+/project-roles [--purpose <text>] [--roles <spec>] [--force] [--yes] [--dry-run] [--json]   # project-scoped role set
 
 # CLI
 node src/cli/llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]
@@ -161,6 +166,9 @@ node --test tests/
 - `/remove-agent` — the inverse of `/create-agent`: deletes the agent `.md` and
   its role, then runs the updater in-process so `modelRoles.<n>` is dropped;
   refuses shipped default roles (see *Remove a specialist agent*).
+- `/project-roles` — discover the project's usecase from its own artifacts and
+  apply a project-scoped role set to `<cwd>/.omp/config.yml` (see *Project
+  roles*).
 - `src/cli/llm-role-rank.ts` — markdown report to stdout (per-role tables + suggested
   `modelRoles`). `--top N` rows per role (default 10); `--json` machine payload;
   `--out FILE` write instead of stdout; `--refresh` bypass both caches; `--all`
@@ -193,13 +201,15 @@ agent is ranked on WritingBench, Creative Writing v3, COLLIE and the other
 writing benchmarks, not just the one you named. Discovery is non-fatal and
 skippable with `--no-discover`; an explicit `--benchmarks` list wins over it.
 
-Discovery is **coverage-safe**: a benchmark that covers too little of the field
-to rank on (a sparse pass-rate metric, below 35% of the models) is dropped rather
-than folded in, and the focus set is capped at three benchmarks so one keeps a
-decisive share. The report prints each focus metric's coverage and warns when one
-is below the bar, and warns when the new role's top pick is the same as the
-`default` role's (the role adds nothing). The agent file is written before the
-role, so a partial failure never leaves a dangling role.
+Discovery is **quality-gated**: each candidate is assessed on four axes —
+coverage (share of the field carrying the metric), dispersion (does it separate
+models), provider composition and freshness — and a discovered benchmark that
+fails any axis is dropped rather than folded in (a benchmark you name yourself is
+never dropped, only warned). The focus set is capped at three benchmarks so one
+keeps a decisive share. The report prints the four signals and warns per below-bar
+axis, and warns when the new role's top pick is the same as the `default` role's
+(the role adds nothing). The agent file is written before the role, so a partial
+failure never leaves a dangling role.
 
 The flag form is equivalent and gives you the name explicitly:
 
@@ -260,6 +270,31 @@ By hand, the same two artifacts:
    the lock file directly).
 2. Delete the agent file: `rm ~/.omp/agent/agents/review.md`.
 3. Wire it: `/refresh-roles` in a session.
+
+## Project roles
+
+`/project-roles` discovers a project's usecase from its own artifacts (README,
+package.json, AGENTS.md, docs listing, git log, file tree) and applies a
+**project-scoped** role set — the roles the project needs, with agents authored
+for the new ones — to `<cwd>/.omp/config.yml`:
+
+```sh
+/project-roles
+/project-roles --purpose "a Python data pipeline repo" --dry-run
+/project-roles --roles "data=build pipelines,-vision,default"
+```
+
+It prints the plan (kept / dropped / added roles, each new role's archetype,
+weights, focus benchmarks and top pick) before writing. `--purpose` overrides the
+discovered usecase; `--roles` overrides the role set (`-name` drops a shipped
+role, `name` keeps or adds one, `name=purpose` adds a new role); `--dry-run`
+writes nothing; without `--force` an existing project role config is refused.
+
+When a project carries its own `omp-llm-role` settings entry, the updater scopes
+the whole run to `<cwd>/.omp` — the config, the state/history/lock files and the
+day gate — so the project's `modelRoles` are refreshed independently of the
+global `~/.omp/agent/config.yml`, which is never written in project mode. The
+explorer stays user-level only: project roles do not appear there.
 
 ## Explorer
 

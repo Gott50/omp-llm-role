@@ -15,10 +15,10 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { computeRankings, loadRankData, META_LEVELS, type Ranked, type RankData } from "./engine.ts";
+import { computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, type Ranked, type RankData } from "./engine.ts";
 import { currentRankingId, enrichThinkingLevels, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
-import { readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
+import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
 
@@ -34,6 +34,9 @@ export type Decision = {
   currentValue: number | null;
   /** Catalog ids probed blocked (provider allowlist) while selecting this role. */
   blocked: string[];
+  /** Ranking ids dropped by the role's endpoint capability filters (no capable
+   * standard-tier route) — recorded like a probe-blocked candidate. */
+  endpointBlocked: string[];
   /** Availability source for this role's selection: the keyed-catalog fast path or the probe walk. */
   availabilitySource: "keyed-catalog" | "probe";
   /** Candidates pruned as key-blocked (present in the public catalog, absent from the keyed one). */
@@ -91,9 +94,10 @@ function decisionLine(d: Decision): string {
   const from = d.from ?? "(unset)";
   const scores = `value ${d.value.toFixed(3)}, best ${d.bestValue.toFixed(3)}${d.currentValue == null ? "" : `, was ${d.currentValue.toFixed(3)}`}`;
   const blocked = d.blocked.length > 0 ? `; blocked: ${d.blocked.join(", ")}` : "";
+  const endpoint = d.endpointBlocked.length > 0 ? `; endpoint-blocked: ${d.endpointBlocked.join(", ")}` : "";
   return d.from === d.to
-    ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked})`
-    : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked})`;
+    ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked}${endpoint})`
+    : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked}${endpoint})`;
 }
 
 /**
@@ -177,6 +181,19 @@ function writePatch(configPath: string, dir: string, patch: ConfigPatch): { stat
   }
 }
 
+/**
+ * The project dir omp reads for the current session (`<cwd>/.omp`), or null when
+ * the project carries no `omp-llm-role` settings entry — then the global
+ * behavior applies. omp resolves the project dir as `<cwd>/.omp` with no
+ * walk-up, so the plugin's project-scope read must use the same dir (not the
+ * walk-up anchor `findProjectAnchor` returns).
+ */
+function resolveProjectDir(): string | null {
+  const projectDir = join(process.cwd(), ".omp");
+  const raw = readPluginSettingsMap({ global: join(projectDir, "plugins", "omp-plugins.lock.json"), project: null });
+  return Object.keys(raw).length > 0 ? projectDir : null;
+}
+
 export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: boolean; dryRun?: boolean }): Promise<RunResult> {
   const notifyAll = trigger !== "session-start" || opts?.dryRun === true;
   const abort = (lines: string[]): RunResult => {
@@ -184,9 +201,14 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     return { decisions: [], wrote: false, aborted: lines[0] };
   };
   try {
-    const state = loadState();
+    // Project-aware resolution (issue #27): when the project has its own role
+    // config, the whole run — config, state, history, lock — is scoped to
+    // `<cwd>/.omp`; otherwise the global agent dir is used exactly as before.
+    const projectDir = resolveProjectDir();
+    const dir = projectDir ?? agentDir();
+    const state = loadState(dir);
     const today = deps.nowUtcDay();
-    const raw = (await deps.getSettings?.()) ?? readPluginSettingsMap();
+    const raw = (await deps.getSettings?.()) ?? readPluginSettingsMap(projectDir !== null ? { global: PLUGIN_SETTINGS_PATH, project: projectLockPath() } : undefined);
     const { settings, errors } = resolveSettings(raw);
     if (errors.length > 0) return abort([`omp-llm-role settings invalid, no write:`, ...errors.map((e) => `  ${e}`)]);
 
@@ -199,7 +221,6 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         .map(([n]) => n),
     );
 
-    const dir = agentDir();
     const configPath = join(dir, "config.yml");
     const agentDisables = agentDisablePatch(raw, settings, state.managedDisabledAgents);
     const nextManagedDisabled = agentDisables.agentDisableAdds;
@@ -387,6 +408,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         bestValue: best.ranked.value,
         currentValue: currentEntry?.ranked.value ?? null,
         blocked: blockedForRole,
+        endpointBlocked: endpointFilterDrops(def, rank.models),
         availabilitySource: availability.active ? "keyed-catalog" : "probe",
         keyBlockedCount,
       });

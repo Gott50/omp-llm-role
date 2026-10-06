@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { setupProject, type ProjectProfile, type SetupProjectOpts } from "../src/project-setup.ts";
+import { applyProfileOverrides, formatProjectRolesReport, parseProjectRolesArgs, parseRolesSpec, setupProject, type ProjectProfile, type SetupProjectOpts } from "../src/project-setup.ts";
 import { DEFAULT_ROLES, findProjectAnchor, projectLockPath, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 
 type Workspace = { root: string; projectDir: string; lockPath: string; configPath: string; agentsDir: string };
@@ -197,4 +197,65 @@ test("readPluginSettingsMap defaults the project source to <cwd>/.omp", () => {
   } finally {
     process.chdir(previous);
   }
+});
+
+test("parseProjectRolesArgs parses the flags and the --roles spec", () => {
+  const parsed = parseProjectRolesArgs('--purpose "a Python data repo" --roles "data=build pipelines,-vision,default" --force --yes --dry-run --json');
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+  assert.equal(parsed.purpose, "a Python data repo");
+  assert.equal(parsed.force, true);
+  assert.equal(parsed.yes, true);
+  assert.equal(parsed.dryRun, true);
+  assert.equal(parsed.json, true);
+  assert.deepEqual(parsed.roles, [
+    { name: "data", purpose: "build pipelines" },
+    { name: "vision", purpose: "", keep: false },
+    { name: "default", purpose: "" },
+  ]);
+});
+
+test("parseProjectRolesArgs defaults to no overrides and reports unknown flags", () => {
+  const empty = parseProjectRolesArgs("");
+  assert.ok(empty.ok);
+  assert.equal(empty.purpose, undefined);
+  assert.equal(empty.roles, undefined);
+  assert.equal(empty.force, false);
+  assert.equal(empty.dryRun, false);
+
+  const help = parseProjectRolesArgs("--help");
+  assert.ok(help.ok);
+  assert.equal(help.help, true);
+
+  const bad = parseProjectRolesArgs("--nope");
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /unknown flag/);
+});
+
+test("parseRolesSpec rejects a malformed entry", () => {
+  assert.equal(typeof parseRolesSpec("data="), "string");
+  assert.equal(typeof parseRolesSpec("-"), "string");
+  assert.equal(typeof parseRolesSpec(""), "string");
+});
+
+test("applyProfileOverrides replaces the summary and the role set", () => {
+  const base: ProjectProfile = { summary: "discovered", domain: "d", primaryWork: [], stack: [], needs: [], roles: [{ name: "vision", purpose: "x", keep: false }] };
+  const overridden = applyProfileOverrides(base, { purpose: "corrected", roles: [{ name: "data", purpose: "build pipelines" }] });
+  assert.equal(overridden.summary, "corrected");
+  assert.deepEqual(overridden.roles, [{ name: "data", purpose: "build pipelines" }]);
+  // No override leaves the profile untouched.
+  assert.deepEqual(applyProfileOverrides(base, {}), base);
+});
+
+test("formatProjectRolesReport lists kept/dropped/added and each new role's weights", () => {
+  const ws = workspace();
+  const result = setupProject(DATA_SCIENCE, opts(ws, { dryRun: true }));
+  assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+  const report = formatProjectRolesReport(DATA_SCIENCE, result, { topPicks: { data: "openrouter/org/model-a" }, warnings: ["a divergence warning"] });
+  assert.match(report, /kept:/);
+  assert.match(report, /dropped: vision, designer/);
+  assert.match(report, /added:   data/);
+  assert.match(report, /@data \[/);
+  assert.match(report, /weights: /);
+  assert.match(report, /top pick: openrouter\/org\/model-a/);
+  assert.match(report, /warning: a divergence warning/);
 });

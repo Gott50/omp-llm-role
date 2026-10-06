@@ -4,12 +4,13 @@
  * from the fetched content. The extension then dry-runs the declaration (fetch,
  * parse, join, coverage/leader) and asks the user to confirm before it is saved.
  *
- * This module is extension-only: it imports `@oh-my-pi/pi-coding-agent`, which
- * only resolves inside omp. The tests import the pure validation/execution path
- * in `src/benchmark-sources.ts` instead.
+ * This module is extension-only: it imports `@oh-my-pi/pi-coding-agent`
+ * dynamically, inside the function (the SDK only resolves inside omp; a static
+ * import failure would be fatal to the whole `extension.ts` load). The tests
+ * import the pure validation/execution path in `src/benchmark-sources.ts`
+ * instead.
  */
 
-import { createAgentSession } from "@oh-my-pi/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { fetchText, parseSourceDeclaration, type SourceDeclaration } from "./benchmark-sources.ts";
 import { extractAssistantText, extractJsonObject } from "./agent-architect.ts";
@@ -47,6 +48,10 @@ export type BenchmarkAuthorOptions = {
  */
 export async function authorBenchmarkSource(opts: BenchmarkAuthorOptions): Promise<SourceDeclaration> {
   const content = (await fetchText(opts.link)).slice(0, MAX_CONTENT);
+  // Dynamic, inside the function: `@oh-my-pi/pi-coding-agent` only resolves
+  // inside omp, and a static import failure would be fatal to the whole
+  // `extension.ts` load (see `agent-architect.ts`).
+  const { createAgentSession } = await import("@oh-my-pi/pi-coding-agent");
   const { session } = await createAgentSession({
     cwd: opts.cwd,
     model: opts.model as never,

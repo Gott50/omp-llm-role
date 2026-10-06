@@ -80,6 +80,6 @@ External material that informs (but does not bind) the design. Not contracts.
   — Kai's "OpenRouter is quietly giving nerfed AI models" video, mapped onto the
   project's OpenRouter data model; confirms the `1/price²` blend, argues
   quantization labels are not a quality signal, and records the per-endpoint
-  capability ceilings (context, max output, tool support) the project already
-  fetches but discards, plus the cache-pricing cost gap. Source transcript
+  capability ceilings (context, max output, tool support) the project now uses as
+  role filters (issue #18), plus the cache-pricing cost gap. Source transcript
   alongside it (`openrouter-endpoint-routing.transcript.txt`).

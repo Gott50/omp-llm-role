@@ -128,11 +128,14 @@ effect on the next session.
   `src/benchmark-discovery.ts`) and folds them in. The resolved benchmark
   labels are given to the architect (and, on the template path, listed in the
   body's `<criteria>`), so the agent's rubric names the benchmark its model was
-  chosen on. Discovery is **coverage-safe**: a candidate whose metric is fill-0
-  and whose catalog coverage is below `FOCUS_COVERAGE_FLOOR` (35% of the ranking
-  field) is dropped, not folded in, and the focus set is capped at
-  `FOCUS_METRIC_CAP` (3) so one benchmark keeps a decisive share. The report
-  prints each focus metric's coverage and warns below the bar; `--dry-run` and
+  chosen on. Discovery is **quality-gated**: the pre-fetch catalog gate is
+  count-only, and the handler then probe-fetches each selected candidate's source
+  and assesses the joined pool on four axes (`assessFocusMetric`: coverage,
+  dispersion, composition, freshness — see scoring.md). A **discovered** candidate
+  below-bar on any axis is dropped non-fatally with a reason naming the axis; a
+  **user-named** metric is never dropped — it is annotated and warned. The focus
+  set is capped at `FOCUS_METRIC_CAP` (3) so one benchmark keeps a decisive share.
+  The report prints the four signals and warns per below-bar axis; `--dry-run` and
   `--json` carry the same signal. The agent file is written **before** the role,
   so a partial failure leaves a harmless agent (its `@<name>, @default` chain
   falls back to `@default`) rather than a dangling role; a failed role write
@@ -141,6 +144,12 @@ effect on the next session.
   agent is never destroyed. The step-3 benchmark prompt previews the request's
   resolved weights (`resolveRole`), so the "already in this role's weights"
   marker appears live.
+- **`/project-roles`** (in-session) discovers the project's usecase from its own
+  artifacts through the profile architect, then authors an agent per new role
+  **into the project scope** (`<cwd>/.omp/agents/`) and writes the project's
+  `modelRoles` to `<cwd>/.omp/config.yml`. The agents are ordinary `.md` files
+  under the project dir, discovered by omp's nearest-project lookup (project >
+  user > plugin) and by `discoverAgentPins`.
 - **The shipped skill** — the hand-driven workflow, for bodies that need real
   authoring rather than the archetype scaffold.
 

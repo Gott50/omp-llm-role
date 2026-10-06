@@ -117,6 +117,13 @@ a quality signal.
 
 ### 3. The capability-ceiling axis is real — and the data is already fetched
 
+> **Update (2026-10-06, issue #18):** this axis has since **landed**.
+> `narrowEndpointRecord` now reads `context_length`, `max_completion_tokens` and
+> `supported_parameters` (tools), and the role `filters` (`tools`,
+> `minContextTokens`, `minOutputTokens`, `maxPriceUsdPerM`) gate the route pool on
+> them. The paragraphs below record the pre-landing state that motivated the
+> change.
+
 The project's `context` is **model-level** (llm-stats `context`) and is report-only,
 never scored. The endpoint pool is filtered only by tier/status/free/price. The
 video's "looks dumb but isn't" failure mode — a reasoning model cut off by a low
@@ -143,6 +150,10 @@ model granularity; the endpoint-granular cap the video is actually about is the
 unused half.
 
 ### 4. Tool support is a per-endpoint property the project doesn't model
+
+> **Update (2026-10-06, issue #18):** `filters.tools` now gates the route pool on
+> the endpoint's `supported_parameters` containing `tools`; the `tool_calling`
+> index remains model-level.
 
 The project's `tool_calling` metric is the llm-stats index (model-level). The
 video's point is that tool support is per-endpoint: 26 endpoints can't call
@@ -178,6 +189,8 @@ default.
   project wants to model "the endpoint can't finish the thought", the data is
   there — no new source. The `minContextTokens` filter already named in spec §6.3
   is a dormant hook, but it filters on model-level `context`, not the endpoint cap.
+  *(Landed 2026-10-06, issue #18: the ceilings are now read and the role filters
+  gate on them; `minContextTokens` now filters the endpoint `context_length`.)*
 - **Cache pricing is the open cost gap.** The project prices listed, not
   invoiced; a cache-heavy role is mispriced. Not actionable without per-endpoint
   cache-hit data (the video cites DeepSeek 94.5% vs 51–69%).

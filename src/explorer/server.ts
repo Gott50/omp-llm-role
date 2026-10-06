@@ -25,7 +25,7 @@ import { SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData
 import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
 import { KNOWN_METRICS, type UniverseEntry } from "../settings.ts";
-import { explainModel, metricMetaFor, rankRows, weightableMetrics } from "./explain.ts";
+import { explainModel, focusAssessments, metricMetaFor, rankRows, weightableMetrics } from "./explain.ts";
 
 export type ExplorerOpts = {
   webDir: string;
@@ -138,12 +138,19 @@ function bootstrapPayload(opts: ExplorerOpts): object {
     for (const metric of Object.keys(def.weights)) if (!(metric in KNOWN_METRICS)) external.add(metric);
   }
   const metrics = weightableMetrics([...external]);
+  const declared = loadDeclaredSources();
+  // Four-axis assessment of each role's focus metrics, over the same resolved
+  // dataset the updater ranks on (so the explorer and the updater agree).
+  const focus = Object.fromEntries(
+    Object.entries(state.roles).map(([role, def]) => [role, focusAssessments(state.rank.models, def, declared)]),
+  );
   return {
     roles: state.roles,
     defaults: state.defaults,
     universe: state.universe,
     metrics,
-    metricMeta: metricMetaFor(metrics, loadDeclaredSources()),
+    metricMeta: metricMetaFor(metrics, declared),
+    focusAssessments: focus,
     levels: Object.keys(SUFFIX_LEVELS),
     thinkingFactors: thinkingFactors(),
     fetchedAt: state.rank.fetchedAt,

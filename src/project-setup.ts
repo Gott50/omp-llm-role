@@ -21,6 +21,7 @@ import {
   checkWeightMath,
   createAgent,
   resolveRole,
+  tokenizeArgs,
   type AgentSpec,
   type CreateAgentRequest,
   type FocusCoverage,
@@ -77,6 +78,8 @@ export type SetupProjectResult =
       added: string[];
       /** The project's effective role set (kept shipped defs + new defs). */
       roles: Record<string, RoleDef>;
+      /** Archetype id each new role was fitted to, keyed by role name. */
+      archetypes: Record<string, string>;
       /** The project agent `.md` paths (planned on a dry run, written otherwise). */
       agents: string[];
       warnings: string[];
@@ -129,7 +132,7 @@ export function setupProject(profile: ProjectProfile, opts: SetupProjectOpts): S
 
   // Fit and validate each new role's weights.
   const validate = opts.validate ?? validateRole;
-  const plans: { name: string; request: CreateAgentRequest; def: RoleDef }[] = [];
+  const plans: { name: string; request: CreateAgentRequest; def: RoleDef; archetype: string }[] = [];
   for (const role of newRoles) {
     const name = role.name.trim();
     if (role.purpose.trim() === "") {
@@ -163,7 +166,7 @@ export function setupProject(profile: ProjectProfile, opts: SetupProjectOpts): S
     errors.push(...checkWeightMath(name, resolved.def.weights, resolved.def.required));
     errors.push(...validate(name, resolved.def));
     if (bench.dropped.length > 0) warnings.push(`role ${name}: focus benchmarks beyond the cap were dropped: ${bench.dropped.join(", ")}`);
-    plans.push({ name, request, def: resolved.def });
+    plans.push({ name, request, def: resolved.def, archetype: resolved.archetype.id });
   }
   if (errors.length > 0) return { ok: false, errors };
 
@@ -195,7 +198,9 @@ export function setupProject(profile: ProjectProfile, opts: SetupProjectOpts): S
   for (const plan of plans) roles[plan.name] = plan.def;
 
   const added = plans.map((plan) => plan.name);
-  if (opts.dryRun) return { ok: true, kept, dropped, added, roles, agents: agentPaths, warnings };
+  const archetypes: Record<string, string> = {};
+  for (const plan of plans) archetypes[plan.name] = plan.archetype;
+  if (opts.dryRun) return { ok: true, kept, dropped, added, roles, archetypes, agents: agentPaths, warnings };
 
   // 5. Write the project plugin settings, then create the project agents.
   if (Object.keys(dirty).length > 0) {
@@ -207,5 +212,147 @@ export function setupProject(profile: ProjectProfile, opts: SetupProjectOpts): S
     if (!result.ok) return { ok: false, errors: result.errors };
   }
 
-  return { ok: true, kept, dropped, added, roles, agents: agentPaths, warnings };
+  return { ok: true, kept, dropped, added, roles, archetypes, agents: agentPaths, warnings };
+}
+
+// ---------------------------------------------------------------------------
+// `/project-roles` argument parsing and the plan report, shared by the omp
+// command (which receives the raw text typed after the command name) and the
+// tests (which pass the same raw text). One parser, so the two cannot drift.
+// ---------------------------------------------------------------------------
+
+export const PROJECT_ROLES_USAGE = [
+  "Usage: /project-roles [options]",
+  "",
+  "  Discovers the project's usecase from its own artifacts (README, package.json,",
+  "  AGENTS.md, docs, git log, file tree), proposes a project-scoped role set, and",
+  "  applies it: the project plugin settings, the new roles' agents, and the",
+  "  project's modelRoles in <cwd>/.omp/config.yml.",
+  "",
+  "  --purpose <text>   override the discovered usecase (one sentence)",
+  "  --roles <spec>     override the role set: comma-separated entries;",
+  "                     `-name` drops a shipped role, `name` keeps/adds one,",
+  "                     `name=purpose` adds a new role with that purpose",
+  "  --force            overwrite an existing project role config",
+  "  --yes              apply without prompting",
+  "  --dry-run          print the plan without writing",
+  "  --json             print the result as JSON",
+].join("\n");
+
+/**
+ * Parse a `--roles` spec: comma-separated entries. `-name` drops a shipped role;
+ * `name` keeps a shipped role (or adds a new one, purpose defaulting to the
+ * name); `name=purpose` adds a new role with that purpose. Returns the proposed
+ * roles, or an error string.
+ */
+export function parseRolesSpec(spec: string): ProposedRole[] | string {
+  const roles: ProposedRole[] = [];
+  for (const raw of spec.split(",")) {
+    const entry = raw.trim();
+    if (entry === "") continue;
+    if (entry.startsWith("-")) {
+      const name = entry.slice(1).trim();
+      if (name === "") return `--roles: "-" needs a role name`;
+      roles.push({ name, purpose: "", keep: false });
+      continue;
+    }
+    const eq = entry.indexOf("=");
+    if (eq === -1) {
+      roles.push({ name: entry, purpose: entry in DEFAULT_ROLES ? "" : entry });
+      continue;
+    }
+    const name = entry.slice(0, eq).trim();
+    const purpose = entry.slice(eq + 1).trim();
+    if (name === "" || purpose === "") return `--roles: expected name=purpose, got "${entry}"`;
+    roles.push({ name, purpose });
+  }
+  if (roles.length === 0) return `--roles: no roles given`;
+  return roles;
+}
+
+export type ParsedProjectRolesArgs =
+  | { ok: true; purpose: string | undefined; roles: ProposedRole[] | undefined; force: boolean; yes: boolean; dryRun: boolean; json: boolean; help: boolean }
+  | { ok: false; error: string };
+
+/** Parse the raw text after `/project-roles` (tokenized here, so the command and
+ * the tests share one parser). */
+export function parseProjectRolesArgs(raw: string): ParsedProjectRolesArgs {
+  const argv = tokenizeArgs(raw);
+  let purpose: string | undefined;
+  let roles: ProposedRole[] | undefined;
+  let force = false;
+  let yes = false;
+  let dryRun = false;
+  let json = false;
+  let help = false;
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i];
+    if (flag === "--help" || flag === "-h") {
+      help = true;
+      continue;
+    }
+    if (flag === "--force") {
+      force = true;
+      continue;
+    }
+    if (flag === "--yes") {
+      yes = true;
+      continue;
+    }
+    if (flag === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (flag === "--json") {
+      json = true;
+      continue;
+    }
+    if (flag !== "--purpose" && flag !== "--roles") return { ok: false, error: `unknown flag "${flag}"\n\n${PROJECT_ROLES_USAGE}` };
+    const value = argv[++i];
+    if (value === undefined) return { ok: false, error: `${flag} requires a value\n\n${PROJECT_ROLES_USAGE}` };
+    if (flag === "--purpose") purpose = value;
+    else {
+      const parsed = parseRolesSpec(value);
+      if (typeof parsed === "string") return { ok: false, error: `${parsed}\n\n${PROJECT_ROLES_USAGE}` };
+      roles = parsed;
+    }
+  }
+  return { ok: true, purpose, roles, force, yes, dryRun, json, help };
+}
+
+/** Apply the `--purpose`/`--roles` overrides to a discovered profile. */
+export function applyProfileOverrides(profile: ProjectProfile, over: { purpose?: string; roles?: ProposedRole[] }): ProjectProfile {
+  return {
+    ...profile,
+    ...(over.purpose !== undefined ? { summary: over.purpose } : {}),
+    ...(over.roles !== undefined ? { roles: over.roles } : {}),
+  };
+}
+
+/** The human-readable plan for a `/project-roles` run. `topPicks` maps a new
+ * role name to its ranked leader (computed by the extension from the ranking
+ * universe); `warnings` are the divergence/coverage notes. */
+export function formatProjectRolesReport(
+  profile: ProjectProfile,
+  result: Extract<SetupProjectResult, { ok: true }>,
+  opts: { topPicks?: Record<string, string>; warnings?: readonly string[] } = {},
+): string {
+  const lines: string[] = ["project-roles: plan"];
+  lines.push(`  kept:    ${result.kept.join(", ") || "(none)"}`);
+  lines.push(`  dropped: ${result.dropped.join(", ") || "(none)"}`);
+  lines.push(`  added:   ${result.added.join(", ") || "(none)"}`);
+  for (const name of result.added) {
+    const def = result.roles[name];
+    const proposed = profile.roles.find((role) => role.name.trim() === name);
+    const weights = Object.entries(def.weights).map(([metric, weight]) => `${metric}=${weight}`).join(", ");
+    const focus = proposed?.benchmarks !== undefined && proposed.benchmarks.length > 0 ? proposed.benchmarks.join(", ") : "(archetype default)";
+    const top = opts.topPicks?.[name];
+    lines.push(`  @${name} [${result.archetypes[name] ?? "?"}]`);
+    lines.push(`    weights: ${weights}`);
+    lines.push(`    focus:   ${focus}`);
+    if (top !== undefined) lines.push(`    top pick: ${top}`);
+  }
+  for (const warning of opts.warnings ?? []) lines.push(`  warning: ${warning}`);
+  for (const warning of result.warnings) lines.push(`  warning: ${warning}`);
+  return lines.join("\n");
 }

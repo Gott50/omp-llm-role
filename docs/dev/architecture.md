@@ -25,33 +25,33 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 
 | File | Role / key exports |
 |---|---|
-| `src/engine.ts` | Ranking engine shared by CLI and plugin. Fetch/cache chain per source, cardinal transforms, value scoring. Exports `loadRankData`, `computeRankings`, `buildModels`, `rankRole`, `paretoFrontier`, `cardinalMetric`, `roleLambda`, `thinkingPriceFactor`, `CAPABILITY_FILL`, `SUFFIX_LEVELS`, `META_LEVELS`, `THINKING_TOKEN_OVERHEAD`, `parseFindData`, `parseModelPage`, `buildOpenRouterEnrichment`, `applyOpenRouterData`, `applyDesignPercentiles`, `applyWritingScores`, `extractFlight`, `extractJsonArray`, the cache readers/writers, and the `Model`/`RoleDef`/`Ranked`/`RankData` types. Re-exports `normalizeDesignId` and `parseWritingEvidence` from the benchmark-source registry. |
+| `src/engine.ts` | Ranking engine shared by CLI and plugin. Fetch/cache chain per source, cardinal transforms, value scoring. Exports `loadRankData`, `computeRankings`, `buildModels`, `rankRole`, `paretoFrontier`, `cardinalMetric`, `roleLambda`, `thinkingPriceFactor`, `CAPABILITY_FILL`, `SUFFIX_LEVELS`, `META_LEVELS`, `THINKING_TOKEN_OVERHEAD`, `parseFindData`, `parseModelPage`, `narrowEndpointRecord`, `buildOpenRouterEnrichment`, `applyOpenRouterData`, `hasEndpointFilters`, `routePassesEndpointFilters`, `modelPassesEndpointFilters`, `endpointFilterDrops`, `applyDesignPercentiles`, `applyWritingScores`, `extractFlight`, `extractJsonArray`, the cache readers/writers, and the `Model`/`RoleDef`/`Ranked`/`RankData`/`OpenRouterEndpointRecord` types. Re-exports `normalizeDesignId` and `parseWritingEvidence` from the benchmark-source registry. |
 | `src/benchmark-sources.ts` | The benchmark-source registry: the single source of truth for which sources exist, what metric each feeds, and how to fetch/parse/join each. Exports `BENCHMARK_SOURCES` (the shipped static sources), `resolveBenchmarkSource`, `declaredSourceForLink`, `sourceForMetric`, `parseBenchmarkPayload`, `loadBenchmarkScores`, `applyBenchmarkScores`, `joinBenchmarkScores`, `normalizeMetricKey`, `externalMetricKey`, `normalizeDesignId`, `parseWritingEvidence`, `parseLlmStatsBenchmark`, `parseBenchmarkCatalog`, `loadBenchmarkCatalog`, `catalogMetric`, `SHIPPED_CATALOG_METRICS`, the declarative-source surface (`SourceDeclaration`, `validateDeclaration`, `parseSourceDeclaration`, `loadDeclaredSources`, `saveDeclaredSource`, `declaredSourcesPath`, `declarationToSource`, `executeDeclaration`, `llmStatsBenchmarkDeclaration`, `genericBenchmarkSource`, `dryRunDeclaration`), the fetch helpers (`fetchJson`, `fetchText`), and the `BenchmarkSource`/`JoinRule`/`BenchmarkScores`/`DeclarationDryRun` types. Imports `engine.ts` for types only, so there is no runtime cycle. |
 | `src/settings.ts` | Shipped defaults and the settings merge/validate path. Exports `DEFAULT_ROLES`, `DEFAULT_SETTINGS`, `SHIPPED_AGENTS`, `KNOWN_METRICS`, `isKnownMetric` (a shipped key or an external `<ns>:<local>`), `PLUGIN_SETTINGS_PATH`, `ACTIVATE_DEFAULT_KEY`, `deriveSettingsSchema`, `readPluginSettingsMap`, `resolveSettings`, `roleUniverse`, `deepMergeInto`, `findProjectAnchor`, `projectLockPath`, and the `ResolvedSettings`/`PluginSettingSchema`/`UniverseEntry`/`RoleKind` types. `readPluginSettingsMap` merges the project lock file (`projectLockPath(cwd)` = `<cwd>/.omp/plugins/omp-plugins.lock.json`, omp's project dir with **no walk-up**) over the user-level one; `findProjectAnchor` (the walk-up `.omp`/`.git` anchor) is kept only for the `/project-roles` divergence warning. |
 | `src/agent-pins.ts` | Agent → pinned-role derivation. Exports `parseAgentPin` (first `@<role>` in the `model:` frontmatter) and `discoverAgentPins` (scans the shipped, user and project agent dirs; project > user > plugin). Drives the `task.disabledAgents` sync. |
 | `src/availability.ts` | Key tier gate, catalog filter, variant resolution, provider-allowlist probe, and the keyed-catalog availability primitive. The keyed source is the Bearer-authenticated `GET /api/v1/models` (the account setting "Filter the model catalog for API keys" makes it a per-key allowlist; set membership is the only signal), shared by the explorer and the updater's companion fast path. Exports `fetchKeyMeta`, `tierGate`, `filterCatalog`, `rankingIdOf`, `currentRankingId`, `resolveVariant`, `enrichThinkingLevels`, `probeModel`, `computeKeyAvailability`, `fetchKeyAvailability`, `catalogFromOmpModelsJson`, `THINKING_LEVELS`, and the `CatalogEntry`/`KeyMeta`/`Tier`/`ProbeVerdict`/`KeyAvailability` types. |
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains` + `task.disabledAgents`, plus the atomic writer. Exports `parseConfig`, `patchConfig`, `writeConfigAtomic`, `ConfigEditError`, and the `ConfigPatch` type. No runtime YAML dependency. |
 | `src/state.ts` | State/history/lock files under the agent dir, and agent-dir resolution. Exports `agentDir`, `loadState`, `saveState`, `appendHistory`, `acquireLock`, `releaseLock`, `freshState`, and the `PluginState` type (which carries `managedDisabledAgents` — the `task.disabledAgents` names the plugin added). |
-| `src/updater.ts` | Orchestration: rank → tier gate → probe → hysteresis → chains → agent-disable sync → config write. Exports `runUpdater`, the `Deps`/`Decision`/`RunResult`/`Trigger`/`DecisionReason` types. `agentDisablePatch` also removes a previously-managed `task.disabledAgents` name whose agent file is gone. |
-| `src/extension.ts` | omp extension entry (default export). Registers `session_start` (awaited day-gated run), `/refresh-roles`, `/explore-roles` (in-process explorer), `/create-agent` (architect + benchmark-link resolution + catalog discovery), `/remove-agent`, and `session_shutdown`. Owns `extDeps` (the extension's `Deps`) and the live-session model hook. |
+| `src/updater.ts` | Orchestration: rank → tier gate → probe → hysteresis → chains → agent-disable sync → config write. Exports `runUpdater`, the `Deps`/`Decision`/`RunResult`/`Trigger`/`DecisionReason` types. Resolves the project scope (`<cwd>/.omp` when it carries an `omp-llm-role` settings entry) and scopes the config/state/history/lock to it. `agentDisablePatch` also removes a previously-managed `task.disabledAgents` name whose agent file is gone. |
+| `src/extension.ts` | omp extension entry (default export). Registers `session_start` (awaited day-gated run), `/refresh-roles`, `/explore-roles` (in-process explorer), `/create-agent` (architect + benchmark-link resolution + catalog discovery), `/remove-agent`, `/project-roles` (profile architect + `setupProject` + in-process updater), and `session_shutdown`. Owns `extDeps` (the extension's `Deps`) and the live-session model hook. |
 | `src/guards.ts` | The package's one type guard: `isRecord`. |
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write) and its removal half. Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `mergeRemove`, `removeRoleSettings`, `timestamp`. Shared by the explorer's Export, `src/cli/create-role.ts`, `/create-agent` and `/remove-agent`. |
 | `src/role-archetypes.ts` | Purpose → weight archetype table (10 sets) + keyword fitting. Exports `ARCHETYPES`, `FALLBACK_ARCHETYPE`, `fitArchetype`, `archetypeById`, and the `Archetype`/`ArchetypeMatch` types. |
 | `src/agent-file.ts` | Agent `.md` rendering/placement. Exports `renderAgentFile`, `writeAgentFile`, `removeAgentFile`, `isReadOnlyTools`, `userAgentsDir`, `projectAgentsDir`, `READ_ONLY_TOOLS`, `RESERVED_AGENT_NAMES`, `AGENT_NAME_RE`, and the `AgentFileSpec`/`AgentWriteResult`/`AgentRemoveResult` types. |
-| `src/agent-architect.ts` | omp's agent-creation architect, run in-process (extension-only). Exports `generateAgentSpec`, `parseAgentSpec`, `extractJsonObject`, `extractAssistantText`, and the `ArchitectOptions` type. Imports `@oh-my-pi/pi-coding-agent` at the package root. |
-| `src/benchmark-author.ts` | Benchmark-source authoring for an unknown link: fetch the link, run an in-process architect (`src/prompts/benchmark-source-architect.md`) to propose a declarative source spec, and validate it. Extension-only (imports `@oh-my-pi/pi-coding-agent`). Exports `authorBenchmarkSource`, `parseSourceDeclarationJson`, and the `BenchmarkAuthorOptions` type. |
+| `src/agent-architect.ts` | omp's in-process architects: the agent-creation architect (`/create-agent`, `/agents` hub) and the project-profile architect (`/project-roles`). Exports `generateAgentSpec`, `generateProjectProfile`, `parseAgentSpec`, `parseProjectProfile`, `extractJsonObject`, `extractAssistantText`, and the `ArchitectOptions`/`ProjectArchitectOptions` types. Imports `@oh-my-pi/pi-coding-agent` **dynamically** (inside the runner), so the module is importable under plain Node. |
+| `src/benchmark-author.ts` | Benchmark-source authoring for an unknown link: fetch the link, run an in-process architect (`src/prompts/benchmark-source-architect.md`) to propose a declarative source spec, and validate it. Imports `@oh-my-pi/pi-coding-agent` **dynamically** (inside the function). Exports `authorBenchmarkSource`, `parseSourceDeclarationJson`, and the `BenchmarkAuthorOptions` type. |
 | `src/benchmark-discovery.ts` | Judge-backed benchmark relevance for `/create-agent` discovery: one `noul` (yes/no probability) question per catalog candidate, batched into a single judgment through omp's configured `judge` role (TypeSafe jev or its fallback chain). Extension-only (imports `@oh-my-pi/pi-coding-agent` and its `./judgment` subpath — the deeper `./judgment/standalone` path does not resolve under omp's SDK injection). The SDK is imported dynamically so a resolution failure degrades to "no discovery" instead of failing the whole extension load. Exports `judgeBenchmarkRelevance`. |
-| `src/agent-create.ts` | `/create-agent` core: purpose → archetype → validated role → agent `.md`, plus the shared input parser and report formatter both hosts use. Exports `createAgent`, `resolveRole`, `parseCreateAgentInput` (flag form or free text), `parseCreateAgentArgs`, `tokenizeArgs`, `extractBenchmarks`, `extractBenchmarkLinks`, `applyFocusBenchmarks`, `discoverBenchmarks`, `checkWeightMath`, `formatBenchmarks`, `formatArchetypes`, `formatCreateAgentReport`, `CREATE_AGENT_USAGE`, and the request/result types. |
+| `src/agent-create.ts` | `/create-agent` core: purpose → archetype → validated role → agent `.md`, plus the shared input parser and report formatter both hosts use. Exports `createAgent`, `resolveRole`, `parseCreateAgentInput` (flag form or free text), `parseCreateAgentArgs`, `tokenizeArgs`, `extractBenchmarks`, `extractBenchmarkLinks`, `applyFocusBenchmarks`, `assessFocusMetric`, `belowBarReason`, `focusCoverageOk`, `countMetricCoverage`, `discoverBenchmarks`, `checkWeightMath`, `formatBenchmarks`, `formatArchetypes`, `formatCreateAgentReport`, `CREATE_AGENT_USAGE`, and the request/result types (incl. `FocusMetricAssessment`/`FocusCoverageEntry`/`FocusAssessor`). |
 | `src/agent-remove.ts` | `/remove-agent` core: delete an agent `.md` and its role, plus the shared flag parser and report formatter. Exports `removeAgent`, `parseRemoveAgentArgs`, `formatRemoveAgentReport`, `REMOVE_AGENT_USAGE`, and the request/result types. Refuses shipped default roles. |
-| `src/project-setup.ts` | `/project-roles` core (not yet wired to a command): a discovered `ProjectProfile` → a project-scoped role set (kept shipped roles, dropped ones, new fitted roles) written to the project plugin settings lock file, plus the project agents for the new roles. All-or-nothing (every check — names, metrics, weight math, the `--force` gate, agent-file collisions — before any write), `--dry-run`. Exports `setupProject`, and the `ProjectProfile`/`ProposedRole`/`SetupProjectOpts`/`SetupProjectResult` types. Dual-runtime safe (no SDK import); the extension command does the LLM work and calls it. |
+| `src/project-setup.ts` | `/project-roles` core: a discovered `ProjectProfile` → a project-scoped role set (kept shipped roles, dropped ones, new fitted roles) written to the project plugin settings lock file, plus the project agents for the new roles. All-or-nothing (every check — names, metrics, weight math, the `--force` gate, agent-file collisions — before any write), `--dry-run`. Exports `setupProject`, `parseProjectRolesArgs`, `parseRolesSpec`, `applyProfileOverrides`, `formatProjectRolesReport`, `PROJECT_ROLES_USAGE`, and the `ProjectProfile`/`ProposedRole`/`SetupProjectOpts`/`SetupProjectResult` types (the result carries an `archetypes` map). Dual-runtime safe (no SDK import); the extension command does the LLM work and calls it. |
 
 ### `src/explorer/`
 
 | File | Role / key exports |
 |---|---|
 | `src/explorer/boot.ts` | Shared explorer launcher: bind/port fallback, lock-file roles, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, and the `ExplorerHandle`/`ExplorerBootOpts` types. Used by `/explore-roles`. |
-| `src/explorer/server.ts` | Zero-dependency HTTP surface (static SPA + JSON API). Exports `createExplorerServer` and the `ExplorerOpts` type. Endpoints: `GET /api/bootstrap`, `POST /api/rank`, `POST /api/explain`, `POST /api/export`, `POST /api/refresh`. |
-| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets. Exports `rankRows`, `explainModel`, `inverseCardinal`, `METRIC_META`, `metricMeta`, `metricMetaFor`, `weightableMetrics`, and the `RankRow`/`Explanation`/`Contribution`/`Closing`/`MetricMeta` types. |
+| `src/explorer/server.ts` | Zero-dependency HTTP surface (static SPA + JSON API). Exports `createExplorerServer` and the `ExplorerOpts` type. Endpoints: `GET /api/bootstrap` (carries `focusAssessments`), `POST /api/rank`, `POST /api/explain`, `POST /api/export`, `POST /api/refresh`. |
+| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, and the four-axis focus assessment. Exports `rankRows`, `explainModel`, `inverseCardinal`, `focusMetricsOf`, `focusAssessments`, `METRIC_META`, `metricMeta`, `metricMetaFor`, `weightableMetrics`, and the `RankRow`/`Explanation`/`Contribution`/`Closing`/`MetricMeta` types. |
 
 ### Assets and non-code
 
@@ -59,6 +59,7 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 |---|---|
 | `src/prompts/agent-creation-architect.md`, `src/prompts/agent-creation-user.md` | omp's architect prompts, shipped verbatim; read by `src/agent-architect.ts` via `new URL("./prompts/…", import.meta.url)`. |
 | `src/prompts/benchmark-source-architect.md`, `src/prompts/benchmark-source-user.md` | The benchmark-source architect prompts; read by `src/benchmark-author.ts`. |
+| `src/prompts/project-profile-architect.md`, `src/prompts/project-profile-user.md` | The `/project-roles` profile-discovery architect prompts; read by `src/agent-architect.ts`. |
 | `web/index.html`, `web/app.js`, `web/style.css` | Explorer SPA — no framework, no build step, no external requests. Served by `src/explorer/server.ts`. |
 | `agents/designer.md` | The shipped `designer` subagent, discovered from the plugin's extension root (`<ext>/agents/*.md`). Opt-in: kept in `task.disabledAgents` until `roles.designer.enabled=true`. |
 | `skills/omp-llm-role-create-agent/SKILL.md` | Shipped skill, discovered from the plugin's `skills/` root. Hand-driven equivalent of `/create-agent`. |
@@ -83,8 +84,12 @@ One pipeline, driven by `runUpdater(trigger, deps, opts)` in `src/updater.ts`.
 The omp extension injects the production `Deps`; tests inject fakes.
 
 1. **Trigger.** `session_start` (awaited, day-gated) or `/refresh-roles`
-   (forced). `runUpdater` loads `loadState()` and the raw
-   settings (`deps.getSettings?.() ?? readPluginSettingsMap()`), then
+   (forced). `runUpdater` resolves the **project scope** first: when
+   `<cwd>/.omp/plugins/omp-plugins.lock.json` carries an `omp-llm-role` settings
+   entry, the config, the settings read, and the state/history/lock are scoped to
+   `<cwd>/.omp` (the global `~/.omp/agent/config.yml` is never written in project
+   mode); otherwise the global agent dir is used. It then loads `loadState()` and
+   the raw settings (`deps.getSettings?.() ?? readPluginSettingsMap()`), then
    `resolveSettings(raw)`; any validation error aborts with no write.
 2. **Agent-disable sync.** `agentDisablePatch` computes the
    `task.disabledAgents` adds/removes from `roleUniverse` + `discoverAgentPins`,
@@ -155,10 +160,16 @@ Rules every module must satisfy:
   `undefined` at runtime, not a compile error. Run the script after edits and
   sanity-check stderr match/eligible counts.
 
-The one deliberate exception is `src/agent-architect.ts`: it imports
-`@oh-my-pi/pi-coding-agent` (the **package root** only — subpath imports do not
-resolve in the compiled binary) and is therefore **extension-only**. The tests
-import `src/agent-create.ts`, which never imports the architect.
+The one deliberate exception is the SDK import in `src/agent-architect.ts` and
+`src/benchmark-author.ts`: they import `@oh-my-pi/pi-coding-agent` (the
+**package root** only — subpath imports do not resolve in the compiled binary)
+**dynamically, inside the runner function**. A static import would be fatal to
+the whole `extension.ts` load (it would kill every plugin command, not just the
+architect); dynamic, the modules — and `src/extension.ts` — stay importable
+under plain Node (the command registration is testable) and a resolution failure
+degrades to the caller's error path. The architect is still **extension-only in
+practice**: it is only called from the extension. The tests import
+`src/agent-create.ts`, which never imports the architect.
 
 ## Injected `Deps`
 
@@ -194,7 +205,8 @@ before `catalogFromOmpModelsJson`.
   (`runUpdater("manual", …, { force: true })`), `/explore-roles` (in-process
   `startExplorer`), `/create-agent` (architect → `createAgent` → in-process
   `runUpdater`), `/remove-agent` (`removeAgent` → in-process `runUpdater`),
-  `session_shutdown` (closes the explorer handle).
+  `/project-roles` (profile architect → `setupProject` → in-process
+  `runUpdater`), `session_shutdown` (closes the explorer handle).
 - **CLI**: `src/cli/llm-role-rank.ts` (report), `src/cli/create-role.ts`
   (authoring). The updater and explorer have no CLI shim — they run through
   `/refresh-roles` and `/explore-roles`.

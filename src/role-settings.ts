@@ -53,6 +53,10 @@ export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): 
     if (def.thinking !== undefined) plugin[`${prefix}.thinking`] = def.thinking;
     if (def.lambda !== undefined) plugin[`${prefix}.lambda`] = def.lambda;
     if (def.filters?.image !== undefined) plugin[`${prefix}.filters.image`] = def.filters.image;
+    if (def.filters?.tools !== undefined) plugin[`${prefix}.filters.tools`] = def.filters.tools;
+    if (def.filters?.minContextTokens !== undefined) plugin[`${prefix}.filters.minContextTokens`] = def.filters.minContextTokens;
+    if (def.filters?.minOutputTokens !== undefined) plugin[`${prefix}.filters.minOutputTokens`] = def.filters.minOutputTokens;
+    if (def.filters?.maxPriceUsdPerM !== undefined) plugin[`${prefix}.filters.maxPriceUsdPerM`] = def.filters.maxPriceUsdPerM;
     for (const [metric, weight] of Object.entries(def.weights)) plugin[`${prefix}.weights.${metric}`] = weight;
   }
   return { lock };

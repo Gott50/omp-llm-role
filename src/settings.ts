@@ -324,6 +324,29 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       description: `Restrict the ${name} pool to image-capable models`,
       default: def.filters?.image ?? false,
     };
+    schema[`${p}.filters.tools`] = {
+      type: "boolean",
+      description: `Restrict the ${name} pool to models with a tool-capable route`,
+      default: def.filters?.tools ?? false,
+    };
+    schema[`${p}.filters.minContextTokens`] = {
+      type: "number",
+      description: `Drop ${name} routes whose endpoint context is below this (tokens; 0 = off)`,
+      default: def.filters?.minContextTokens ?? 0,
+      min: 0,
+    };
+    schema[`${p}.filters.minOutputTokens`] = {
+      type: "number",
+      description: `Drop ${name} routes whose endpoint output ceiling is below this (tokens; 0 = off)`,
+      default: def.filters?.minOutputTokens ?? 0,
+      min: 0,
+    };
+    schema[`${p}.filters.maxPriceUsdPerM`] = {
+      type: "number",
+      description: `Drop ${name} models whose role-priced blend exceeds this ($/M; 0 = off)`,
+      default: def.filters?.maxPriceUsdPerM ?? 0,
+      min: 0,
+    };
     schema[`${p}.lambda`] = {
       type: "number",
       description: `Explicit λ ($ per quality point) override for ${name}`,
@@ -553,8 +576,19 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
     }
     if (rdef.filters !== undefined) {
       if (!isRecord(rdef.filters)) errors.push(`role ${name}: filters must be an object`);
-      else if (rdef.filters.image !== undefined && typeof rdef.filters.image !== "boolean") {
-        errors.push(`role ${name}: filters.image must be a boolean`);
+      else {
+        if (rdef.filters.image !== undefined && typeof rdef.filters.image !== "boolean") {
+          errors.push(`role ${name}: filters.image must be a boolean`);
+        }
+        if (rdef.filters.tools !== undefined && typeof rdef.filters.tools !== "boolean") {
+          errors.push(`role ${name}: filters.tools must be a boolean`);
+        }
+        for (const key of ["minContextTokens", "minOutputTokens", "maxPriceUsdPerM"] as const) {
+          const v = rdef.filters[key];
+          if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
+            errors.push(`role ${name}: filters.${key} must be a number ≥ 0`);
+          }
+        }
       }
     }
     if (rdef.thinking !== undefined && (typeof rdef.thinking !== "string" || !(rdef.thinking in SUFFIX_LEVELS))) {

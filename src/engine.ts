@@ -122,6 +122,9 @@ export type Model = {
   org: string;
   orgId: string;
   context: number | null;
+  /** llm-stats `release_date` (ISO date), carried for the focus-metric freshness
+   * gate; null when the row has no date. */
+  releaseDate: string | null;
   multimodal: boolean;
   /** supports reasoning (OpenRouter `supports_reasoning`) — the fallback gate
    * for the role's thinking price factor and the selector suffix at write
@@ -150,6 +153,10 @@ export type Model = {
    * is then capability-filled, see `applyWritingScores`. */
   writingBench: number | null;
   metrics: Record<string, number | null>;
+  /** Eligible standard-tier OpenRouter routes (the 1/price² blend pool) with their
+   * per-endpoint capability ceilings; set by `applyOpenRouterData`. Undefined when
+   * the model has no OpenRouter page data. The role endpoint filters gate on this. */
+  routes?: OpenRouterEndpointRecord[];
 };
 
 export type RoleDef = {
@@ -164,7 +171,17 @@ export type RoleDef = {
   /** metrics the model must have to be ranked at all for this role */
   required: string[];
   /** schema-capability filters applied before ranking eligibility */
-  filters?: { image?: boolean };
+  filters?: {
+    image?: boolean;
+    /** require every kept route's endpoint to support tools (`supported_parameters`) */
+    tools?: boolean;
+    /** drop routes whose endpoint `context_length` is below this (tokens); 0 = off */
+    minContextTokens?: number;
+    /** drop routes whose endpoint `max_completion_tokens` is below this (tokens); 0 = off */
+    minOutputTokens?: number;
+    /** drop the model when its role-priced blend exceeds this ($/M); 0 = off */
+    maxPriceUsdPerM?: number;
+  };
   /** explicit λ override ($ per quality point); default derives from the price weight */
   lambda?: number;
   /** thinking level appended to the role's selector (`:level`) when the chosen
@@ -251,12 +268,18 @@ export type OpenRouterEndpointRecord = {
   weightPrice: number | null;
   tput: number | null;
   latency: number | null;
+  /** endpoint `context_length` (tokens); null when the field is absent */
+  contextLength: number | null;
+  /** endpoint `max_completion_tokens` (tokens); null when the field is absent */
+  maxCompletionTokens: number | null;
+  /** endpoint `supported_parameters` contains `tools`; null when the field is absent */
+  supportsTools: boolean | null;
 };
 
 /** OR slug -> its provider routes, from the model pages. */
 export type OpenRouterEndpointPages = Record<string, OpenRouterEndpointRecord[]>;
 
-export type OrEnrichment = { tput: number; latency: number | null; price: number | null; thinking: boolean };
+export type OrEnrichment = { tput: number; latency: number | null; price: number | null; thinking: boolean; routes: OpenRouterEndpointRecord[] };
 
 /**
  * Build llm-stats model_id -> OpenRouter enrichment (throughput, latency, blended
@@ -318,6 +341,10 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: Open
         weightPrice: c.weightPrice,
         tput: c.perf?.p50_throughput ?? null,
         latency: c.perf?.p50_latency ?? null,
+        // The find payload carries no capability ceilings — unstated (null), kept by the gate.
+        contextLength: null,
+        maxCompletionTokens: null,
+        supportsTools: null,
       };
     }
     const eligible = Object.values(pool).filter(
@@ -346,7 +373,7 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: Open
       const latKnown = tputKnown.filter((x) => x.r.latency !== null);
       const latW = latKnown.reduce((a, x) => a + x.w, 0);
       const latency = latW > 0 ? latKnown.reduce((a, x) => a + x.w * (x.r.latency ?? 0), 0) / latW : null;
-      out[suffix] = { tput, latency, price, thinking: cands.some((c) => c.think) };
+      out[suffix] = { tput, latency, price, thinking: cands.some((c) => c.think), routes: eligible };
       continue;
     }
     // Fallback: the find route alone. Throughput is the highest-p50 variant, :free
@@ -365,7 +392,7 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: Open
     const billed: number[] = [];
     for (const c of cands) if (!c.free && c.price != null && c.price > 0) billed.push(c.price);
     const price = billed.length === 0 ? null : Math.min(...billed);
-    out[suffix] = { tput, latency, price, thinking: cands.some((c) => c.think) };
+    out[suffix] = { tput, latency, price, thinking: cands.some((c) => c.think), routes: eligible };
   }
   return out;
 }
@@ -381,6 +408,7 @@ export function applyOpenRouterData(models: Model[], orData: Record<string, OrEn
     m.thinking = or.thinking;
     m.throughput = or.tput;
     m.metrics.throughput = or.tput;
+    m.routes = or.routes;
     if (or.price != null) {
       priced++;
       m.price = or.price;
@@ -396,7 +424,7 @@ export function applyOpenRouterData(models: Model[], orData: Record<string, OrEn
 // ---------------------------------------------------------------------------
 
 /** Narrow one page endpoint record; null when the row isn't the expected shape. */
-function narrowEndpointRecord(row: unknown): OpenRouterEndpointRecord | null {
+export function narrowEndpointRecord(row: unknown): OpenRouterEndpointRecord | null {
   if (typeof row !== "object" || row === null) return null;
   if (!("id" in row) || typeof row.id !== "string") return null;
   if (!("provider_slug" in row) || typeof row.provider_slug !== "string") return null;
@@ -420,7 +448,13 @@ function narrowEndpointRecord(row: unknown): OpenRouterEndpointRecord | null {
     if ("p50_throughput" in row.stats && typeof row.stats.p50_throughput === "number") tput = row.stats.p50_throughput;
     if ("p50_latency" in row.stats && typeof row.stats.p50_latency === "number") latency = row.stats.p50_latency;
   }
-  return { id: row.id, providerSlug: row.provider_slug, serviceTier: tier, status, free, variant, price, weightPrice, tput, latency };
+  // Per-endpoint capability ceilings. A missing field yields null (kept by the
+  // role gate — missing data is not a capability failure).
+  const contextLength = "context_length" in row && typeof row.context_length === "number" ? row.context_length : null;
+  const maxCompletionTokens = "max_completion_tokens" in row && typeof row.max_completion_tokens === "number" ? row.max_completion_tokens : null;
+  const supportsTools =
+    "supported_parameters" in row && Array.isArray(row.supported_parameters) ? row.supported_parameters.includes("tools") : null;
+  return { id: row.id, providerSlug: row.provider_slug, serviceTier: tier, status, free, variant, price, weightPrice, tput, latency, contextLength, maxCompletionTokens, supportsTools };
 }
 
 /** Extract the per-provider endpoint records from a model page's RSC flight. The
@@ -842,6 +876,7 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
     org: r.organization,
     orgId: r.organization_id,
     context: r.context,
+    releaseDate: r.release_date,
     multimodal: r.multimodal === true,
     thinking: false,
     price: null,
@@ -893,6 +928,46 @@ export function buildModels(rows: LlmStatsRow[]): Model[] {
   }));
 }
 
+/** True when the role declares any endpoint capability filter (tools/context/output). */
+export function hasEndpointFilters(filters: RoleDef["filters"]): boolean {
+  if (!filters) return false;
+  return filters.tools === true || (filters.minContextTokens ?? 0) > 0 || (filters.minOutputTokens ?? 0) > 0;
+}
+
+/** True when a route satisfies every declared endpoint filter. A null capability
+ * field is kept — missing data is not a capability failure. */
+export function routePassesEndpointFilters(route: OpenRouterEndpointRecord, filters: RoleDef["filters"]): boolean {
+  if (!filters) return true;
+  if (filters.tools === true && route.supportsTools === false) return false;
+  if ((filters.minContextTokens ?? 0) > 0 && route.contextLength !== null && route.contextLength < (filters.minContextTokens as number)) return false;
+  if ((filters.minOutputTokens ?? 0) > 0 && route.maxCompletionTokens !== null && route.maxCompletionTokens < (filters.minOutputTokens as number)) return false;
+  return true;
+}
+
+/** True when the model has at least one standard-tier route satisfying the role's
+ * endpoint filters. A model with no route data has no capable route (fails). */
+export function modelPassesEndpointFilters(model: Model, filters: RoleDef["filters"]): boolean {
+  if (!hasEndpointFilters(filters)) return true;
+  return (model.routes ?? []).some((r) => routePassesEndpointFilters(r, filters));
+}
+
+/** Ranking ids dropped by the role's endpoint filters: they pass every other
+ * eligibility gate (required metrics, image, billed price) but have no capable
+ * standard-tier route. For the decision log; empty when the role declares no
+ * endpoint filter. */
+export function endpointFilterDrops(def: RoleDef, models: Model[]): string[] {
+  if (!hasEndpointFilters(def.filters)) return [];
+  return models
+    .filter(
+      (m) =>
+        def.required.every((k) => m.metrics[k] != null) &&
+        !(def.filters?.image && !m.multimodal) &&
+        m.price != null &&
+        !modelPassesEndpointFilters(m, def.filters),
+    )
+    .map((m) => m.id);
+}
+
 export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
   const wPrice = def.weights.price ?? 0;
   const qW = 1 - wPrice;
@@ -903,6 +978,11 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     if (def.required.some((k) => m.metrics[k] == null)) continue;
     if (def.filters?.image && !m.multimodal) continue;
     if (m.price == null) continue; // value needs a billed price
+    // Endpoint capability gate: a role that declares endpoint filters ranks only
+    // models with at least one capable standard-tier route. A null capability
+    // field is kept; a model whose every route fails (or that has no route data)
+    // is ineligible — the find-route fallback does not resurrect it.
+    if (!modelPassesEndpointFilters(m, def.filters)) continue;
 
     // The factor assumes the model runs at the role's level. omp clamps
     // unsupported levels, so a model whose catalog thinking[] excludes the
@@ -914,6 +994,9 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
       ? levels.length > 0 && (def.thinking === undefined || META_LEVELS[def.thinking] === true || levels.includes(def.thinking))
       : m.thinking;
     const priceEff = levelFactor === 1 || !runsAtLevel ? m.price : m.price * levelFactor;
+    // maxPriceUsdPerM caps the role-priced blend (the thinking-adjusted price the
+    // role actually pays); 0 = off.
+    if ((def.filters?.maxPriceUsdPerM ?? 0) > 0 && priceEff > (def.filters?.maxPriceUsdPerM as number)) continue;
 
     let q = 0;
     const parts: Record<string, number> = {};
@@ -1056,8 +1139,10 @@ function readEndpointsCache(path: string, requireFresh: boolean): EndpointsCache
   if (typeof parsed?.slugs !== "object" || parsed.slugs === null || Object.keys(parsed.slugs).length === 0) return null;
   // Records narrowed before the input-price weight basis lack `weightPrice`; refetch rather than
   // silently dropping every route from the blend (the old cache cannot supply the router's sort key).
+  // Records narrowed before the endpoint capability ceilings lack `contextLength`; refetch so the
+  // role gate reads real values instead of treating every route's ceiling as unstated (null).
   const sample = Object.values(parsed.slugs).find((recs) => Array.isArray(recs) && recs.length > 0)?.[0];
-  if (typeof sample !== "object" || sample === null || !("weightPrice" in sample)) return null;
+  if (typeof sample !== "object" || sample === null || !("weightPrice" in sample) || !("contextLength" in sample)) return null;
   if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
   return parsed;
 }

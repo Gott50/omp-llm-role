@@ -103,6 +103,29 @@
         "description": "Restrict the default pool to image-capable models",
         "default": false
       },
+      "roles.default.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the default pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.default.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop default routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.default.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop default routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.default.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop default models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
       "roles.default.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for default",
@@ -191,6 +214,29 @@
         "description": "Restrict the smol pool to image-capable models",
         "default": false
       },
+      "roles.smol.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the smol pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.smol.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop smol routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.smol.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop smol routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.smol.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop smol models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
       "roles.smol.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for smol",
@@ -271,6 +317,29 @@
         "description": "Restrict the slow pool to image-capable models",
         "default": false
       },
+      "roles.slow.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the slow pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.slow.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop slow routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.slow.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop slow routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.slow.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop slow models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
       "roles.slow.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for slow",
@@ -350,6 +419,29 @@
         "type": "boolean",
         "description": "Restrict the vision pool to image-capable models",
         "default": true
+      },
+      "roles.vision.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the vision pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.vision.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop vision routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.vision.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop vision routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.vision.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop vision models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
       },
       "roles.vision.lambda": {
         "type": "number",
@@ -439,6 +531,29 @@
         "description": "Restrict the plan pool to image-capable models",
         "default": false
       },
+      "roles.plan.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the plan pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.plan.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop plan routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.plan.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop plan routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.plan.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop plan models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
       "roles.plan.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for plan",
@@ -510,6 +625,29 @@
         "type": "boolean",
         "description": "Restrict the commit pool to image-capable models",
         "default": false
+      },
+      "roles.commit.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the commit pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.commit.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop commit routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.commit.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop commit routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.commit.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop commit models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
       },
       "roles.commit.lambda": {
         "type": "number",
@@ -583,6 +721,29 @@
         "description": "Restrict the tiny pool to image-capable models",
         "default": false
       },
+      "roles.tiny.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the tiny pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.tiny.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop tiny routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.tiny.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop tiny routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.tiny.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop tiny models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
       "roles.tiny.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for tiny",
@@ -646,6 +807,29 @@
         "type": "boolean",
         "description": "Restrict the task pool to image-capable models",
         "default": false
+      },
+      "roles.task.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the task pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.task.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop task routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.task.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop task routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.task.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop task models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
       },
       "roles.task.lambda": {
         "type": "number",
@@ -735,6 +919,29 @@
         "description": "Restrict the advisor pool to image-capable models",
         "default": false
       },
+      "roles.advisor.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the advisor pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.advisor.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop advisor routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.advisor.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop advisor routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.advisor.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop advisor models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
       "roles.advisor.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for advisor",
@@ -806,6 +1013,29 @@
         "type": "boolean",
         "description": "Restrict the designer pool to image-capable models",
         "default": true
+      },
+      "roles.designer.filters.tools": {
+        "type": "boolean",
+        "description": "Restrict the designer pool to models with a tool-capable route",
+        "default": false
+      },
+      "roles.designer.filters.minContextTokens": {
+        "type": "number",
+        "description": "Drop designer routes whose endpoint context is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.designer.filters.minOutputTokens": {
+        "type": "number",
+        "description": "Drop designer routes whose endpoint output ceiling is below this (tokens; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.designer.filters.maxPriceUsdPerM": {
+        "type": "number",
+        "description": "Drop designer models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
       },
       "roles.designer.lambda": {
         "type": "number",

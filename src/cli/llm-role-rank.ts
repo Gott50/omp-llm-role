@@ -28,8 +28,11 @@
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { promisify } from "node:util";
+import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { catalogFromOmpModelsJson, enrichThinkingLevels, resolveVariant, type CatalogEntry } from "../availability.ts";
+import { loadDeclaredSources } from "../benchmark-sources.ts";
 import { computeRankings, loadRankData, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "../engine.ts";
+import { focusMetricsOf } from "../explorer/explain.ts";
 import { DEFAULT_ROLES as ROLES } from "../settings.ts";
 
 const execFileP = promisify(execFile);
@@ -63,6 +66,18 @@ function metricAbbr(metric: string): string {
   if (known !== undefined) return known;
   const local = metric.includes(":") ? metric.slice(metric.indexOf(":") + 1) : metric;
   return local.slice(0, 10);
+}
+
+/** One focus-metric annotation line: the four signals, same rule as the report. */
+function focusLine(metric: string, a: FocusMetricAssessment): string {
+  const c = a.coverage;
+  const coverage =
+    c.status === "unknown" ? "unknown" : `${c.covered}/${c.total} (${c.share === null ? "?" : `${(c.share * 100).toFixed(1)}%`}) ${c.status}`;
+  const dispersion = a.dispersion.status === "unknown" ? "unknown" : `${a.dispersion.value?.toFixed(3)} ${a.dispersion.status}`;
+  const composition =
+    a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : `omits ${a.composition.omittedOrgs.join(", ")}`;
+  const freshness = a.freshness.status === "unknown" ? "unknown" : `${a.freshness.monthsBehind?.toFixed(1)}mo ${a.freshness.status}`;
+  return `focus: ${metric} — coverage ${coverage}; dispersion ${dispersion}; composition ${composition}; freshness ${freshness}`;
 }
 
 function formatRankings(
@@ -124,6 +139,7 @@ function formatRankings(
   );
   lines.push("");
 
+  const declared = loadDeclaredSources();
   for (const [role, def] of Object.entries(roles)) {
     const ranked = rankings[role] ?? [];
     lines.push(`## @${role} — ${def.description}`);
@@ -189,6 +205,10 @@ function formatRankings(
       `| ${widths.map((w, c) => (c === 3 || c === 4 ? "-".repeat(w) : `${"-".repeat(w - 1)}:`)).join(" | ")} |`,
     );
     for (let ri = 1; ri < padded.length; ri++) lines.push(`| ${padded[ri].join(" | ")} |`);
+    // A role's focus metrics (the benchmarks it was ranked on) carry the same
+    // four-axis annotation as the create-agent report. Shipped roles weight index
+    // metrics, so this is empty for them.
+    for (const metric of focusMetricsOf(def, declared)) lines.push(focusLine(metric, assessFocusMetric(models, metric, declared)));
     lines.push("");
   }
   return lines.join("\n");

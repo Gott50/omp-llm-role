@@ -1,21 +1,25 @@
 /**
- * omp's agent-creation architect, run in-process.
+ * omp's in-process architects: the agent-creation architect (`/create-agent`,
+ * `/agents` hub) and the project-profile architect (`/project-roles`).
  *
  * `/create-agent` no longer authors the agent body from a template: it runs the
  * same LLM architect omp's `/agents` hub uses (the prompt is shipped verbatim
  * from omp 18.4.8), then the plugin adds the `model:`/`tools:` frontmatter omp's
- * own writer omits. The SDK is imported from the host package root — omp's
- * extension loader resolves that to the running binary; subpath imports do not
- * resolve, so the prompt is a plugin asset rather than an omp import.
+ * own writer omits. `/project-roles` runs a second architect over the repo's own
+ * artifacts to discover the project's usecase as a role set.
  *
- * This module is extension-only: it imports `@oh-my-pi/pi-coding-agent`, which
- * only resolves inside omp. The tests import `src/agent-create.ts` instead,
- * which never imports this file.
+ * The SDK (`@oh-my-pi/pi-coding-agent`) is imported dynamically, inside the
+ * architect runner: it only resolves inside omp, and a static import failure
+ * would be fatal to the whole `extension.ts` load. Dynamic, this module stays
+ * importable in a plain Node test (the command registration is testable) and a
+ * resolution failure degrades to the caller's error path. The prompts are plugin
+ * assets rather than omp imports (omp's extension loader does not resolve the
+ * SDK subpath they live under).
  */
 
 import { readFileSync } from "node:fs";
-import { createAgentSession } from "@oh-my-pi/pi-coding-agent";
 import type { AgentSpec } from "./agent-create.ts";
+import type { ProjectProfile, ProposedRole } from "./project-setup.ts";
 import { ARCHITECT_PROMPT_VERSION } from "./architect-provenance.ts";
 
 export { ARCHITECT_PROMPT_VERSION };
@@ -93,16 +97,30 @@ export type ArchitectOptions = {
 };
 
 /**
- * Run omp's architect and return the validated spec. The session is isolated:
- * no tools, no LSP/MCP/extensions/skills/context files, and it does not bind
- * process state (the host session keeps the process-wide effects).
+ * Run one isolated architect session and return its raw assistant text. The
+ * session has no tools, no LSP/MCP/extensions/skills/context files, and does not
+ * bind process state (the host session keeps the process-wide effects).
  */
-export async function generateAgentSpec(opts: ArchitectOptions): Promise<AgentSpec> {
+async function runArchitect(opts: {
+  systemPrompt: string;
+  userPrompt: string;
+  cwd: string;
+  model?: unknown;
+  modelRegistry?: unknown;
+  onText?: (text: string) => void;
+}): Promise<string> {
+  // The SDK is imported dynamically, inside the function. Static import cannot
+  // work: `@oh-my-pi/pi-coding-agent` only resolves inside omp, and a static
+  // import failure is fatal to the whole `extension.ts` load — it would kill
+  // every plugin command, not just the architect. Dynamic, the module stays
+  // importable in a plain Node test (the command registration is testable) and a
+  // resolution failure degrades to the caller's error path.
+  const { createAgentSession } = await import("@oh-my-pi/pi-coding-agent");
   const { session } = await createAgentSession({
     cwd: opts.cwd,
     model: opts.model as never,
     modelRegistry: opts.modelRegistry as never,
-    systemPrompt: [ARCHITECT_PROMPT],
+    systemPrompt: [opts.systemPrompt],
     hasUI: false,
     enableLsp: false,
     enableMCP: false,
@@ -122,16 +140,95 @@ export async function generateAgentSpec(opts: ArchitectOptions): Promise<AgentSp
     }
   });
   try {
-    const request =
-      opts.benchmarks !== undefined && opts.benchmarks.length > 0
-        ? `${opts.description}\n\nThis agent's model role is ranked on: ${opts.benchmarks.join(", ")}. Name that benchmark in the agent's rubric so the body matches the model that was chosen.`
-        : opts.description;
-    await session.prompt(USER_PROMPT.replace("{{request}}", request), { expandPromptTemplates: false });
+    await session.prompt(opts.userPrompt, { expandPromptTemplates: false });
     const raw = extractAssistantText(session.state.messages);
     if (raw === null) throw new Error("architect returned no text");
-    return parseAgentSpec(raw);
+    return raw;
   } finally {
     unsubscribe();
     await session.dispose();
   }
+}
+
+/**
+ * Run omp's architect and return the validated spec. The session is isolated:
+ * no tools, no LSP/MCP/extensions/skills/context files, and it does not bind
+ * process state (the host session keeps the process-wide effects).
+ */
+export async function generateAgentSpec(opts: ArchitectOptions): Promise<AgentSpec> {
+  const request =
+    opts.benchmarks !== undefined && opts.benchmarks.length > 0
+      ? `${opts.description}\n\nThis agent's model role is ranked on: ${opts.benchmarks.join(", ")}. Name that benchmark in the agent's rubric so the body matches the model that was chosen.`
+      : opts.description;
+  const raw = await runArchitect({
+    systemPrompt: ARCHITECT_PROMPT,
+    userPrompt: USER_PROMPT.replace("{{request}}", request),
+    cwd: opts.cwd,
+    model: opts.model,
+    modelRegistry: opts.modelRegistry,
+    onText: opts.onText,
+  });
+  return parseAgentSpec(raw);
+}
+
+const PROJECT_ARCHITECT_PROMPT = readFileSync(new URL("./prompts/project-profile-architect.md", import.meta.url), "utf8");
+const PROJECT_USER_PROMPT = readFileSync(new URL("./prompts/project-profile-user.md", import.meta.url), "utf8");
+
+/** Validate the profile architect's JSON into a `ProjectProfile`. */
+export function parseProjectProfile(raw: string): ProjectProfile {
+  const parsed = JSON.parse(extractJsonObject(raw)) as Partial<ProjectProfile>;
+  if (!parsed || typeof parsed !== "object") throw new Error("profile architect output is not a JSON object");
+  const stringArray = (value: unknown, field: string): string[] => {
+    if (!Array.isArray(value) || value.some((x) => typeof x !== "string")) throw new Error(`profile.${field} must be a string array`);
+    return value as string[];
+  };
+  if (typeof parsed.summary !== "string" || parsed.summary.trim() === "") throw new Error("profile.summary is required");
+  if (typeof parsed.domain !== "string") throw new Error("profile.domain is required");
+  const primaryWork = stringArray(parsed.primaryWork, "primaryWork");
+  const stack = stringArray(parsed.stack, "stack");
+  const needs = stringArray(parsed.needs, "needs");
+  if (!Array.isArray(parsed.roles)) throw new Error("profile.roles must be an array");
+  const roles: ProposedRole[] = parsed.roles.map((role, i) => {
+    if (!role || typeof role !== "object") throw new Error(`profile.roles[${i}] is not an object`);
+    const r = role as Partial<ProposedRole>;
+    if (typeof r.name !== "string" || r.name.trim() === "") throw new Error(`profile.roles[${i}].name is required`);
+    // A shipped role to keep/drop needs no purpose; `setupProject` requires one
+    // for a new role, so the semantic check stays there.
+    const out: ProposedRole = { name: r.name.trim(), purpose: typeof r.purpose === "string" ? r.purpose.trim() : "" };
+    if (r.keep === false) out.keep = false;
+    if (r.benchmarks !== undefined) out.benchmarks = stringArray(r.benchmarks, `roles[${i}].benchmarks`);
+    return out;
+  });
+  return { summary: parsed.summary.trim(), domain: parsed.domain.trim(), primaryWork, stack, needs, roles };
+}
+
+export type ProjectArchitectOptions = {
+  /** The gathered repository artifacts (README, package.json, AGENTS.md, docs, git log, file tree). */
+  artifacts: string;
+  cwd: string;
+  /** Live session model (a `Model`); omitted lets the SDK resolve the default. */
+  model?: unknown;
+  modelRegistry?: unknown;
+  /** A user-supplied usecase override; the architect is told to honor it. */
+  purpose?: string;
+  /** Streamed architect text, for a live progress line. */
+  onText?: (text: string) => void;
+};
+
+/**
+ * Run the profile-discovery architect and return the validated `ProjectProfile`.
+ * Same isolated session as `generateAgentSpec`; the extension then resolves
+ * benchmarks and authors each new role's agent.
+ */
+export async function generateProjectProfile(opts: ProjectArchitectOptions): Promise<ProjectProfile> {
+  const purpose = opts.purpose !== undefined && opts.purpose.trim() !== "" ? `The user overrides the discovered usecase with: ${opts.purpose.trim()}` : "";
+  const raw = await runArchitect({
+    systemPrompt: PROJECT_ARCHITECT_PROMPT,
+    userPrompt: PROJECT_USER_PROMPT.replace("{{artifacts}}", opts.artifacts).replace("{{purpose}}", purpose),
+    cwd: opts.cwd,
+    model: opts.model,
+    modelRegistry: opts.modelRegistry,
+    onText: opts.onText,
+  });
+  return parseProjectProfile(raw);
 }

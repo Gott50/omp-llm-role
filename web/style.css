@@ -188,6 +188,19 @@ table.comp th { text-align: left; color: var(--muted); font-weight: 500; font-si
 table.comp td.num, table.comp th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 table.comp tr.missing-row td { color: var(--muted); }
 table.comp tr.note-row td { border-bottom: none; font-size: 11px; padding-top: 0; }
+
+/* Focus-metric audit: one row per weighted benchmark/percentile metric, four
+   signal cells. ok = up, below-bar = warn + glyph, unknown = muted (never ok). */
+table.focus { width: 100%; border-collapse: collapse; }
+table.focus th, table.focus td { padding: 3px 6px; border-bottom: 1px solid var(--line); }
+table.focus th { text-align: left; color: var(--muted); font-weight: 500; font-size: 11px; }
+table.focus td { font-family: var(--mono); font-size: 12px; }
+table.focus td:first-child { font-family: inherit; color: var(--muted); }
+table.focus tr.warned td:first-child { color: var(--fg); }
+.sig.ok { color: var(--up); }
+.sig.below-bar { color: var(--warn); }
+.sig.below-bar::before { content: "⚠ "; }
+.sig.unknown { color: var(--muted); }
 .barcell { width: 90px; }
 .bar { background: var(--panel-2); border-radius: 3px; height: 8px; overflow: hidden; }
 .bar .fill { background: var(--accent); height: 100%; }
@@ -242,7 +255,7 @@ button.x { padding: 1px 7px; color: var(--down); }
 /* elements that carry an explanation read as hoverable without being links */
 [data-tip] { cursor: help; }
 button[data-tip], select[data-tip], input[data-tip] { cursor: pointer; }
-#table thead th[data-tip], .tab[data-tip], table.comp th[data-tip], table.weights td[data-tip] { text-decoration: underline dotted var(--line); text-underline-offset: 3px; }
+#table thead th[data-tip], .tab[data-tip], table.comp th[data-tip], table.focus th[data-tip], table.weights td[data-tip] { text-decoration: underline dotted var(--line); text-underline-offset: 3px; }
 
 @media (max-width: 1100px) {
   main { grid-template-columns: 1fr; }

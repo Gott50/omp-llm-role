@@ -12,6 +12,7 @@ const state = {
   defaults: {},
   metrics: [],
   metricMeta: {},
+  focusAssessments: {},
   levels: [],
   thinkingFactors: {},
   rows: [],
@@ -137,6 +138,11 @@ const TIPS = {
   lambda: "λ = price of one quality point, in $/M. Derived as " + LAMBDA_DERIVATION + " unless the role overrides lambda.",
   sum: "Weights must sum to 1.0 (±0.01) or the plugin rejects the role.",
   required: "Eligibility gate, not a weight: a model missing this metric is not ranked at all for the role.",
+  focus: "Four-axis audit of each weighted benchmark/percentile metric, over the same pool the updater ranks on. A below-bar axis is warned; unknown means the metric's scores were not loaded (never a silent ok).",
+  focusCoverage: "Coverage: models carrying the metric (not the imputed fill) out of the pool, and the share. Below the coverage floor — or a capability-filled metric — is warned.",
+  focusDispersion: "Dispersion: IQR/median of the cardinal-normalized covered values. Too little spread means the metric barely separates models.",
+  focusComposition: "Composition: pool orgs above the minimum share that carry no covered model. A missing major provider is warned.",
+  focusFreshness: "Freshness: months between the newest covered model and the newest pool model. A stale benchmark is warned.",
   imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
   thinking: "Thinking level appended to the role's selector (`:level`) and used to scale the price axis. The factor (3ρ+1+T)/(3ρ+1) applies only to models that will actually run the level (omp catalog `thinking[]` membership; meta levels off/auto need only a non-empty list). Bare = no suffix — the session's defaultThinkingLevel applies and the price is unadjusted.",
   thinkingBare: "Bare (no suffix). Not restorable once the role's shipped default or the lock file sets a level: the plugin deep-merges roles over DEFAULT_ROLES, so an omitted key keeps the inherited value.",
@@ -575,6 +581,78 @@ function normalizeWeights(def) {
   for (const key of Object.keys(def.weights)) def.weights[key] = def.weights[key] / sum;
 }
 
+/** The role's focus metrics: the weighted benchmark/percentile metrics, the same
+ * rule the server's focusMetricsOf applies (shipped roles weight index metrics,
+ * so they carry none). */
+function focusMetricsOf(def) {
+  return Object.keys(def.weights).filter((metric) => {
+    const meta = state.metricMeta[metric];
+    return !!meta && (meta.kind === "benchmark" || meta.kind === "percentile");
+  });
+}
+
+/** One focus-signal cell: the value text plus a status class. `unknown` renders
+ * as unknown (muted), never as ok; `below-bar` gets the warning tint and glyph. */
+function focusSignal(text, status) {
+  const cls = status === "ok" ? "ok" : status === "below-bar" ? "below-bar" : "unknown";
+  return el("td", { class: "sig " + cls, text });
+}
+
+/** The four-axis focus assessment of the role's weighted benchmark/percentile
+ * metrics, from the bootstrap payload's focusAssessments[role]. The payload is
+ * computed over the resolved definition, so a metric the editor just added reads
+ * "not assessed" until the next reload. */
+function renderFocus(panel) {
+  const def = state.defs[state.role];
+  const assessments = state.focusAssessments[state.role] || {};
+  const metrics = focusMetricsOf(def);
+  panel.append(el("h3", { "data-tip": TIPS.focus, text: "Focus metrics" }));
+  if (metrics.length === 0) {
+    panel.append(el("p", { class: "muted", text: "No benchmark/percentile metric weighted — the role ranks on the index/price/throughput backbone." }));
+    return;
+  }
+  const table = el("table", { class: "focus" });
+  table.append(
+    el("thead", {}, el("tr", {}, [
+      el("th", { text: "metric" }),
+      el("th", { "data-tip": TIPS.focusCoverage, text: "coverage" }),
+      el("th", { "data-tip": TIPS.focusDispersion, text: "dispersion" }),
+      el("th", { "data-tip": TIPS.focusComposition, text: "composition" }),
+      el("th", { "data-tip": TIPS.focusFreshness, text: "freshness" }),
+    ])),
+  );
+  const body = el("tbody");
+  for (const metric of metrics) {
+    const a = assessments[metric];
+    if (!a) {
+      body.append(
+        el("tr", {}, [
+          el("td", { "data-tip": metricTip(metric), text: metricLabel(metric) }),
+          el("td", { class: "sig unknown", colspan: "4", text: "not assessed — reload to assess the edited definition" }),
+        ]),
+      );
+      continue;
+    }
+    const c = a.coverage;
+    const coverage = c.status === "unknown" ? "unknown" : c.covered + "/" + c.total + " (" + (c.share === null ? "?" : (c.share * 100).toFixed(1) + "%") + ")";
+    const dispersion = a.dispersion.status === "unknown" ? "unknown" : a.dispersion.value.toFixed(3);
+    const composition = a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : "omits " + a.composition.omittedOrgs.join(", ");
+    const freshness = a.freshness.status === "unknown" ? "unknown" : a.freshness.monthsBehind.toFixed(1) + "mo";
+    const statuses = [c.status, a.dispersion.status, a.composition.status, a.freshness.status];
+    body.append(
+      el("tr", { class: statuses.includes("below-bar") ? "warned" : "" }, [
+        el("td", { "data-tip": metricTip(metric), text: metricLabel(metric) }),
+        focusSignal(coverage, c.status),
+        focusSignal(dispersion, a.dispersion.status),
+        focusSignal(composition, a.composition.status),
+        focusSignal(freshness, a.freshness.status),
+      ]),
+    );
+  }
+  table.append(body);
+  panel.append(table);
+}
+
 function renderEditor() {
   const panel = document.getElementById("editor");
   panel.textContent = "";
@@ -693,6 +771,8 @@ function renderEditor() {
     checks.append(el("label", { class: "check" }, [cb, el("span", { "data-tip": TIPS.required + "\n\n" + metricTip(metric), text: metricLabel(metric) })]));
   }
   panel.append(checks);
+
+  renderFocus(panel);
 
   const imgCb = el("input", { type: "checkbox" });
   imgCb.checked = !!(def.filters && def.filters.image);
@@ -851,6 +931,7 @@ async function boot() {
   state.defaults = data.defaults;
   state.metrics = data.metrics;
   state.metricMeta = data.metricMeta;
+  state.focusAssessments = data.focusAssessments || {};
   state.levels = data.levels;
   state.thinkingFactors = data.thinkingFactors;
   state.lockPath = data.lockPath;

@@ -17,6 +17,7 @@ export function makeModel(id: string, general: number, price: number, tput: numb
     org: "Org",
     orgId: "org",
     context: 200000,
+    releaseDate: null,
     multimodal: false,
     thinking,
     price,

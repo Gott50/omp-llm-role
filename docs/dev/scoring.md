@@ -89,12 +89,30 @@ A model ranks for a role only when:
   without weighting it, so validation checks `required ⊆ KNOWN_METRICS`, not
   `required ⊆ weights`);
 - it has a billed price (`m.price != null`);
-- `filters.image` (if set) is satisfied (`m.multimodal`).
+- `filters.image` (if set) is satisfied (`m.multimodal`);
+- the role's **endpoint filters** (if any) are satisfied (below).
 
-`filters.image` is the only filter the engine implements; spec §6.3 also names
-`filters.maxPriceUsdPerM` / `filters.minContextTokens` as schema capability, but
-`rankRole` does not enforce them and `resolveSettings` does not validate them.
-Filters apply before ranking eligibility so percentile norms stay on the
+### Endpoint filters
+
+`RoleDef.filters` carries four endpoint filters beyond `image` (spec §6.3):
+`tools` (boolean), `minContextTokens`, `minOutputTokens` and `maxPriceUsdPerM`
+(numbers; `0`/`false` = off). They gate the **eligible standard-tier route pool**
+— the same pool the `1/price²` blend uses — before the blend:
+
+- `routePassesEndpointFilters` drops a route failing any declared filter; a
+  `null` capability field is **kept** (missing data is not a capability failure);
+- `modelPassesEndpointFilters` requires at least one surviving route — a model
+  whose every standard-tier route fails (or that has no route data) is
+  ineligible, and the single-find-route fallback does not resurrect it;
+- `minContextTokens` filters the **endpoint** `context_length`, not the
+  model-level `context`;
+- `maxPriceUsdPerM` caps the thinking-adjusted `priceEff` (the price the role
+  actually pays), not the bare billed blend.
+
+`endpointFilterDrops(def, models)` lists the ranking ids the gate removed (they
+pass every other eligibility gate but have no capable route) for the decision
+log. `resolveSettings` validates all four; no shipped role sets an endpoint
+filter. Filters apply before ranking eligibility so percentile norms stay on the
 unfiltered pool.
 
 ## Pareto frontier (★)
@@ -209,19 +227,46 @@ Naming the archetype's own specialist set is a no-op (the focus share equals its
 archetype share). A named metric already in the weights is reported as a
 duplicate; a name outside the known-metric set is unknown.
 
-**Coverage safety.** A focus metric that is fill-0 and covers too little of the
-field turns `q` into a coverage score (a missing weighted metric contributes 0
-while occupying its denominator share). `focusCoverageOk(metric, covered, total)`
-(`src/agent-create.ts`) is the one rule: a metric is safe when its source is
-capability-filled (`fill > 0`, so absence is a known non-penalty) **or** its
-coverage share clears `FOCUS_COVERAGE_FLOOR` (0.35). When the field size is
-unknown the share rule is skipped and the result is `unknown` (annotated, not
-warned). The discovery gate drops a below-bar candidate (non-fatal, with a
-reason); the report annotates every focus metric and warns below the bar. The
-genuine hazard is the six raw pass-rate metrics (`gpqa`, `aime`, `swe_bench`,
-`arc_agi`, `terminal_bench`, `tau_bench`), which are fill-0 and reachable from
-discovery via the catalog→shipped mapping; `writing`/`website`/`bench:<id>` are
-capability-filled at 0.195 and stay weightable at any coverage.
+**The four-axis focus-metric gate.** A focus metric that is fill-0 and covers too
+little of the field turns `q` into a coverage score (a missing weighted metric
+contributes 0 while occupying its denominator share). `assessFocusMetric(models,
+metric, declared)` (`src/agent-create.ts`) is the one rule, returning a
+`FocusMetricAssessment` with four axes, each `{ …, status: "ok" | "below-bar" |
+"unknown" }`:
+
+- **coverage** (`FocusCoverageEntry`) — the share of the pool carrying the metric
+  (not the imputed fill). Safe when the source is capability-filled (`fill > 0`,
+  so absence is a known non-penalty) **or** the share clears
+  `FOCUS_COVERAGE_FLOOR` (0.35). This is `focusCoverageOk`, the coverage branch.
+- **dispersion** — IQR/median of the cardinal-normalized covered values (the
+  engine's `cardinalMetric` first, so index and 0–1 metrics are comparable),
+  below-bar under `FOCUS_DISPERSION_FLOOR` (0.05). A saturated metric cannot
+  separate models. Fewer than two covered values, or a zero median, is `unknown`.
+- **composition** — an org whose pool share is ≥ `FOCUS_ORG_MIN_SHARE` (0.1) but
+  which carries no covered model is flagged (`omittedOrgs`); a smaller provider's
+  absence is not a false positive.
+- **freshness** — the newest covered model's `releaseDate` against the pool's
+  newest, below-bar beyond `FOCUS_STALENESS_MONTHS` (1). A missing date on either
+  side degrades to `unknown`.
+
+An empty pool (unknown field size) or `covered === 0` (the metric's scores were
+not loaded) reports **all four axes `unknown`**, coverage included — never a
+silent `ok`. `belowBarReason(assessment)` names the failed axis.
+
+**Enforcement.** The pre-fetch catalog gate is count-only (`modelCount >= 3`); the
+create-agent gate then probe-fetches each selected candidate's source
+(`loadBenchmarkScores`), joins it onto the ranking universe, and assesses the
+joined pool. A **discovered** candidate below-bar on any axis is dropped
+non-fatally with a reason naming the axis; a **user-named** metric is never
+dropped — it is annotated and warned. The report prints the four signals and
+warns per below-bar axis; the explorer's `/api/bootstrap` carries
+`focusAssessments` and the SPA renders a `table.focus` (below-bar warned,
+`unknown` muted, never green); the CLI report annotates a role's focus metrics
+(`focusLine`). The genuine hazard is the six raw pass-rate metrics (`gpqa`,
+`aime`, `swe_bench`, `arc_agi`, `terminal_bench`, `tau_bench`), which are fill-0
+and reachable from discovery via the catalog→shipped mapping;
+`writing`/`website`/`bench:<id>` are capability-filled at 0.195 and stay
+weightable at any coverage.
 
 **Focus cap.** The focus set is capped at `FOCUS_METRIC_CAP` (3) in priority
 order (named/linked first, then discovery order), so one benchmark keeps a
@@ -267,7 +312,9 @@ The shipped weights (`DEFAULT_ROLES`) and the archetype sets
    100%-coverage backbone plus the partial-coverage trio at reduced share;
    `mrcr`/`search` are unweighted and `long_context` is capped at 0.14.
    `website`/`long_context`/`writing` are capability-filled rather than
-   0-filled.
+   0-filled. The four-axis focus-metric gate (above) is the automated check for
+   this rule: it drops a discovered candidate that is below-bar on coverage,
+   dispersion, composition or freshness.
 5. **Non-collinear differentiation.** The capability indices are one latent
    factor (Pearson r over the pool: general↔reasoning 0.984, code↔agents 0.95,
    general↔code 0.94), so re-weighting them barely separates roles.
@@ -411,6 +458,28 @@ flips the leader on the reachable pool — neither posture is stable.
 Counter-evidence for the record: on the eligible covered pool finance/legal
 correlate only 0.39–0.41 with `general`, so the metric does carry independent
 signal mid-ranking; it just does not move the leader at a plausible share.
+
+## Truthfulness axis: measured, not landed (2026-10-06, issue #24)
+
+The llm-stats `simpleqa_score` was evaluated as a truthfulness axis and **not
+landed** — no role weights it. Measured over the 2026-10-06 400-model field:
+
+- **Coverage**: `simpleqa_score` 47/400 (11.8%); default-eligible 18/142 (12.7%);
+  catalog-resolvable 16/137 (11.7%); allowed-keyed 7/65 (10.8%); probe-walk
+  reachable **0/3**.
+- **Correlation with `general`**: full pool 0.68, eligible 0.75, catalog 0.70,
+  allowed 0.89. `hle_score` correlates 0.88 with `general` (collinear), and
+  `simpleqa_score` vs `hle_score` is 0.35 — the two truthfulness metrics are not
+  interchangeable.
+- **0-fill leader flip** (`default`): the full pool flips at share 0.21 to
+  `gemini-3-flash-preview` ($1.125/M vs the leader's $0.598/M — 1.9× more
+  expensive); the capability fill flips to the pricier model too. The
+  allowed-pool top-10 **all** have `simpleqa_score = null`.
+
+**Verdict: do not land.** The 0-fill is a pure coverage lottery for exactly the
+models the selector chooses from (the reachable pool has no covered model at
+all), and the capability fill reproduces the cost-promotion failure mode the
+0-fill posture exists to avoid.
 
 ## Changing a weight — checklist
 

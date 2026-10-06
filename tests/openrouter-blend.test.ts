@@ -33,6 +33,9 @@ function makeRec(id: string, price: number, tput: number | null, over: Partial<O
     weightPrice: price,
     tput,
     latency: null,
+    contextLength: null,
+    maxCompletionTokens: null,
+    supportsTools: null,
   };
   return { ...base, ...over };
 }

@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_NAME_RE, RESERVED_AGENT_NAMES, isReadOnlyTools, projectAgentsDir, removeAgentFile, renderAgentFile, userAgentsDir, writeAgentFile } from "./agent-file.ts";
-import { CAPABILITY_FILL, rankRole, type Model, type RoleDef, type SuffixLevel } from "./engine.ts";
+import { CAPABILITY_FILL, cardinalMetric, rankRole, type Model, type RoleDef, type SuffixLevel } from "./engine.ts";
 import { metricMeta } from "./explorer/explain.ts";
 import { ARCHETYPES, archetypeById, fitArchetype, type Archetype } from "./role-archetypes.ts";
 import { writeRoleSettings, type RoleWriteResult } from "./role-settings.ts";
@@ -192,8 +192,8 @@ export type BenchmarkApplication = {
   unknown: string[];
   /** Focus metrics dropped by the top-K cap (priority order preserved). */
   dropped: string[];
-  /** Per-focus-metric coverage of the ranking field, for the report annotation. */
-  coverage: Record<string, FocusCoverageEntry>;
+  /** Four-axis assessment per focus metric, for the report annotation. */
+  assessments: Record<string, FocusMetricAssessment>;
 };
 
 /** The backbone every role keeps: the general/reasoning quality axes plus the
@@ -212,7 +212,38 @@ export const FOCUS_METRIC_CAP = 3;
 /** The coverage share a fill-0 focus metric must clear to be safe to weight. */
 export const FOCUS_COVERAGE_FLOOR = 0.35;
 
-export type FocusCoverageStatus = "ok" | "below-bar" | "unknown";
+/** The dispersion floor: IQR/median of the cardinal-normalized covered values.
+ * A metric flatter than this cannot separate models (saturation). */
+export const FOCUS_DISPERSION_FLOOR = 0.05;
+
+/** The staleness bar: months the covered set may trail the pool's newest model
+ * before the source is flagged as frozen. */
+export const FOCUS_STALENESS_MONTHS = 1;
+
+/** The pool share above which an org's absence from the covered set is flagged
+ * (a smaller provider's absence is not a false positive). */
+export const FOCUS_ORG_MIN_SHARE = 0.1;
+
+/** The status vocabulary shared by every focus-metric axis. */
+export type FocusSignal = "ok" | "below-bar" | "unknown";
+
+/** Per-metric coverage of the ranking field (the coverage axis). */
+export type FocusCoverageEntry = {
+  covered: number;
+  total: number | null;
+  share: number | null;
+  fill: number;
+  status: FocusSignal;
+};
+
+/** The four-axis assessment of one focus metric: coverage, dispersion, provider
+ * composition and freshness. The single object the gate and every report share. */
+export type FocusMetricAssessment = {
+  coverage: FocusCoverageEntry;
+  dispersion: { value: number | null; status: FocusSignal };
+  composition: { omittedOrgs: string[]; status: FocusSignal };
+  freshness: { newestCovered: string | null; newestPool: string | null; monthsBehind: number | null; status: FocusSignal };
+};
 
 /** Per-metric coverage of the ranking field, for the focus-coverage gate. */
 export type FocusCoverage = {
@@ -222,14 +253,10 @@ export type FocusCoverage = {
   covered: Record<string, number>;
   /** Declared sources, so a declared metric's fill resolves. */
   declared?: readonly SourceDeclaration[];
-};
-
-export type FocusCoverageEntry = {
-  covered: number;
-  total: number | null;
-  share: number | null;
-  fill: number;
-  status: FocusCoverageStatus;
+  /** Four-axis assessment per metric, when the caller assessed the loaded pool.
+   * Absent → the three new axes are `unknown` (the metric's scores were not
+   * loaded), never a silent `ok`. */
+  assessments?: Record<string, FocusMetricAssessment>;
 };
 
 /** The capability fill a metric's absence is scored at (0 = a coverage penalty). */
@@ -249,7 +276,7 @@ export function focusCoverageOk(
   covered: number,
   total: number | null,
   declared: readonly SourceDeclaration[] = [],
-): FocusCoverageStatus {
+): FocusSignal {
   if (metricFill(metric, declared) > 0) return "ok";
   if (total === null || total <= 0) return "unknown";
   return covered / total >= FOCUS_COVERAGE_FLOOR ? "ok" : "below-bar";
@@ -267,6 +294,149 @@ export function countMetricCoverage(models: readonly Model[], metric: string, de
     covered++;
   }
   return covered;
+}
+
+/** The covered models' values for a metric, cardinal-normalized: the engine's
+ * transform first (index metrics are raw −16..+60, benchmarks 0–1), so one
+ * dispersion floor is comparable across metrics. The imputed fill is skipped. */
+function coveredValues(models: readonly Model[], metric: string, fill: number): number[] {
+  const values: number[] = [];
+  for (const model of models) {
+    const value = model.metrics[metric];
+    if (value == null) continue;
+    if (fill > 0 && value === fill) continue;
+    values.push(cardinalMetric(metric, value));
+  }
+  return values;
+}
+
+/** Linear-interpolated quantile (R type 7) of a value list. */
+function quantile(values: readonly number[], p: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const h = (sorted.length - 1) * p;
+  const lo = Math.floor(h);
+  const hi = Math.ceil(h);
+  return sorted[lo] + (h - lo) * (sorted[hi] - sorted[lo]);
+}
+
+/** The dispersion axis: IQR/median of the cardinal-normalized covered values.
+ * Fewer than two values, or a zero median, is `unknown` (no scale to divide by). */
+function dispersionAxis(models: readonly Model[], metric: string, fill: number): FocusMetricAssessment["dispersion"] {
+  const values = coveredValues(models, metric, fill);
+  if (values.length < 2) return { value: null, status: "unknown" };
+  const median = quantile(values, 0.5);
+  if (median === 0) return { value: null, status: "unknown" };
+  const value = (quantile(values, 0.75) - quantile(values, 0.25)) / median;
+  return { value, status: value >= FOCUS_DISPERSION_FLOOR ? "ok" : "below-bar" };
+}
+
+/** The composition axis: an org present in the pool above `FOCUS_ORG_MIN_SHARE`
+ * but absent from the covered set is flagged. Orgs below the minimum pool share
+ * are ignored (a small provider's absence is not a false positive). */
+function compositionAxis(models: readonly Model[], metric: string, fill: number): FocusMetricAssessment["composition"] {
+  const poolCounts = new Map<string, number>();
+  const coveredCounts = new Map<string, number>();
+  for (const model of models) {
+    poolCounts.set(model.org, (poolCounts.get(model.org) ?? 0) + 1);
+    const value = model.metrics[metric];
+    if (value == null) continue;
+    if (fill > 0 && value === fill) continue;
+    coveredCounts.set(model.org, (coveredCounts.get(model.org) ?? 0) + 1);
+  }
+  const total = models.length;
+  const omittedOrgs: string[] = [];
+  for (const [org, count] of poolCounts) {
+    if (count / total < FOCUS_ORG_MIN_SHARE) continue;
+    if ((coveredCounts.get(org) ?? 0) === 0) omittedOrgs.push(org);
+  }
+  omittedOrgs.sort();
+  return { omittedOrgs, status: omittedOrgs.length === 0 ? "ok" : "below-bar" };
+}
+
+/** The freshness axis: the newest covered model's date against the pool's newest.
+ * A missing date on either side degrades to `unknown` (a sparse date field must
+ * not false-positive). */
+function freshnessAxis(models: readonly Model[], metric: string, fill: number): FocusMetricAssessment["freshness"] {
+  let newestPool: string | null = null;
+  let newestCovered: string | null = null;
+  for (const model of models) {
+    const date = model.releaseDate;
+    if (date == null) continue;
+    if (newestPool === null || date > newestPool) newestPool = date;
+    const value = model.metrics[metric];
+    if (value == null) continue;
+    if (fill > 0 && value === fill) continue;
+    if (newestCovered === null || date > newestCovered) newestCovered = date;
+  }
+  if (newestPool === null || newestCovered === null) {
+    return { newestCovered, newestPool, monthsBehind: null, status: "unknown" };
+  }
+  // 30.4375 = 365.25/12 days per month, so a calendar-month gap reads as ~1.
+  const monthsBehind = (Date.parse(newestPool) - Date.parse(newestCovered)) / (1000 * 60 * 60 * 24 * 30.4375);
+  return { newestCovered, newestPool, monthsBehind, status: monthsBehind > FOCUS_STALENESS_MONTHS ? "below-bar" : "ok" };
+}
+
+/** The all-unknown assessment: the field size is unknown, or the metric's scores
+ * were not loaded. Annotated, never warned. */
+function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment {
+  return {
+    coverage,
+    dispersion: { value: null, status: "unknown" },
+    composition: { omittedOrgs: [], status: "unknown" },
+    freshness: { newestCovered: null, newestPool: null, monthsBehind: null, status: "unknown" },
+  };
+}
+
+/**
+ * The one assessment rule, shared by the discovery gate, the report and the
+ * explorer: coverage, dispersion, provider composition and freshness of one focus
+ * metric over the loaded pool. `focusCoverageOk`/`countMetricCoverage` are its
+ * coverage branch.
+ *
+ * An empty pool (unknown field size) or a metric with no covered values (its
+ * scores were not loaded) reports every axis `unknown` — never a silent `ok`.
+ */
+export function assessFocusMetric(
+  models: readonly Model[],
+  metric: string,
+  declared: readonly SourceDeclaration[] = [],
+): FocusMetricAssessment {
+  const total = models.length;
+  const covered = countMetricCoverage(models, metric, declared);
+  const fill = metricFill(metric, declared);
+  const coverage: FocusCoverageEntry = {
+    covered,
+    total: total > 0 ? total : null,
+    share: total > 0 ? covered / total : null,
+    fill,
+    status: focusCoverageOk(metric, covered, total > 0 ? total : null, declared),
+  };
+  if (total === 0 || covered === 0) return unknownAssessment({ ...coverage, status: "unknown" });
+  return {
+    coverage,
+    dispersion: dispersionAxis(models, metric, fill),
+    composition: compositionAxis(models, metric, fill),
+    freshness: freshnessAxis(models, metric, fill),
+  };
+}
+
+/** The one-line reason a below-bar assessment is dropped/warned, naming the
+ * failed axis; null when every axis is ok or unknown. */
+export function belowBarReason(assessment: FocusMetricAssessment): string | null {
+  const { coverage, dispersion, composition, freshness } = assessment;
+  if (coverage.status === "below-bar") {
+    return `coverage ${coverage.covered}/${coverage.total} is below the ${Math.round(FOCUS_COVERAGE_FLOOR * 100)}% bar`;
+  }
+  if (dispersion.status === "below-bar") {
+    return `dispersion ${dispersion.value?.toFixed(3)} below the ${FOCUS_DISPERSION_FLOOR} bar`;
+  }
+  if (composition.status === "below-bar") {
+    return `composition omits ${composition.omittedOrgs.join(", ")}`;
+  }
+  if (freshness.status === "below-bar") {
+    return `freshness ${freshness.monthsBehind?.toFixed(1)} months behind the pool`;
+  }
+  return null;
 }
 
 /**
@@ -290,8 +460,9 @@ export function countMetricCoverage(models: readonly Model[], metric: string, de
  * The focus set is capped at `FOCUS_METRIC_CAP` in priority order (named/linked
  * first, then discovery order), so the caller's explicit choices survive and one
  * benchmark keeps a decisive share; the metrics beyond the cap are reported as
- * `dropped`. `coverage` (the ranking field's size and per-metric counts) drives
- * the per-metric `coverage` annotation via the shared `focusCoverageOk`.
+ * `dropped`. `coverage.assessments` (the four-axis assessment the caller computed
+ * over the loaded pool) drives the per-metric annotation; without it the three
+ * new axes are `unknown` (the metric's scores were not loaded).
  */
 export function applyFocusBenchmarks(
   weights: Record<string, number>,
@@ -321,18 +492,23 @@ export function applyFocusBenchmarks(
 
   const declared = coverage?.declared ?? [];
   const total = coverage?.total ?? null;
-  const coverageMap: Record<string, FocusCoverageEntry> = {};
+  const assessments: Record<string, FocusMetricAssessment> = {};
   for (const metric of kept) {
+    const assessed = coverage?.assessments?.[metric];
+    if (assessed !== undefined) {
+      assessments[metric] = assessed;
+      continue;
+    }
     const covered = coverage?.covered[metric] ?? 0;
-    coverageMap[metric] = {
+    assessments[metric] = unknownAssessment({
       covered,
       total,
       share: total !== null && total > 0 ? covered / total : null,
       fill: metricFill(metric, declared),
       status: focusCoverageOk(metric, covered, total, declared),
-    };
+    });
   }
-  if (kept.length === 0) return { weights: { ...weights }, added, duplicates, unknown, dropped, coverage: coverageMap };
+  if (kept.length === 0) return { weights: { ...weights }, added, duplicates, unknown, dropped, assessments };
 
   const price = weights.price ?? 0;
   const specialistShare = Object.keys(weights)
@@ -359,7 +535,7 @@ export function applyFocusBenchmarks(
     const largest = keys.reduce((a, b) => (next[a] >= next[b] ? a : b));
     next[largest] = Math.round((next[largest] + residual) * 1e4) / 1e4;
   }
-  return { weights: next, added, duplicates, unknown, dropped, coverage: coverageMap };
+  return { weights: next, added, duplicates, unknown, dropped, assessments };
 }
 
 /** A benchmark discovered for a purpose: the metric it feeds, its label, the
@@ -375,6 +551,11 @@ export type DroppedBenchmark = { metric: string; label: string; reason: string }
 /** The discovery outcome: the benchmarks to fold in, and the ones the coverage
  * gate dropped (non-fatal, reported). */
 export type DiscoveryOutcome = { discovered: DiscoveredBenchmark[]; dropped: DroppedBenchmark[] };
+
+/** The post-fetch assessor the discovery gate injects: probe-fetch a candidate's
+ * source, join it onto the loaded pool and assess it. The extension supplies the
+ * real one (via `loadBenchmarkScores`); tests inject a stub. */
+export type FocusAssessor = (metric: string) => Promise<FocusMetricAssessment>;
 
 /** Catalog benchmarks with fewer models than this are skipped (a 1-model
  * benchmark would distort the ranking). */
@@ -449,6 +630,12 @@ function rankCatalogCandidates(purpose: string, candidates: readonly BenchmarkCa
  * `FOCUS_COVERAGE_FLOOR` of the field is dropped (non-fatal) with a reason, so a
  * sparse pass-rate benchmark cannot turn `q` into a coverage score. When the
  * field size is unknown the share rule is skipped and only the fill rule applies.
+ *
+ * `assess` is the post-fetch gate: the create-agent pool carries no `bench:<id>`
+ * scores, so the caller probe-fetches each survivor's source and assesses the
+ * joined pool. A survivor below-bar on any axis is dropped with a reason naming
+ * the failed axis. Without `assess` only the pre-fetch count gate runs (the
+ * catalog has no scores to assess).
  */
 export async function discoverBenchmarks(
   purpose: string,
@@ -456,6 +643,7 @@ export async function discoverBenchmarks(
   decide: (purpose: string, candidates: readonly BenchmarkCatalogEntry[]) => Promise<readonly string[]>,
   exclude: readonly string[] = [],
   fieldSize: number | null = null,
+  assess?: FocusAssessor,
 ): Promise<DiscoveryOutcome> {
   const candidates = catalog.filter((entry) => entry.modelCount >= MIN_CATALOG_MODELS);
   if (candidates.length === 0) return { discovered: [], dropped: [] };
@@ -477,6 +665,13 @@ export async function discoverBenchmarks(
         reason: `coverage ${entry.modelCount}/${fieldSize} is below the ${Math.round(FOCUS_COVERAGE_FLOOR * 100)}% bar`,
       });
       continue;
+    }
+    if (assess !== undefined) {
+      const reason = belowBarReason(await assess(metric));
+      if (reason !== null) {
+        dropped.push({ metric, label: entry.name, reason });
+        continue;
+      }
     }
     const declaration = catalogBenchmarkDeclaration(entry.id);
     discovered.push({ metric, label: entry.name, covered: entry.modelCount, ...(declaration !== null ? { declaration } : {}) });
@@ -901,11 +1096,18 @@ export function formatArchetypes(): string {
   }).join("\n\n");
 }
 
-/** One coverage line: `metric covered/total (share) status`, or `unknown`. */
-function coverageLine(metric: string, entry: FocusCoverageEntry): string {
-  if (entry.status === "unknown") return `${metric} unknown (field size unavailable)`;
-  const share = entry.share === null ? "?" : `${(entry.share * 100).toFixed(1)}%`;
-  return `${metric} ${entry.covered}/${entry.total} (${share}) ${entry.status}`;
+/** One focus-metric line: coverage plus the three new signals. */
+function assessmentLine(metric: string, a: FocusMetricAssessment): string {
+  const c = a.coverage;
+  const head =
+    c.status === "unknown"
+      ? `${metric} unknown (field size unavailable)`
+      : `${metric} ${c.covered}/${c.total} (${c.share === null ? "?" : `${(c.share * 100).toFixed(1)}%`}) ${c.status}`;
+  const dispersion = a.dispersion.status === "unknown" ? "unknown" : `${a.dispersion.value?.toFixed(3)} ${a.dispersion.status}`;
+  const composition =
+    a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : `omits ${a.composition.omittedOrgs.join(", ")}`;
+  const freshness = a.freshness.status === "unknown" ? "unknown" : `${a.freshness.monthsBehind?.toFixed(1)}mo ${a.freshness.status}`;
+  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}`;
 }
 
 /** The human-readable report for a completed (or dry-run) create. */
@@ -928,12 +1130,21 @@ export function formatCreateAgentReport(
   if (result.bench.duplicates.length > 0) lines.push(`  benchmarks: already weighted (skipped) ${result.bench.duplicates.join(", ")}`);
   if (result.bench.unknown.length > 0) lines.push(`  benchmarks: unknown (skipped) ${result.bench.unknown.join(", ")}`);
   if (result.bench.dropped.length > 0) lines.push(`  benchmarks: dropped (focus cap ${FOCUS_METRIC_CAP}) ${result.bench.dropped.join(", ")}`);
-  for (const [metric, entry] of Object.entries(result.bench.coverage)) lines.push(`  coverage:  ${coverageLine(metric, entry)}`);
-  for (const [metric, entry] of Object.entries(result.bench.coverage)) {
-    if (entry.status === "below-bar") {
+  for (const [metric, a] of Object.entries(result.bench.assessments)) lines.push(`  coverage:  ${assessmentLine(metric, a)}`);
+  for (const [metric, a] of Object.entries(result.bench.assessments)) {
+    if (a.coverage.status === "below-bar") {
       lines.push(
-        `  warning:   ${metric} coverage ${entry.covered}/${entry.total} is below the ${Math.round(FOCUS_COVERAGE_FLOOR * 100)}% bar — the role may rank on coverage, not quality`,
+        `  warning:   ${metric} coverage ${a.coverage.covered}/${a.coverage.total} is below the ${Math.round(FOCUS_COVERAGE_FLOOR * 100)}% bar — the role may rank on coverage, not quality`,
       );
+    }
+    if (a.dispersion.status === "below-bar") {
+      lines.push(`  warning:   ${metric} dispersion ${a.dispersion.value?.toFixed(3)} is below the ${FOCUS_DISPERSION_FLOOR} bar — the metric cannot separate models`);
+    }
+    if (a.composition.status === "below-bar") {
+      lines.push(`  warning:   ${metric} omits ${a.composition.omittedOrgs.join(", ")} — the source is provider-skewed`);
+    }
+    if (a.freshness.status === "below-bar") {
+      lines.push(`  warning:   ${metric} trails the pool by ${a.freshness.monthsBehind?.toFixed(1)} months — the source is stale`);
     }
   }
   if (opts.differentiation) lines.push(`  warning:   ${opts.differentiation}`);
