@@ -62,13 +62,14 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
 - **Shape**: `data.endpoint_perf[endpointId]` → `{ p50_throughput (output tok/s),
   p50_latency (ms) }` over the last **30 minutes** of routed traffic;
   `data.models[]` rows link a slug to one endpoint id — the route currently
-  getting the traffic — each carrying `pricing.prompt`/`pricing.completion`
-  (USD/token strings, discounts already applied). The payload also carries
-  `analytics`, `benchmarks`, `benchmark_ranges`, `categories`,
+  getting the traffic — each carrying `pricing.prompt`/`pricing.completion` and
+  `pricing.input_cache_read` (USD/token strings, discounts already applied). The
+  payload also carries `analytics`, `benchmarks`, `benchmark_ranges`, `categories`,
   `modality_counts`.
 - **Parse**: `parseFindData(v)` narrows `find` (models, `endpoint_perf`,
-  `endpoint_price` blended to $/M at 3:1 in:out, and the parallel
-  `endpoint_weight_price` input-only $/M map — the router's sort key, see "The
+  `endpoint_price` blended to $/M at 3:1 in:out, the parallel
+  `endpoint_weight_price` input-only $/M map — the router's sort key — and the
+  `endpoint_cache_read_price` cache-read input-only $/M map; see "The
   1/price² blend") and keeps the full `data` object verbatim for the cache; it
   also extracts the Design Arena mirror (`extractDesignElo`, see below).
 - **Cache**: `cache/openrouter-fetched-data.json` —
@@ -85,7 +86,8 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
   as React-Query state (sometimes twice, one copy without stats; records merge by
   endpoint id, the stats-carrying copy winning). `parseModelPage(html)` narrows
   each row to `OpenRouterEndpointRecord` (`id`, `providerSlug`, `serviceTier`,
-  `status`, `free`, `variant`, `price`, `weightPrice`, `tput`, `latency`,
+  `status`, `free`, `variant`, `price`, `weightPrice`, `cacheReadPrice`
+  (endpoint `pricing.input_cache_read`; `null` when absent), `tput`, `latency`,
   `contextLength` (endpoint `context_length`), `maxCompletionTokens` (endpoint
   `max_completion_tokens`) and `supportsTools` (`supported_parameters` contains
   `tools`)). The three capability fields are `null` when the field is absent —
@@ -139,6 +141,13 @@ probability proportional to `1/price²`). The weight basis is the **input
   `throughput = Σ(1/p_in²)·t / Σ(1/p_in²)` renormalized over the routes that
   have p50 data; latency likewise. A route with no input price drops from the
   pool (`1/p²` blows up at 0, and the router cannot score a route without one).
+- **Cache-read pricing**: a role may declare `cacheHitRate` (0–1, opt-in), and
+  `blendRoutePool(routes, cacheHitRate)` then blends each route's
+  `cacheReadPrice` (the endpoint's `pricing.input_cache_read`) into its billed
+  price, `billed = price + 3·(h·cacheRead + (1−h)·input − input)/4`, **without**
+  changing the `1/p_in²` weight basis (the router still sorts on the listed input
+  price). A route with no cache-read price keeps its full input price; `h = 0`
+  is byte-identical to the uncached blend. See scoring.md, *Cache-read pricing*.
 - **Fallback** (no eligible route carries throughput): throughput = highest-p50
   variant (`:free` included — it rescues otherwise-unranked models), price =
   cheapest billed route (a $0 free tier never sets the price).

@@ -318,6 +318,14 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       type: "string",
       description: `Provider slug the ${name} role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)`,
     };
+    schema[`${p}.cacheHitRate`] = {
+      type: "number",
+      description: `Assumed cache-hit rate (0–1) for ${name}'s input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)`,
+      default: def.cacheHitRate ?? 0,
+      min: 0,
+      max: 1,
+      step: 0.01,
+    };
     schema[`${p}.required`] = {
       type: "string",
       description: `Comma-separated metrics a model must have to rank for ${name}`,
@@ -603,6 +611,12 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
       if (typeof rdef.lambda !== "number" || !Number.isFinite(rdef.lambda) || rdef.lambda < 0) {
         errors.push(`role ${name}: lambda must be a number ≥ 0`);
         delete rdef.lambda;
+      }
+    }
+    if (rdef.cacheHitRate !== undefined) {
+      if (typeof rdef.cacheHitRate !== "number" || !Number.isFinite(rdef.cacheHitRate) || rdef.cacheHitRate < 0 || rdef.cacheHitRate > 1) {
+        errors.push(`role ${name}: cacheHitRate must be a number in [0, 1]`);
+        delete rdef.cacheHitRate;
       }
     }
     // providerPin is a provider slug (may be tiered like `deepinfra/fp8`); `@`

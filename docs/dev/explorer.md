@@ -130,8 +130,9 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   applies, same order: missing required, image filter, no billed price). On
   success: `contributions`
   (raw → cardinal `t` → renormalized weight → contribution → share of `q`, with
-  a `fillNote` when the value is a capability fill), `cost` (`priceEff`, billed
-  price, λ, penalty, `q`, `value`), `gapAbove`/`gapToTop`/`above`, `closing` (the
+  a `fillNote` when the value is a capability fill), `cost` (`priceEff`, the
+  cache-adjusted billed price, λ, penalty, `q`, `value`), `role.cacheHitRate`,
+  `gapAbove`/`gapToTop`/`above`, `closing` (the
   per-metric raw target that would close the gap, via `inverseCardinal`, with
   unreachable/extrapolated notes), `dominators` (models both cheaper and at
   least as good on `q`, top 3), and the availability overlay `key`/`keyReason`
@@ -205,7 +206,8 @@ The one validated role write path, shared by the explorer's Export,
 - `mergeExport(existing, dirty)` → `{lock}` or `{error}`. Preserves `plugins` and
   every sibling settings key. Writes each dirty role as **flat dotted keys**
   (`roles.<name>.weights.<metric>`, `.description`, `.enabled`, `.locked`,
-  `.required`, `.thinking`, `.providerPin`, `.lambda`, `.filters.image`) because omp's
+  `.required`, `.thinking`, `.providerPin`, `.cacheHitRate`, `.lambda`,
+  `.filters.image`) because omp's
   `/settings` Plugins tab shallow-merges the settings object and does not
   flatten nested objects — a nested `roles` object would render as schema
   defaults. A pre-existing nested entry for a dirty role is deleted, so an older

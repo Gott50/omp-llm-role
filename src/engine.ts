@@ -194,6 +194,14 @@ export type RoleDef = {
    * blend, and a model with no matching route is ineligible. Absent = OpenRouter
    * default routing (the blend, unchanged). */
   providerPin?: string;
+  /** Assumed cache-hit rate (0–1) for the role's input tokens; 0/absent = off. When
+   * set, the role's effective input price blends the endpoint's cache-read price and
+   * its full input price (`hitRate·cacheRead + (1−hitRate)·input`) before the 3:1
+   * blend and the thinking factor — the ranking then reflects a cache-heavy agent
+   * loop's invoice, not the sticker price. A route with no cache-read price keeps its
+   * full input price. The weight basis stays the listed input price (the router's
+   * sort key), so a cheap cache on a lightly-weighted route does not dominate. */
+  cacheHitRate?: number;
   /** Locked role: the plugin still ranks it (so it stays in the universe and its
    * sources are fetched) but never rewrites its `modelRoles` selector or fallback
    * chain, and never removes it. Enable/disable still applies. */
@@ -256,6 +264,10 @@ type OpenRouterFindData = {
   /** endpoint id -> input-only $/M (prompt price) — the router's sort key and the 1/price² weight basis;
    * only endpoints with usable prompt pricing */
   endpoint_weight_price: Record<string, number>;
+  /** endpoint id -> cache-read input-only $/M (the endpoint's `pricing.input_cache_read`);
+   * only endpoints with usable cache-read pricing. A role's cache-hit rate blends this with
+   * `endpoint_weight_price` before the 3:1 blend (see `blendRoutePool`). */
+  endpoint_cache_read_price: Record<string, number>;
 };
 
 /** One provider route from a model page, narrowed: pricing blended to $/M (3:1
@@ -272,6 +284,10 @@ export type OpenRouterEndpointRecord = {
   price: number | null;
   /** input-only $/M (prompt price) — the router's sort key, the 1/price² weight basis */
   weightPrice: number | null;
+  /** cache-read input-only $/M (the endpoint's `pricing.input_cache_read`); null when the
+   * endpoint reports none — a role's cache-hit rate then uses the full input price
+   * (`weightPrice`), so missing data is not a silent discount. */
+  cacheReadPrice: number | null;
   tput: number | null;
   latency: number | null;
   /** endpoint `context_length` (tokens); null when the field is absent */
@@ -287,21 +303,41 @@ export type OpenRouterEndpointPages = Record<string, OpenRouterEndpointRecord[]>
 
 export type OrEnrichment = { tput: number; latency: number | null; price: number | null; thinking: boolean; routes: OpenRouterEndpointRecord[] };
 
+/** The effective billed $/M of one route under an assumed cache-hit rate. The route's
+ * billed 3:1 price is `price = (3·input + output)/4` on the listed input price; a hit
+ * rate `h` blends the cache-read input into the input term,
+ * `effInput = h·cacheRead + (1−h)·input`, so `billed = price + 3·(effInput − input)/4`
+ * (the output term is unchanged). With `h = 0`, no cache-read price, or no input price
+ * this is the route's listed `price` — missing data keeps the full input price, never a
+ * silent discount. Shared by the blend (`blendRoutePool`), the pin path (`rankRole`) and
+ * `roleMetricValue`. */
+export function routeEffectivePrice(route: OpenRouterEndpointRecord, cacheHitRate = 0): number | null {
+  if (route.price == null) return null;
+  if (cacheHitRate <= 0 || route.cacheReadPrice == null || route.weightPrice == null) return route.price;
+  const input = route.weightPrice;
+  const effInput = cacheHitRate * route.cacheReadPrice + (1 - cacheHitRate) * input;
+  return route.price + (3 * (effInput - input)) / 4;
+}
+
 /** Expected price/throughput/latency of one request over a route pool under the
  * router's default price-based load balancing: P(route i) ∝ 1/input_price_i² — the
  * router sorts on the input (prompt) price alone, so the weight basis is
- * `weightPrice`, not the reported 3:1 billed blend. `price` is the w-weighted mean
- * of the billed 3:1 price; throughput and latency renormalize over the routes that
- * carry p50 data (a provider without recent traffic cannot contribute). Only routes
- * with a usable billed and input price can be scored; an unscorable pool returns
- * all-null. This is the model-level blend AND the pool a role with endpoint filters
- * is priced on (issue #18). */
-export function blendRoutePool(routes: OpenRouterEndpointRecord[]): { price: number | null; tput: number | null; latency: number | null } {
+ * `weightPrice`, not the reported 3:1 billed blend (and the cache-hit rate does not
+ * change routing: a cheap cache on a lightly-weighted route must not dominate). The
+ * billed per-route price is `routeEffectivePrice(route, cacheHitRate)`, so a role's
+ * assumed cache-hit rate blends the cache-read price in before the weighting;
+ * `cacheHitRate = 0` makes this byte-identical to the uncached blend. `price` is the
+ * w-weighted mean of those billed prices; throughput and latency renormalize over the
+ * routes that carry p50 data (a provider without recent traffic cannot contribute).
+ * Only routes with a usable billed and input price can be scored; an unscorable pool
+ * returns all-null. This is the model-level blend AND the pool a role with endpoint
+ * filters is priced on (issue #18). */
+export function blendRoutePool(routes: OpenRouterEndpointRecord[], cacheHitRate = 0): { price: number | null; tput: number | null; latency: number | null } {
   const usable = routes.filter((r) => r.price !== null && r.price > 0 && r.weightPrice !== null && r.weightPrice > 0);
   if (usable.length === 0) return { price: null, tput: null, latency: null };
   const weighted = usable.map((r) => ({ r, w: 1 / ((r.weightPrice as number) * (r.weightPrice as number)) }));
   const wSum = weighted.reduce((a, x) => a + x.w, 0);
-  const price = weighted.reduce((a, x) => a + x.w * (x.r.price as number), 0) / wSum;
+  const price = weighted.reduce((a, x) => a + x.w * (routeEffectivePrice(x.r, cacheHitRate) as number), 0) / wSum;
   const tputKnown = weighted.filter((x) => x.r.tput !== null);
   const tputW = tputKnown.reduce((a, x) => a + x.w, 0);
   const tput = tputW > 0 ? tputKnown.reduce((a, x) => a + x.w * (x.r.tput as number), 0) / tputW : null;
@@ -328,7 +364,7 @@ export function blendRoutePool(routes: OpenRouterEndpointRecord[]): { price: num
  * variant row advertising `supports_reasoning`.
  */
 export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: OpenRouterEndpointPages): Record<string, OrEnrichment> {
-  type Cand = { slug: string; id: string; free: boolean; think: boolean; status: number | null; variant: string; perf: OpenRouterPerf | null; price: number | null; weightPrice: number | null };
+  type Cand = { slug: string; id: string; free: boolean; think: boolean; status: number | null; variant: string; perf: OpenRouterPerf | null; price: number | null; weightPrice: number | null; cacheReadPrice: number | null };
   const bySuffix: Record<string, Cand[]> = {};
   for (const m of data.models) {
     const ep = m.endpoint;
@@ -346,6 +382,7 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: Open
       perf: data.endpoint_perf[ep.id] ?? null,
       price: data.endpoint_price[ep.id] ?? null,
       weightPrice: data.endpoint_weight_price?.[ep.id] ?? null,
+      cacheReadPrice: data.endpoint_cache_read_price?.[ep.id] ?? null,
     });
   }
   const out: Record<string, OrEnrichment> = {};
@@ -369,6 +406,7 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: Open
         variant: c.variant,
         price: c.price,
         weightPrice: c.weightPrice,
+        cacheReadPrice: c.cacheReadPrice,
         tput: c.perf?.p50_throughput ?? null,
         latency: c.perf?.p50_latency ?? null,
         // The find payload carries no capability ceilings — unstated (null), kept by the gate.
@@ -451,10 +489,13 @@ export function narrowEndpointRecord(row: unknown): OpenRouterEndpointRecord | n
   const variant = "model_variant_permaslug" in row && typeof row.model_variant_permaslug === "string" ? row.model_variant_permaslug : "";
   let price: number | null = null;
   let weightPrice: number | null = null;
+  let cacheReadPrice: number | null = null;
   if ("pricing" in row && typeof row.pricing === "object" && row.pricing !== null) {
     const prompt = "prompt" in row.pricing ? Number(row.pricing.prompt) : Number.NaN;
     const completion = "completion" in row.pricing ? Number(row.pricing.completion) : Number.NaN;
+    const cacheRead = "input_cache_read" in row.pricing ? Number(row.pricing.input_cache_read) : Number.NaN;
     if (Number.isFinite(prompt) && prompt >= 0) weightPrice = prompt * 1e6; // input-only $/M: the router's sort key
+    if (Number.isFinite(cacheRead) && cacheRead >= 0) cacheReadPrice = cacheRead * 1e6; // cache-read input-only $/M
     if (Number.isFinite(prompt) && Number.isFinite(completion) && prompt >= 0 && completion >= 0) {
       price = ((3 * prompt + completion) / 4) * 1e6; // USD/token -> blended $/M, 3:1 in:out
     }
@@ -471,7 +512,7 @@ export function narrowEndpointRecord(row: unknown): OpenRouterEndpointRecord | n
   const maxCompletionTokens = "max_completion_tokens" in row && typeof row.max_completion_tokens === "number" ? row.max_completion_tokens : null;
   const supportsTools =
     "supported_parameters" in row && Array.isArray(row.supported_parameters) ? row.supported_parameters.includes("tools") : null;
-  return { id: row.id, providerSlug: row.provider_slug, serviceTier: tier, status, free, variant, price, weightPrice, tput, latency, contextLength, maxCompletionTokens, supportsTools };
+  return { id: row.id, providerSlug: row.provider_slug, serviceTier: tier, status, free, variant, price, weightPrice, cacheReadPrice, tput, latency, contextLength, maxCompletionTokens, supportsTools };
 }
 
 /** Extract the per-provider endpoint records from a model page's RSC flight. The
@@ -666,6 +707,7 @@ export function parseFindData(v: unknown): ParsedFindData {
   }
   const price: Record<string, number> = {};
   const weightPrice: Record<string, number> = {};
+  const cacheReadPrice: Record<string, number> = {};
   for (const row of d.models) {
     if (typeof row !== "object" || row === null || !("endpoint" in row)) continue;
     const ep: unknown = row.endpoint;
@@ -675,11 +717,13 @@ export function parseFindData(v: unknown): ParsedFindData {
     if (typeof id !== "string" || typeof pr !== "object" || pr === null) continue;
     const prompt = "prompt" in pr ? Number(pr.prompt) : Number.NaN;
     const completion = "completion" in pr ? Number(pr.completion) : Number.NaN;
+    const cacheRead = "input_cache_read" in pr ? Number(pr.input_cache_read) : Number.NaN;
     if (Number.isFinite(prompt) && prompt >= 0) weightPrice[id] = prompt * 1e6; // input-only $/M: the router's sort key
+    if (Number.isFinite(cacheRead) && cacheRead >= 0) cacheReadPrice[id] = cacheRead * 1e6; // cache-read input-only $/M
     if (!Number.isFinite(prompt) || !Number.isFinite(completion) || prompt < 0 || completion < 0) continue;
     price[id] = ((3 * prompt + completion) / 4) * 1e6; // USD/token -> blended $/M, 3:1 in:out
   }
-  return { find: { models: d.models, endpoint_perf: perf, endpoint_price: price, endpoint_weight_price: weightPrice }, data: d, designElo: extractDesignElo(d.models, "benchmarks" in d ? d.benchmarks : null) };
+  return { find: { models: d.models, endpoint_perf: perf, endpoint_price: price, endpoint_weight_price: weightPrice, endpoint_cache_read_price: cacheReadPrice }, data: d, designElo: extractDesignElo(d.models, "benchmarks" in d ? d.benchmarks : null) };
 }
 
 /**
@@ -968,16 +1012,18 @@ export function modelPassesEndpointFilters(model: Model, filters: RoleDef["filte
   return (model.routes ?? []).some((r) => routePassesEndpointFilters(r, filters));
 }
 
-/** The model as a role with endpoint filters sees it: the route pool is narrowed to
- * the standard-tier routes that satisfy every declared filter, and `price`/`throughput`
- * become the 1/price² blend over that pool — the routes the router would actually
- * choose from. Returns null when no route survives (the model is ineligible for the
- * role). A role with no endpoint filter gets the model unchanged. */
-export function endpointFilteredModel(m: Model, filters: RoleDef["filters"]): Model | null {
-  if (!hasEndpointFilters(filters)) return m;
+/** The model as a role with endpoint filters and/or a cache-hit rate sees it: the
+ * route pool is narrowed to the standard-tier routes that satisfy every declared
+ * filter, and `price`/`throughput` become the 1/price² blend over that pool — the
+ * routes the router would actually choose from — with the role's cache-hit rate
+ * blended into each route's billed price (`blendRoutePool`). Returns null when no
+ * route survives (the model is ineligible for the role). A role with no endpoint
+ * filter and no cache-hit rate gets the model unchanged. */
+export function endpointFilteredModel(m: Model, filters: RoleDef["filters"], cacheHitRate = 0): Model | null {
+  if (!hasEndpointFilters(filters) && cacheHitRate <= 0) return m;
   const pool = (m.routes ?? []).filter((r) => routePassesEndpointFilters(r, filters));
   if (pool.length === 0) return null;
-  const { price, tput } = blendRoutePool(pool);
+  const { price, tput } = blendRoutePool(pool, cacheHitRate);
   const effPrice = price ?? m.price;
   const effTput = tput ?? m.throughput;
   return { ...m, price: effPrice, throughput: effTput, metrics: { ...m.metrics, price: effPrice, throughput: effTput } };
@@ -1010,11 +1056,12 @@ export function pinnedRoute(model: Model, providerPin: string | undefined): Open
 /** The metric value a role sees for a model. A pinned role's throughput is its
  * route's p50, falling back to the model's blended throughput when the route has
  * no p50 (a sparse route must not zero the metric), and its price is the route's
- * billed price; every other metric is the model's own. */
-export function roleMetricValue(m: Model, metric: string, route: OpenRouterEndpointRecord | null): number | null {
+ * cache-adjusted billed price (`routeEffectivePrice`); every other metric is the
+ * model's own. */
+export function roleMetricValue(m: Model, metric: string, route: OpenRouterEndpointRecord | null, cacheHitRate = 0): number | null {
   if (route !== null) {
     if (metric === "throughput") return route.tput ?? m.throughput;
-    if (metric === "price") return route.price;
+    if (metric === "price") return routeEffectivePrice(route, cacheHitRate);
   }
   return m.metrics[metric];
 }
@@ -1042,6 +1089,9 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
   const qW = 1 - wPrice;
   const lambda = roleLambda(def);
   const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
+  // Assumed cache-hit rate (0 = off): blends each route's cache-read price into
+  // its billed price. 0 makes every cache path byte-identical to the uncached one.
+  const cacheHitRate = def.cacheHitRate ?? 0;
   const ranked: Ranked[] = [];
   for (const m of models) {
     if (def.filters?.image && !m.multimodal) continue;
@@ -1055,12 +1105,14 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     // would actually choose from. A model whose every route fails (or that has no
     // route data) has no such pool and is ineligible; the find-route fallback does
     // not resurrect it. No endpoint filter leaves the model's own blend unchanged.
-    const em = endpointFilteredModel(m, def.filters);
+    // A cache-hit rate recomputes the blend over the same pool with the cache-read
+    // price blended per route.
+    const em = endpointFilteredModel(m, def.filters, cacheHitRate);
     if (em === null) continue;
-    if (def.required.some((k) => roleMetricValue(em, k, route) == null)) continue;
-    // The billed price the role actually pays: the pinned route's price, else the
-    // role's route-pool blend. Value needs one.
-    const basePrice = route !== null ? route.price : em.price;
+    if (def.required.some((k) => roleMetricValue(em, k, route, cacheHitRate) == null)) continue;
+    // The billed price the role actually pays: the pinned route's cache-adjusted
+    // price, else the role's route-pool blend. Value needs one.
+    const basePrice = route !== null ? routeEffectivePrice(route, cacheHitRate) : em.price;
     if (basePrice == null) continue;
 
     // The factor assumes the model runs at the role's level. omp clamps
@@ -1081,7 +1133,7 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     const parts: Record<string, number> = {};
     for (const [metric, w] of Object.entries(def.weights)) {
       if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
-      const raw = roleMetricValue(em, metric, route);
+      const raw = roleMetricValue(em, metric, route, cacheHitRate);
       if (raw == null) {
         // Sparse capability metrics are capability-filled (below-median, not 0)
         // so absence is not a coverage penalty; every other metric contributes

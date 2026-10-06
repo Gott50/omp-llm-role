@@ -52,6 +52,7 @@ export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): 
     plugin[`${prefix}.required`] = def.required;
     if (def.thinking !== undefined) plugin[`${prefix}.thinking`] = def.thinking;
     if (def.providerPin !== undefined) plugin[`${prefix}.providerPin`] = def.providerPin;
+    if (def.cacheHitRate !== undefined) plugin[`${prefix}.cacheHitRate`] = def.cacheHitRate;
     if (def.lambda !== undefined) plugin[`${prefix}.lambda`] = def.lambda;
     if (def.filters?.image !== undefined) plugin[`${prefix}.filters.image`] = def.filters.image;
     if (def.filters?.tools !== undefined) plugin[`${prefix}.filters.tools`] = def.filters.tools;

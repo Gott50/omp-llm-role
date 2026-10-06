@@ -97,6 +97,14 @@
         "type": "string",
         "description": "Provider slug the default role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
+      "roles.default.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for default's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
       "roles.default.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for default",
@@ -212,6 +220,14 @@
         "type": "string",
         "description": "Provider slug the smol role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
+      "roles.smol.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for smol's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
       "roles.smol.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for smol",
@@ -319,6 +335,14 @@
         "type": "string",
         "description": "Provider slug the slow role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
+      "roles.slow.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for slow's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
       "roles.slow.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for slow",
@@ -425,6 +449,14 @@
       "roles.vision.providerPin": {
         "type": "string",
         "description": "Provider slug the vision role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
+      "roles.vision.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for vision's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       },
       "roles.vision.required": {
         "type": "string",
@@ -541,6 +573,14 @@
         "type": "string",
         "description": "Provider slug the plan role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
+      "roles.plan.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for plan's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
       "roles.plan.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for plan",
@@ -639,6 +679,14 @@
       "roles.commit.providerPin": {
         "type": "string",
         "description": "Provider slug the commit role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
+      "roles.commit.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for commit's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       },
       "roles.commit.required": {
         "type": "string",
@@ -739,6 +787,14 @@
         "type": "string",
         "description": "Provider slug the tiny role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
+      "roles.tiny.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for tiny's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
       "roles.tiny.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for tiny",
@@ -829,6 +885,14 @@
       "roles.task.providerPin": {
         "type": "string",
         "description": "Provider slug the task role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
+      "roles.task.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for task's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       },
       "roles.task.required": {
         "type": "string",
@@ -945,6 +1009,14 @@
         "type": "string",
         "description": "Provider slug the advisor role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
+      "roles.advisor.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for advisor's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
+      },
       "roles.advisor.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for advisor",
@@ -1043,6 +1115,14 @@
       "roles.designer.providerPin": {
         "type": "string",
         "description": "Provider slug the designer role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
+      "roles.designer.cacheHitRate": {
+        "type": "number",
+        "description": "Assumed cache-hit rate (0–1) for designer's input tokens; blends each route's cache-read price before the 3:1 blend (0 = off)",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "step": 0.01
       },
       "roles.designer.required": {
         "type": "string",

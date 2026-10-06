@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, routeEffectivePrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ export type Explanation =
       value: number;
       q: number;
       priceEff: number;
-      role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined };
+      role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
       contributions: Contribution[];
       cost: { priceEff: number; billedPrice: number; lambda: number; penalty: number; q: number; value: number };
       gapAbove: number | null;
@@ -285,11 +285,12 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   // A pinned role prices and gates on the model's matching route (mirrors rankRole).
   const route = pinnedRoute(model, def.providerPin);
   // A role with endpoint filters is priced on the blend over the routes that survive
-  // them: `em` is the model with that effective price/throughput, or null when no
-  // route survives.
-  const em = endpointFilteredModel(model, def.filters);
+  // them, with its cache-hit rate blended into each route's billed price: `em` is the
+  // model with that effective price/throughput, or null when no route survives.
+  const cacheHitRate = def.cacheHitRate ?? 0;
+  const em = endpointFilteredModel(model, def.filters, cacheHitRate);
   const eff = em ?? model;
-  const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, route) == null);
+  const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, route, cacheHitRate) == null);
   if (missingRequired.length > 0) reasons.push(`missing required metric(s): ${missingRequired.join(", ")}`);
   if (def.filters?.image && !model.multimodal) reasons.push("role requires image input; model is text-only");
   if (def.providerPin !== undefined && route === null) reasons.push("no route matches the role's provider pin");
@@ -311,7 +312,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   const contributions: Contribution[] = [];
   for (const [metric, w] of Object.entries(def.weights)) {
     if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
-    const stored = roleMetricValue(eff, metric, route) ?? null;
+    const stored = roleMetricValue(eff, metric, route, cacheHitRate) ?? null;
     // Mirror rankRole: a sparse capability metric with no data scores at
     // CAPABILITY_FILL *as a cardinal value* (no transform), not 0 — otherwise
     // the parts would not sum to q.
@@ -391,9 +392,9 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     value: self.value,
     q: self.q,
     priceEff: self.priceEff,
-    role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking },
+    role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking, cacheHitRate },
     contributions,
-    cost: { priceEff: self.priceEff, billedPrice: route?.price ?? eff.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
+    cost: { priceEff: self.priceEff, billedPrice: route !== null ? routeEffectivePrice(route, cacheHitRate) ?? eff.price : eff.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
     gapAbove,
     gapToTop,
     above,

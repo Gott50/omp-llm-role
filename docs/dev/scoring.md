@@ -80,6 +80,38 @@ value = q − λ · priceEff
 - `value` is the sort key; ties break score desc → blended $/M asc → id asc
   (determinism).
 
+### Cache-read pricing (cache-hit rate)
+
+A role may declare an assumed **cache-hit rate** for its input tokens
+(`roles.<role>.cacheHitRate`, 0–1; `0`/absent = off). Agent loops resend the
+same system prompt every turn, so a cache-heavy role's invoice is dominated by
+cache reads; the knob prices that, opt-in, without touching any shipped role.
+
+- the route's billed price is `price = (3·input + output)/4` on the **listed**
+  input price; a hit rate `h` blends the endpoint's cache-read price into the
+  input term, `effInput = h·cacheRead + (1−h)·input`, giving
+  `billed = price + 3·(effInput − input)/4` (the output term is unchanged);
+- `blendRoutePool(routes, cacheHitRate)` weights by **`1/listedInput²`** — the
+  router's sort key — so the hit rate changes the per-route billed price, not the
+  routing probability: a cheap cache on a lightly-weighted route does not
+  dominate (user story 9);
+- a route with **no cache-read price** keeps its full input price
+  (`cacheReadPrice = null` → `effInput = input`), so missing data is not a silent
+  discount;
+- `endpointFilteredModel(model, filters, cacheHitRate)` recomputes the blend when
+  the role declares endpoint filters **or** a non-zero hit rate; the hit rate
+  composes with the filters (filter the pool first, then cache-price it);
+- `roleEffectivePrice`/`routeEffectivePrice` is the single per-route accessor the
+  blend, the pinned-route path and `roleMetricValue` share; a pinned role prices
+  its route's cache-adjusted billed price, and `maxPriceUsdPerM` caps the
+  thinking-adjusted `priceEff` (the same cap as the blend path);
+- `explainModel` mirrors all of it, carries `role.cacheHitRate`, and reports the
+  cache-adjusted `cost.billedPrice`; the SPA cost line appends `· cache <rate>`
+  when the rate is set;
+- with `cacheHitRate = 0` (absent) every path is **byte-identical** to the
+  uncached ranking. `resolveSettings` validates the rate to `[0, 1]` (a typo
+  cannot silently halve or double the price).
+
 ### Route-aware pricing (provider pin)
 
 A role may pin its requests to one OpenRouter provider route
@@ -89,7 +121,8 @@ route instead of the `1/price²` blend:
 - `pinnedRoute(model, pin)` (`src/engine.ts`) resolves the model's route by
   **exact, tiered-verbatim** `providerSlug` — `deepinfra` and `deepinfra/fp8`
   are different routes, with no normalization — and returns `null` on no match.
-- `priceEff` is the route's billed 3:1 price (not the blend), scaled by the same
+- `priceEff` is the route's billed 3:1 price (cache-adjusted by the role's
+  `cacheHitRate` when set, see *Cache-read pricing*), scaled by the same
   thinking factor and gated by the same `runsAtLevel` rule as an unpinned role:
   the pin changes the base price, not the thinking math.
 - the `throughput` weight reads the route's p50, falling back to the model's
@@ -97,9 +130,10 @@ route instead of the `1/price²` blend:
   zero the metric (an absent p50 is unknown, not slow).
 - `maxPriceUsdPerM` caps the pinned route price (the thinking-adjusted price the
   role actually pays), like the blend cap.
-- `roleMetricValue(model, metric, route)` is the accessor `rankRole` and
-  `explainModel` share: for a pinned role it returns the route's `price` and
-  `throughput`, and the model's own value for every other metric.
+- `roleMetricValue(model, metric, route, cacheHitRate)` is the accessor `rankRole`
+  and `explainModel` share: for a pinned role it returns the route's cache-adjusted
+  billed price (`routeEffectivePrice`) and `throughput`, and the model's own value
+  for every other metric.
 - a model with **no matching route** is ineligible for that role
   (`providerPinDrops` → `Decision.pinBlocked`, rendered `; pin-blocked: …`);
   `explainModel` reports "no route matches the role's provider pin".

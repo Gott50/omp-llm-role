@@ -10,6 +10,21 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Cache-read pricing in the cost axis** — a role may now declare an assumed
+  cache-hit rate (`roles.<role>.cacheHitRate`, 0–1; `0`/absent = off) and its
+  effective input price blends the endpoint's cache-read price with its full
+  input price before the 3:1 billed blend and the thinking factor. The
+  `OpenRouterEndpointRecord` gains `cacheReadPrice` (the endpoint's
+  `pricing.input_cache_read`, read by the find payload and the model pages), and a
+  new `routeEffectivePrice` accessor is shared by the blend, the pinned-route
+  path and `roleMetricValue`. The `1/price²` weight basis stays the **listed**
+  input price (the router's sort key), so a cheap cache on a lightly-weighted
+  route cannot dominate; a route with no cache-read price keeps its full input
+  price (missing data is not a silent discount); `maxPriceUsdPerM` caps the
+  cache-adjusted `priceEff`; `explainModel` mirrors it and the SPA cost line
+  marks `· cache <rate>`. With no rate set the ranking is byte-identical — the
+  knob is opt-in and no shipped role sets it. Validation range is `[0, 1]`.
+  (issue #30)
 - **Explorer scope switcher** — the explorer is no longer user-level only. A
   **scope** is a role-config source: the user-level scope, or one project where
   `/project-roles` was used. The header lists every known scope — the user-level
