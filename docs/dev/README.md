@@ -28,7 +28,7 @@ regenerated on every run) and runs the test suite (`node --test tests/`).
 | the dated numbers (matched/priced/eligible counts, per-role leaders) | [current-state.md](current-state.md) |
 | a release (version bump, SemVer, CHANGELOG rules, npm/git/marketplace channels) | [releasing.md](releasing.md) |
 | the agent `.md` contract (frontmatter, routing, read-only rules) | [agent-authoring.md](agent-authoring.md) |
-| a normative decision (what the plugin MUST do) | [spec.md](spec.md) |
+| the test suite or a verification scenario | [testing.md](testing.md) |
 | a debugging-only oddity (a quirk, not a contract) | [quirks.md](quirks.md) |
 
 ## The docs
@@ -60,8 +60,8 @@ regenerated on every run) and runs the test suite (`node --test tests/`).
 - **[agent-authoring.md](agent-authoring.md)** — the agent `.md` contract:
   frontmatter (`model: "@<role>, @default"`, `tools:`), the routing
   description, read-only classification, and where agents are discovered.
-- **[spec.md](spec.md)** — the normative spec: the confirmed decisions, the
-  verified ground truth, and the contracts the implementation MUST satisfy.
+- **[testing.md](testing.md)** — the test-suite seam map (which test file covers
+  which scenario) and the live checks that need a real omp session.
 - **[quirks.md](quirks.md)** — debugging-only oddities and gotchas that are not
   contracts (e.g. Node type-stripping not typechecking, stale in-process plugin
   code).

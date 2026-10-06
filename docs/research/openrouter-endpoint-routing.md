@@ -11,8 +11,8 @@ expect minor transcription artifacts.
 
 This is a **research note**, not a contract. It records what an external
 practitioner argues about OpenRouter's routing and how it maps onto (or
-contradicts) `omp-llm-role`'s design. The normative decisions stay in
-[`../dev/spec.md`](../dev/spec.md); the measured numbers stay in
+contradicts) `omp-llm-role`'s design. The contracts stay in the topic docs under
+[`../dev/`](../dev/README.md); the measured numbers stay in
 [`../dev/scoring.md`](../dev/scoring.md); the source model stays in
 [`../dev/data-sources.md`](../dev/data-sources.md).
 
@@ -138,7 +138,7 @@ fields. The RSC payload's per-endpoint records include `context_length`,
 `pricing`/`stats` and **discards all four**. So the axis is actionable from an
 existing source — no new fetch is needed.
 
-There is also a **dormant, named hook** for part of it: `spec.md` §6.3 declares
+There is also a **dormant, named hook** for part of it: the role schema declared
 `filters: { maxPriceUsdPerM, minContextTokens }` as schema capability, but
 `scoring.md` records that `rankRole` implements only `filters.image` —
 `resolveSettings` does not validate the other two and the engine never enforces
@@ -187,8 +187,8 @@ default.
   `context_length`, `max_completion_tokens`, and `supported_parameters` (tools)
   ride the already-fetched model pages; `narrowEndpointRecord` drops them. If the
   project wants to model "the endpoint can't finish the thought", the data is
-  there — no new source. The `minContextTokens` filter already named in spec §6.3
-  is a dormant hook, but it filters on model-level `context`, not the endpoint cap.
+  there — no new source. The `minContextTokens` filter already named in the role
+  schema is a dormant hook, but it filters on model-level `context`, not the endpoint cap.
   *(Landed 2026-10-06, issue #18: the ceilings are now read and the role filters
   gate on them; `minContextTokens` now filters the endpoint `context_length`.)*
 - **Cache pricing is the open cost gap.** The project prices listed, not

@@ -11,8 +11,8 @@ expect minor transcription artifacts.
 
 This is a **research note**, not a contract. It records what an external
 practitioner argues about model selection and how it maps onto (or contradicts)
-`omp-llm-role`'s design. The normative decisions stay in
-[`../dev/spec.md`](../dev/spec.md); the measured numbers stay in
+`omp-llm-role`'s design. The contracts stay in the topic docs under
+[`../dev/`](../dev/README.md); the measured numbers stay in
 [`../dev/scoring.md`](../dev/scoring.md).
 
 ## The thesis

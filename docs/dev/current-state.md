@@ -488,8 +488,9 @@ below are the 2026-10-06 measurement (the input-price blend basis #21 and the
   cannot re-add keys outside `settings.roles` `patchModelRoles` selects. The
   owner-written `retry.fallbackChains` key
   `openrouter/~deepseek/deepseek-v4-flash-latest` is now unreferenced by any
-  role; it is left in place deliberately (SPEC §6.4: unwritten, unreferenced
-  keys are never pruned), so removing it is a manual call.
+  role; it is left in place deliberately (unwritten, unreferenced keys are never
+  pruned — see [`writes-and-state.md`](writes-and-state.md)), so removing it is a
+  manual call.
 - Plugin verified live (2026-09-23) with the provider-allowlist probe: the
   account's allowed-providers whitelist excludes first-party openai/azure/
   anthropic endpoints, so the probe gate rewrote `slow` → GLM-5.3 (`:max`),

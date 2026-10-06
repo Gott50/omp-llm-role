@@ -1,9 +1,8 @@
 # Scoring
 
-Maintainer reference for the ranking math. The normative decisions live in
-[`spec.md`](spec.md) §4.1, §6 and §7; this page is the implementation-level
-companion: the exact transforms, the invariants a weight change must preserve,
-and the measured findings behind the shipped weights. All math is in
+Maintainer reference for the ranking math: the exact transforms, the invariants
+a weight change must preserve, and the measured findings behind the shipped
+weights. All math is in
 `src/engine.ts`; the shipped role defs are `DEFAULT_ROLES` in `src/settings.ts`;
 the archetype sets are `src/role-archetypes.ts`.
 
@@ -78,12 +77,12 @@ value = q − λ · priceEff
   model will actually run the role's level (see below); otherwise it is the bare
   billed price.
 - `value` is the sort key; ties break score desc → blended $/M asc → id asc
-  (determinism, spec §6.1).
+  (determinism).
 
 ### Route-aware pricing (provider pin)
 
 A role may pin its requests to one OpenRouter provider route
-(`roles.<role>.providerPin`, spec §7). When it does, the role is priced by that
+(`roles.<role>.providerPin`). When it does, the role is priced by that
 route instead of the `1/price²` blend:
 
 - `pinnedRoute(model, pin)` (`src/engine.ts`) resolves the model's route by
@@ -126,7 +125,7 @@ A model ranks for a role only when:
 
 ### Endpoint filters
 
-`RoleDef.filters` carries four endpoint filters beyond `image` (spec §6.3):
+`RoleDef.filters` carries four endpoint filters beyond `image`:
 `tools` (boolean), `minContextTokens`, `minOutputTokens` and `maxPriceUsdPerM`
 (numbers; `0`/`false` = off). They gate the **eligible standard-tier route pool**
 — the same pool the `1/price²` blend uses — before the blend:

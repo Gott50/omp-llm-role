@@ -1,9 +1,11 @@
 # Quirks
 
 Debugging-only oddities and gotchas that are **not** contracts. If a fact is a
-contract the implementation MUST satisfy, it belongs in [spec.md](spec.md); if it
-is user-facing, it belongs in [`../../README.md`](../../README.md). This file is
-the home for the things that only bite someone changing or debugging the code.
+contract the implementation MUST satisfy, it belongs in the topic doc that owns
+it ([`architecture.md`](architecture.md), [`scoring.md`](scoring.md),
+[`writes-and-state.md`](writes-and-state.md), …); if it is user-facing, it
+belongs in [`../../README.md`](../../README.md). This file is the home for the
+things that only bite someone changing or debugging the code.
 
 ## Data sources and joins
 
@@ -26,6 +28,17 @@ the home for the things that only bite someone changing or debugging the code.
   list its endpoint id at all.
 - **`index_*` scores are interval-scale** (observed −16..+60, can be negative);
   the fixed affine anchors (−20→0, +60→1) handle it.
+
+## Availability
+
+- **The probe's disqualifying 404 is narrow.** `probeModel` blocks a model only
+  on the exact "No allowed providers are available for the selected model …" 404;
+  every other failure (5xx, timeout, unknown model) counts as usable and stays in
+  omp's runtime-fallback domain. The account's allowed-providers whitelist is
+  enforced per serving endpoint, so the **org prefix is not a valid filter**:
+  aggregator-org models (`deepseek/*`, `z-ai/*`, `inclusionai/*`) run via
+  whitelisted third-party endpoints while `openai/*` and `anthropic/*` fail on
+  first-party-only routing.
 
 ## Capability fill
 

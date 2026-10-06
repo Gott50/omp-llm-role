@@ -4,7 +4,7 @@ Maintainer map of the `omp-llm-role` plugin: how the modules fit together, the
 runtime contract they must satisfy, and the invariants a change must not break.
 
 - User-facing install/usage: [`../../README.md`](../../README.md).
-- Normative behavior contract: [`spec.md`](spec.md).
+- How it is verified: [`testing.md`](testing.md).
 - Where the numbers come from: [`data-sources.md`](data-sources.md).
 
 ## Module map
@@ -72,11 +72,22 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 | `skills-lock.json` | Lock for the local `.agents/skills/` collection. |
 | `.agents/skills/` | Local dev-skill collection (Matt Pocock skills); not part of the plugin's shipped surface. |
 | `docs/agents/domain.md`, `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md` | Repo process docs (domain glossary, issue tracker, triage labels). |
-| `docs/dev/spec.md` | Normative spec (moved from the repo root). |
+| `docs/dev/testing.md` | The test-suite seam map and the live checks. |
 | `docs/dev/architecture.md`, `docs/dev/data-sources.md` | This file and the data-source map. |
-| `tests/` | `node --test tests/` fixtures (tier gate, variant resolution, config edit, hysteresis, chain pruning, chain suffixes, explorer, role creation, writing metric, benchmark sources, thinking-price, openrouter-blend, agent disable, agent pins, settings schema, session model, role lock, role enable, probe gate, create-agent, create-role, **remove-agent**). |
+| `tests/` | `node --test tests/` fixtures — the seam map is in [`testing.md`](testing.md). |
 | `docs/llm-role-rankings.md` | Generated report (regenerate with `--out`); the README's worked example. |
 | `cache/*.json` | Daily UTC caches (gitignored; see [`data-sources.md`](data-sources.md)). |
+
+## Variant resolution (ranking id → selector)
+
+A ranking row (an llm-stats bare id) resolves to an `openrouter/*` catalog id by
+matching the id after the last `/` (org prefix — including `~`-prefixed —
+ignored), or after stripping a trailing `-latest`. Among the matches,
+`resolveVariant` emits in order: **exact id** (bare or dated, whatever equals the
+ranking id) → **newest dated id** (max trailing `-MMDD`/date suffix) → **bare
+id** → `~org/…-latest` alias (last resort — a valid selector beats no update).
+Never `:batch`; `:free` only on the free-tier branch of the tier gate. Ties
+break lexicographically. The emitted selector is always `openrouter/<catalogId>`.
 
 ## Data flow
 
@@ -107,7 +118,10 @@ The omp extension injects the production `Deps`; tests inject fakes.
    `enrichThinkingLevels(rank.models, catalog)`. Per role, candidates are
    `resolveVariant`-resolved and then verified by a bounded `probeModel` walk
    (current selector first, then rank order; budget `PROBE_BUDGET = 12`; verdicts
-   cached per run). Blocked candidates are excluded and recorded on the decision.
+   cached per run). Only the narrow no-allowed-providers 404 disqualifies; every
+   other failure (5xx, timeout, unknown model) counts as usable and stays in
+   omp's runtime-fallback domain. Blocked candidates are excluded and recorded on
+   the decision.
 6. **Hysteresis.** `no-current` → adopt; ineligible current → `adopted`; best
    beats current by `switchMargin` → `switched`; inside the margin but
    `cheaperInsideMargin` → `switched-cost`; else `kept-margin` / `kept-eligible`.
@@ -295,3 +309,25 @@ stderr `openrouter: matched N/<pool> models (throughput), M priced`, the
   field already sets and prices the effort.
 - **The engine is the only ranking math.** The explorer never reimplements
   `value = q − λ·$/M`; it calls `rankRole`/`explainModel`.
+
+## Non-goals
+
+- **First-party provider selectors.** The plugin emits `openrouter/*` selectors
+  only — the ranking's price/throughput are OpenRouter-derived and the key is an
+  OpenRouter key.
+- **Non-OpenRouter scoring sources.**
+- **A `/rollback` command.** `llm-role-state.json` snapshots the previous
+  `modelRoles` block as a manual rollback aid; there is no command.
+- **Auto-tuning `switchMargin`.**
+- **A generic benchmark scraper** that auto-detects a payload with no user
+  review — the declarative source + authoring step is the mechanism.
+- **A UI for browsing/editing benchmark sources** — the source file is edited by
+  hand or by the authoring step; the explorer's role editor gains the external
+  metrics already in use.
+- **Changing the cardinal transform classes** — external metrics are normalized
+  to 0–1 at parse time.
+- **Re-ranking or re-fetching beyond the daily UTC cache chain.**
+
+Weight editing is the explorer's Export, `src/cli/create-role.ts` or
+`/create-agent` (all validate through `resolveSettings`); role/agent removal is
+`/remove-agent` (through `removeRoleSettings`).

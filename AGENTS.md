@@ -17,7 +17,7 @@ After your work is done — every time, no exceptions:
    | the dated numbers (matched/priced/eligible counts, per-role leaders) | `docs/dev/current-state.md` |
    | a release (version bump, npm/git/marketplace channels) | `docs/dev/releasing.md` |
    | the agent `.md` contract (frontmatter, routing, read-only rules) | `docs/dev/agent-authoring.md` |
-   | a normative decision (what the plugin MUST do) | `docs/dev/spec.md` |
+   | the test suite or a verification scenario | `docs/dev/testing.md` |
    | a debugging-only oddity (a quirk, not a contract) | `docs/dev/quirks.md` |
    | anything a *user* of the plugin sees | `README.md` |
 

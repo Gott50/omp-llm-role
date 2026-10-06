@@ -129,6 +129,15 @@ Per-role knobs (`roles.<name>.*`):
 | `lambda` | derived | Explicit λ ($ per quality point) override |
 | `locked` | `false` | Leave the role alone: rank it but never rewrite its selector or chain (explorer toggle) |
 
+**Validation.** A run aborts (notify, no write) on: a weight ≤ 0, or a role's
+weights not summing to 1.0 ± 0.01; a `required` entry or a weighted metric
+outside the known-metric set; a `thinking` level outside
+`off|minimal|low|medium|high|xhigh|max|auto`; `switchMargin`/`priceSwitchFraction`
+outside `[0, 1]`; a non-boolean `enabled`; a `providerPin` that is empty or
+contains `@`/`:` (the selector's own delimiters). `weights: null` opts a role out;
+the legacy `suffixes.*` keys are rejected with a migration hint (moved into
+`roles.<role>.thinking`).
+
 **Typed writes.** `omp plugin config set <plugin> <key> <value>` stores every
 value as a **string**, which the validator rejects for numbers/arrays/booleans,
 so it is only usable for string-valued keys. Write typed role defs with
@@ -408,6 +417,6 @@ MIT — see [LICENSE](LICENSE).
 ## Documentation
 
 Maintainer docs (architecture, data sources, scoring, writes/state, explorer
-internals, releasing, agent authoring, the normative spec) live in
+internals, releasing, agent authoring, testing) live in
 [docs/dev/README.md](docs/dev/README.md); release history is in
 [CHANGELOG.md](CHANGELOG.md).

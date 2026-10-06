@@ -195,6 +195,12 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 - The vendored agent-creation architect prompt carries a source-version marker
   (`ARCHITECT_PROMPT_VERSION`), asserted by a test against the prompt header and
   the docs, so an omp upgrade surfaces as a failure rather than silent drift.
+- **Maintainer docs: `docs/dev/spec.md` retired.** Its still-relevant content
+  moved into the topic docs — the verification plan into a new
+  `docs/dev/testing.md`, the non-goals into `architecture.md`, the
+  key-metadata/tier-gate and variant-resolution contracts into
+  `data-sources.md`/`architecture.md`, and the settings validation rules into the
+  README. The docs index and `AGENTS.md` now point at `testing.md`.
 
 ### Fixed
 

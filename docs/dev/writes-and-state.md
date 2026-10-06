@@ -1,16 +1,17 @@
 # Writes and state
 
 Maintainer reference for the plugin's write path and the files it owns.
-Normative decisions: [`spec.md`](spec.md) §6.2, §6.4, §8 and §9. Implementation:
-`src/config-edit.ts` (the edit), `src/state.ts` (the files), `src/updater.ts`
-(orchestration), `src/agent-pins.ts` (the pin-derived sync).
+Implementation: `src/config-edit.ts` (the edit), `src/state.ts` (the files),
+`src/updater.ts` (orchestration), `src/agent-pins.ts` (the pin-derived sync).
 
 ## The surgical config edit
 
 `patchConfig(configText, patch)` (`src/config-edit.ts`) rewrites
 `~/.omp/agent/config.yml` as **text**, line-oriented — no runtime YAML
-dependency (required for marketplace installs). It touches exactly three
-surfaces:
+dependency (required for marketplace installs). omp hot-reloads `config.yml`
+(task/eval preflight re-reads the settings) and writes it under its own
+`config.yml.lock`, so the plugin's mtime guard and refresh lock are what keep a
+concurrent omp write from being clobbered. It touches exactly three surfaces:
 
 - `modelRoles.<role>` values (upsert missing roles at the block end, two-space
   indent; delete the line for a role that left the managed set);
@@ -18,7 +19,7 @@ surfaces:
   duplicate a YAML key; prune keys the plugin wrote on a previous run and no
   longer references). A pinned role's chain key is the level-free form of its
   selector and carries the `@<slug>` pin (`openrouter/<id>@<slug>`); the pin
-  rides before the thinking suffix on the values (§6.5);
+  rides before the thinking suffix on the values;
 - the plugin-managed names in `task.disabledAgents` (add/remove, other entries
   and their order preserved).
 
@@ -95,7 +96,7 @@ settings entry the global behavior is unchanged.
 
 - `previousModelRoles` is the full snapshot of the last `modelRoles` block
   **before** the plugin changed it — a manual rollback aid; there is no rollback
-  command (spec §12).
+  command.
 - `pluginWrittenChainKeys` is what makes chain pruning safe: only keys the
   plugin wrote on a previous run are candidates for pruning; an owner-written,
   unreferenced key is left alone.
@@ -104,7 +105,7 @@ settings entry the global behavior is unchanged.
   removed from settings) has its `modelRoles.<role>` line deleted, so a stale
   pin cannot keep routing `@<role>`. A role whose provider pin matched no route
   joins `managedRoles` without a rewrite, so its current chain survives the
-  prune (§6.5).
+  prune.
 - `managedDisabledAgents` is the set of agent names the plugin added to
   `task.disabledAgents`; a later run removes a name whose agent file is gone
   (e.g. `/remove-agent`) or whose role is no longer disabled.
@@ -172,7 +173,7 @@ untouched:
 
 | Failure | Behavior | State / config |
 |---|---|---|
-| Settings validation fails (spec §7) | abort, notify the offending role/key | no write, no state change |
+| Settings validation fails | abort, notify the offending role/key | no write, no state change |
 | Ranking data unavailable (fetch fails, no fresh cache) | abort, notify | no write, no state change |
 | Key fetch (`omp token`/registry) or `/api/v1/key`, `/api/v1/credits` fails | abort, notify | no write, no state change |
 | Catalog fetch fails | abort, notify | no write, no state change |
@@ -189,7 +190,7 @@ untouched:
 - A role whose probed candidates are all blocked is left untouched with a notify
   note (not an abort). A role whose provider pin matches no route is likewise
   left untouched — no selector or chain upsert — with a notify note naming the
-  role and the pin (§6.5).
+  role and the pin.
 - The live-session model hook (`applySessionModel`) runs only after a real write
   and only on a real `default` change; a hook failure is notified but never
   fails the run (the config write already succeeded).

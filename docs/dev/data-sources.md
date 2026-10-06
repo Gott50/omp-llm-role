@@ -5,7 +5,6 @@ llm-stats id, and where it is cached. All fetching lives in `src/engine.ts`
 (plus `src/availability.ts` for the key/catalog/probe surfaces).
 
 - Module map and pipeline: [`architecture.md`](architecture.md).
-- Normative behavior contract: [`spec.md`](spec.md).
 
 ## llm-stats.com — quality
 
@@ -91,7 +90,7 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
   `max_completion_tokens`) and `supportsTools` (`supported_parameters` contains
   `tools`)). The three capability fields are `null` when the field is absent —
   the role endpoint filters keep a `null` (missing data is not a capability
-  failure, spec §6.3).
+  failure).
 - **Fetch**: `fetchEndpointPages(slugs)` with an 8-worker pool
   (`OPENROUTER_PAGE_CONCURRENCY`), one retry per page, permanent 404/410 gives
   up. A page that fails is absent and that model keeps the single-route
@@ -104,7 +103,7 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
   dropping every route from the blend or treating every ceiling as unstated.
 - **Per-model routes**: `buildOpenRouterEnrichment` carries the eligible
   standard-tier pool on `OrEnrichment.routes`, and `applyOpenRouterData` sets it
-  on `Model.routes` — the pool the role endpoint filters gate (spec §6.3). The
+  on `Model.routes` — the pool the role endpoint filters gate. The
   find-route fallback carries the same field (its capability fields are `null`,
   since the find payload has no ceilings).
 
@@ -147,10 +146,31 @@ probability proportional to `1/price²`). The weight basis is the **input
   `m.throughput`, `m.metrics.price`/`throughput`, and `m.thinking`
   (`supports_reasoning`).
 
-A role with a `providerPin` (spec §7) does **not** use this blend: it prices the
+A role with a `providerPin` does **not** use this blend: it prices the
 model's matching route directly — the route's billed 3:1 price and its p50
 throughput (scoring.md, *Route-aware pricing*). The blend is the unpinned
 default.
+
+## OpenRouter — key metadata (tier gate)
+
+Bearer-authenticated GETs with the omp-resolved key decide which variant tier the
+run may use:
+
+- `GET https://openrouter.ai/api/v1/key` → `is_free_tier`, `limit_remaining`,
+  `limit`, `free_model_daily_requests.remaining`.
+- `GET https://openrouter.ai/api/v1/credits` → `total_credits`, `total_usage`.
+
+```
+billedUsable = !is_free_tier && limit_remaining > 0 && (total_credits - total_usage) > 0
+freeUsable   = free_model_daily_requests.remaining > 0
+```
+
+`tierGate` (`src/availability.ts`) maps these to `"billed" | "free" | "none"`:
+billed → billed variants only (exclude `:free`, `:batch`); else free → `:free`
+variants only (exclude `:batch`); else `"none"` aborts the run. The key endpoint
+carries **no** model/provider restriction field — the account's allowed-providers
+whitelist is invisible to it (see the keyed catalog below and the probe in
+[`architecture.md`](architecture.md)).
 
 ## OpenRouter — keyed catalog (availability)
 
