@@ -1,5 +1,5 @@
 /**
- * Availability model (SPEC §5): what the user's OpenRouter key can actually run.
+ * Availability model: what the user's OpenRouter key can actually run.
  *
  * OpenRouter exposes no per-key model allowlist — availability is derived from
  * key tier + budget (tier gate), then every candidate must resolve to a concrete
@@ -76,7 +76,7 @@ export async function fetchKeyMeta(token: string, fetchImpl: typeof fetch = fetc
   };
 }
 
-/** Tier gate (SPEC §5.2): billed budget wins, else free daily quota, else run aborts. */
+/** Tier gate: billed budget wins, else free daily quota, else run aborts. */
 export function tierGate(meta: KeyMeta): Tier {
   const billedUsable = !meta.isFreeTier && meta.limitRemaining > 0 && meta.creditsRemaining > 0;
   if (billedUsable) return "billed";
@@ -93,7 +93,7 @@ const OPENROUTER_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completion
 const BLOCKED_RE = /no allowed providers/i;
 
 /**
- * One-token completion probe (SPEC §5 addendum): the only reliable signal for
+ * One-token completion probe: the only reliable signal for
  * account-level provider restrictions — neither `/api/v1/key` nor the catalog
  * endpoints expose the allowed-providers whitelist, but a real request's 404
  * body names it. Only the narrow no-allowed-providers verdict blocks a
@@ -119,7 +119,7 @@ export async function probeModel(token: string, catalogId: string, fetchImpl: ty
 }
 
 // ---------------------------------------------------------------------------
-// Keyed-catalog availability (SPEC §5.5 addendum)
+// Keyed-catalog availability
 // ---------------------------------------------------------------------------
 
 /**
@@ -245,7 +245,7 @@ const DATED_RE = /-(\d{4}|\d{8})$/;
 
 /**
  * Map a ranking row id (llm-stats bare id) to a concrete catalog id among
- * tier-eligible candidates (SPEC §5.4). Candidates match when their suffix after
+ * tier-eligible candidates. Candidates match when their suffix after
  * the last `/` equals the ranking id, possibly after stripping `:free` and one
  * `-latest` (org prefixes, including `~`-prefixed, are ignored for matching).
  * Order: exact id -> newest dated -> bare -> `~org/…-latest` alias (last resort —

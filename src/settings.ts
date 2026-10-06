@@ -147,7 +147,7 @@ export const SHIPPED_AGENTS: string[] = ["designer"];
 
 
 /**
- * Metrics a role weight/required entry may name (SPEC §7).
+ * Metrics a role weight/required entry may name.
  *
  * The six raw llm-stats benchmark pass rates (`gpqa`, `aime`, `swe_bench`,
  * `arc_agi`, `terminal_bench`, `tau_bench`) are weightable too: they are already
@@ -212,7 +212,7 @@ export function isKnownMetric(name: string): boolean {
 }
 
 /**
- * Live-session coupling (SPEC §6 session-start semantics): after the day-gated
+ * Live-session coupling: after the day-gated
  * session-start write, a freshly started session whose conversation is still
  * empty had its active model resolved from the pre-write config. Reapply the
  * new `default` selector to the session's active model so the user's first
@@ -223,7 +223,7 @@ export const ACTIVATE_DEFAULT_KEY = "activateDefaultOnEmptySession";
 export type ResolvedSettings = {
   switchMargin: number;
   /**
-   * Cost-side escape hatch from `switchMargin` (SPEC §7): the margin is a flat
+   * Cost-side escape hatch from `switchMargin`: the margin is a flat
    * band on `value`, so a role with a loose posture (small λ) can refuse a
    * switch worth up to `switchMargin/λ` $/M. When a challenger sitting inside
    * the margin undercuts the incumbent's effective price by at least this
@@ -495,7 +495,7 @@ function mergeRawSettings(raw: Record<string, unknown>): { merged: ResolvedSetti
 
 /**
  * Deep-merge the raw settings map over the shipped defaults and validate the
- * result (SPEC §7). Roles whose resolved `weights` is null are dropped (explicit
+ * result. Roles whose resolved `weights` is null are dropped (explicit
  * opt-out). Never mutates the defaults. One error string per violation; an empty
  * error list means the settings are valid.
  */

@@ -1,5 +1,5 @@
 /**
- * Surgical YAML editing for the omp agent config (SPEC §8.1, decision #4).
+ * Surgical YAML editing for the omp agent config.
  *
  * The document is patched as TEXT, line-oriented: only the value tokens of
  * managed roles inside the top-level `modelRoles:` block and the managed keys

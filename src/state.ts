@@ -1,6 +1,6 @@
 /**
  * Plugin state, history, and the refresh lock — all under the omp agent dir,
- * next to the config.yml they describe (SPEC §8).
+ * next to the config.yml they describe.
  *
  * - `llm-role-state.json` — day gate, managed roles, last selectors, chain keys
  *   the plugin owns, and the pre-write `modelRoles` snapshot (manual rollback aid).

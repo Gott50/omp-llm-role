@@ -1,8 +1,8 @@
 /**
- * Orchestration (SPEC §6–9): rank today's models -> tier gate + catalog
+ * Orchestration: rank today's models -> tier gate + catalog
  * resolution -> per-role hysteresis -> fallback chains -> surgical config patch.
  *
- * When the account's OpenRouter keyed catalog is active (SPEC §5.5) it is the
+ * When the account's OpenRouter keyed catalog is active it is the
  * availability source: allowed candidates skip the probe, key-blocked ones are
  * pruned from the walk order, and only candidates in neither catalog are probed.
  *
@@ -106,7 +106,7 @@ function decisionLine(d: Decision): string {
 }
 
 /**
- * Cost-side escape from the hysteresis margin (SPEC §7). `switchMargin` is a
+ * Cost-side escape from the hysteresis margin. `switchMargin` is a
  * flat band on `value`, so it can veto a switch worth up to `switchMargin / λ`
  * $/M while the incumbent is only marginally better — e.g. a role at λ 0.003
  * refuses up to $7/M of savings. A challenger inside that band is adopted when
@@ -269,7 +269,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
 
     const catalog = await deps.getCatalog();
     const eligible = filterCatalog(catalog, tier);
-    // Keyed-catalog availability (SPEC §5.5): fetched once per run and shared
+    // Keyed-catalog availability: fetched once per run and shared
     // across roles. Never throws — an unavailable allowlist degrades to the
     // probe walk with no abort path.
     const availability = await (deps.getKeyAvailability?.(token) ?? fetchKeyAvailability(token));
@@ -290,7 +290,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     // the probe walk still verifies candidates in neither catalog with
     // one-token completions, because the key's allowed-providers privacy
     // whitelist is otherwise invisible to /api/v1/key and the catalog
-    // endpoints (SPEC §5 addendum, §5.5).
+    // endpoints.
     const decisions: Decision[] = [];
     const notes: string[] = [];
     if (availability.active) {
@@ -334,7 +334,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const currentId = currentSelector === null ? null : currentRankingId(currentSelector);
       const currentIdx = currentId === null ? -1 : candidates.findIndex((c) => c.ranked.model.id === currentId);
 
-      // Keyed-catalog fast path (SPEC §5.5): when the account's OpenRouter
+      // Keyed-catalog fast path: when the account's OpenRouter
       // filter is on, membership in the keyed catalog is authoritative — an
       // allowed candidate is clean without a probe, and a key-blocked one is
       // pruned from the walk order entirely. Pruning (not pre-seeding a

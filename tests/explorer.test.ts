@@ -32,7 +32,7 @@ function userScopeOpts(lockPath: string, getState: ExplorerOpts["getState"]): Ex
 const MODELS = [makeModel("premium", 90, 20, 50), makeModel("budget", 60, 0.5, 200)];
 const TINY = { description: "", weights: { price: 0.4, throughput: 0.35, general: 0.25 }, required: ["general", "price", "throughput"] };
 
-// Keyed-catalog availability fixtures (SPEC §5.5). `NO_AVAILABILITY` is the
+// Keyed-catalog availability fixtures. `NO_AVAILABILITY` is the
 // inactive default the existing fakes/opts thread through; `ACTIVE_AVAILABILITY`
 // marks `premium` usable and `budget` blocked.
 const NO_AVAILABILITY: KeyAvailability = {
@@ -535,7 +535,7 @@ test("startExplorer falls back to an ephemeral port when the preferred one is bu
 });
 
 // ---------------------------------------------------------------------------
-// Keyed-catalog availability overlay (SPEC §5.5)
+// Keyed-catalog availability overlay
 // ---------------------------------------------------------------------------
 
 test("rankRows: availability annotates key without reordering", () => {
