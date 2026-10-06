@@ -58,8 +58,9 @@ below are the 2026-10-06 measurement (the input-price blend basis #21 and the
   measurement: 400 models, throughput-matched 152/400, priced 151. Eligible:
   `default`/`smol`/`slow`/`plan`/`commit`/`tiny`/`task`/`advisor` 143, `vision`
   75, `designer` 88. Leaders: `default`/`task`/`designer` DeepSeek-V4.1-Flash,
-  `smol`/`commit`/`tiny` Muse Spark 1.1 (was DeepSeek-V4.1-Flash), `slow`/`plan`/
-  `advisor` Muse Spark 1.3, `vision` Qwen3.8 Flash.
+  `smol`/`commit` Muse Spark 1.1 (was DeepSeek-V4.1-Flash), `slow`/`plan`/
+  `advisor` Muse Spark 1.3, `vision` Qwen3.8 Flash, `tiny` Muse Spark 1.1 (was
+  Gemini 3.1 Flash-Lite).
 
 - `plan` cost posture (2026-10-03, issue #16): `plan`'s `price` raised 0.12 → 0.25
   (λ 0.00682 → 0.01667) so the posture binds on the **reachable** pool — the pool
