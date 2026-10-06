@@ -100,9 +100,11 @@ Two payloads, both joined to llm-stats by slug suffix: the llm-stats `model_id`
 - **Cache**: `cache/openrouter-endpoints-fetched-data.json` —
   `{ fetchedAt, source, slugCount, slugs }` where `slugs` maps each fetched
   model slug to its narrowed per-provider route records. `readEndpointsCache`
-  rejects a cache whose records lack `weightPrice` (the pre-#21 shape) **or**
-  `contextLength` (the pre-#18 shape) and refetches, rather than silently
-  dropping every route from the blend or treating every ceiling as unstated.
+  rejects a cache whose records lack `weightPrice` (the pre-#21 shape),
+  `contextLength` (the pre-#18 shape) **or** `cacheReadPrice` (the pre-#30
+  shape) and refetches, rather than silently dropping every route from the
+  blend, treating every ceiling as unstated, or leaving a role's `cacheHitRate`
+  inert (a missing cache-read price reads as the full input price).
 - **Per-model routes**: `buildOpenRouterEnrichment` carries the eligible
   standard-tier pool on `OrEnrichment.routes`, and `applyOpenRouterData` sets it
   on `Model.routes` — the pool the role endpoint filters gate. The

@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   blendRoutePool,
   rankRole,
+  readEndpointsCache,
   routeEffectivePrice,
   type OpenRouterEndpointRecord,
   type RoleDef,
@@ -179,4 +183,38 @@ test("mergeExport persists cacheHitRate as a flat dotted key", () => {
   const lock = merged.lock as { settings: { "omp-llm-role": Record<string, unknown> } };
   const plugin = lock.settings["omp-llm-role"];
   assert.equal(plugin["roles.default.cacheHitRate"], 0.5);
+});
+
+// --- cache shape guard -------------------------------------------------------
+
+test("the endpoints cache is rejected when its records predate the cache-read price", () => {
+  const dir = mkdtempSync(join(tmpdir(), "endpoints-cache-"));
+  const path = join(dir, "openrouter-endpoints-fetched-data.json");
+  // A record in the pre-#30 narrowed shape: every field the guard checks except cacheReadPrice.
+  const legacy = {
+    id: "e",
+    providerSlug: "p",
+    serviceTier: null,
+    status: 0,
+    free: false,
+    variant: "",
+    price: 1,
+    weightPrice: 1,
+    tput: null,
+    latency: null,
+    contextLength: null,
+    maxCompletionTokens: null,
+    supportsTools: null,
+  };
+  const write = (sample: object) =>
+    writeFileSync(
+      path,
+      JSON.stringify({ fetchedAt: new Date().toISOString(), source: "t", slugCount: 1, slugs: { "a/b": [sample] } }),
+    );
+
+  write(legacy);
+  assert.equal(readEndpointsCache(path, true), null, "a cache without cacheReadPrice must be rejected");
+
+  write({ ...legacy, cacheReadPrice: 0.1 });
+  assert.ok(readEndpointsCache(path, true), "a cache with cacheReadPrice must be accepted");
 });

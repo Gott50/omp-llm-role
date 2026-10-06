@@ -242,6 +242,14 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **The endpoints cache shape guard now covers the cache-read price** — a
+  `cache/openrouter-endpoints-fetched-data.json` written before #30 lacks
+  `cacheReadPrice`, and `readEndpointsCache` accepted it, so every route's
+  cache-read price read as `undefined` and a role's `cacheHitRate` was silently
+  inert until the next daily refetch. The guard now rejects a cache whose
+  records lack `cacheReadPrice` (alongside `weightPrice`/`contextLength`) and
+  refetches, so the knob takes effect on the first run after the upgrade.
+  (issue #30)
 - **Explorer: `gpqa`'s "what would it take" target ignored the chance anchor** —
   `inverseCardinal` returned the normalized target unchanged for `gpqa`, but the
   forward transform is chance-anchored (`(v−0.25)/0.75`), so a role author was

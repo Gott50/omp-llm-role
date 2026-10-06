@@ -1259,8 +1259,9 @@ export function writeOrCache(path: string, fetchedAt: string, data: object, mode
 
 type EndpointsCacheFile = { fetchedAt: string; source: string; slugCount: number; slugs: OpenRouterEndpointPages };
 
-/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
-function readEndpointsCache(path: string, requireFresh: boolean): EndpointsCacheFile | null {
+/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale.
+ * Exported for the shape-guard test (a cache predating a narrowed field must be rejected). */
+export function readEndpointsCache(path: string, requireFresh: boolean): EndpointsCacheFile | null {
   let parsed: EndpointsCacheFile;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8")) as EndpointsCacheFile;
@@ -1272,8 +1273,19 @@ function readEndpointsCache(path: string, requireFresh: boolean): EndpointsCache
   // silently dropping every route from the blend (the old cache cannot supply the router's sort key).
   // Records narrowed before the endpoint capability ceilings lack `contextLength`; refetch so the
   // role gate reads real values instead of treating every route's ceiling as unstated (null).
+  // Records narrowed before the cache-read price lack `cacheReadPrice`; refetch so a role's
+  // `cacheHitRate` reads real values instead of treating every route's cache price as unstated
+  // (null → full input price, which would leave the knob silently inert for the rest of the day).
   const sample = Object.values(parsed.slugs).find((recs) => Array.isArray(recs) && recs.length > 0)?.[0];
-  if (typeof sample !== "object" || sample === null || !("weightPrice" in sample) || !("contextLength" in sample)) return null;
+  if (
+    typeof sample !== "object" ||
+    sample === null ||
+    !("weightPrice" in sample) ||
+    !("contextLength" in sample) ||
+    !("cacheReadPrice" in sample)
+  ) {
+    return null;
+  }
   if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
   return parsed;
 }

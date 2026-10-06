@@ -41,18 +41,25 @@ below are the 2026-10-06 measurement (the input-price blend basis #21 and the
   20-entry endpoint cap makes the coverage bar unreachable). Numbers and verdicts
   in `scoring.md`.
 
+- Endpoints cache shape guard (2026-10-06, issue #30): `readEndpointsCache` now
+  also rejects a cache whose records lack `cacheReadPrice` (alongside
+  `weightPrice`/`contextLength`), so a cache written before the cache-read
+  pricing landed is refetched instead of leaving every route's cache-read price
+  `undefined` and a role's `cacheHitRate` silently inert. The fix forces a
+  refetch on the first run after the upgrade; the refreshed measurement is
+  400 models, throughput-matched 152/400, priced 151.
+
 - Wave (2026-10-06): the `1/price²` blend now weights routes by the **input
   (prompt) price** — the router's sort key — while reporting the billed 3:1 blend
   under that distribution (issue #21), so prices moved; endpoint capability
   filters (#18), the four-axis benchmark-quality gate (#17), provider pinning
   (#19) and route-aware pricing (#20) landed. The domain-knowledge (#23) and
   truthfulness (#24) axes were measured and **not** landed (`scoring.md`). Fresh
-  measurement: 400 models, throughput-matched 151/400, priced 150. Eligible:
+  measurement: 400 models, throughput-matched 152/400, priced 151. Eligible:
   `default`/`smol`/`slow`/`plan`/`commit`/`tiny`/`task`/`advisor` 143, `vision`
   75, `designer` 88. Leaders: `default`/`task`/`designer` DeepSeek-V4.1-Flash,
-  `smol`/`commit` Muse Spark 1.1 (was DeepSeek-V4.1-Flash), `slow`/`plan`/
-  `advisor` Muse Spark 1.3, `vision` Qwen3.8 Flash, `tiny` Gemini 3.1
-  Flash-Lite.
+  `smol`/`commit`/`tiny` Muse Spark 1.1 (was DeepSeek-V4.1-Flash), `slow`/`plan`/
+  `advisor` Muse Spark 1.3, `vision` Qwen3.8 Flash.
 
 - `plan` cost posture (2026-10-03, issue #16): `plan`'s `price` raised 0.12 → 0.25
   (λ 0.00682 → 0.01667) so the posture binds on the **reachable** pool — the pool
