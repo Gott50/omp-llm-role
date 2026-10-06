@@ -74,7 +74,22 @@ settings entry the global behavior is unchanged.
 |---|---|---|
 | `llm-role-state.json` | `{ lastRunDay, managedRoles, roleLastSelector, pluginWrittenChainKeys, previousModelRoles, managedDisabledAgents }` | day gate, managed-role set, last selectors, plugin-owned chain keys, pre-write `modelRoles` snapshot, **managed `task.disabledAgents` names** |
 | `llm-role-history.jsonl` | one JSON row per completed run: `{ ts, trigger, keyMeta{isFreeTier, limitRemaining, creditsRemaining}, decisions[] }` | append-only decision log |
+| `llm-role-projects.json` | `{ projects: [{ root, lastUsed }] }` | the plugin's memory of the projects where `/project-roles` was used (the explorer's scope list) |
 | `.llm-role-refresh.lock` | `O_EXCL` create, holds `"<pid> <iso>"` | serializes concurrent session starts; stale (> 60 s) locks are unlinked and retried once |
+
+- `llm-role-projects.json` (issue #28) is **global knowledge** and lives in the
+  agent dir, never a project's `.omp`. `registerProject(root)` (`src/project-registry.ts`)
+  upserts the root (stamped now) and prunes entries whose project lock file is
+  gone, then replaces the file atomically (temp + rename) so two sessions in
+  different repos cannot interleave into a corrupt file. Reading is pure and
+  tolerant: a missing or unparseable file yields `[]`. The write point is the
+  project-aware `runUpdater`, **immediately after `resolveProjectDir()` and
+  before any early return**, guarded only by `dryRun` — so a day-stamped no-op
+  session start still registers the project (the whole point of "projects
+  configured before this feature appear on their next session start"), while a
+  `--dry-run`/cancelled `/project-roles` registers nothing. A write failure is
+  logged, never thrown: the registry is a convenience index, not a run
+  prerequisite.
 
 - `previousModelRoles` is the full snapshot of the last `modelRoles` block
   **before** the plugin changed it — a manual rollback aid; there is no rollback

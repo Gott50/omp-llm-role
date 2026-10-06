@@ -21,6 +21,8 @@ const state = {
   derivedLambda: 0,
   errors: [],
   lockPath: "",
+  scopes: [],
+  activeScope: "",
   filter: "",
   topn: "25",
   hideBlocked: false,
@@ -115,7 +117,8 @@ const TIPS = {
   availability: "Whether your OpenRouter key can run each model, from the keyed catalog. Enable OpenRouter → Settings → \"Filter the model catalog for API keys\" so the keyed catalog is a per-model allowlist; otherwise every mark reads unknown.",
   key: "Key usability: usable = your OpenRouter key can run this model (in the keyed catalog); blocked = the public catalog has it but your key cannot; unknown = the keyed catalog is inactive or the model is in neither catalog.",
   hideBlocked: "Drop rows your OpenRouter key cannot run (key = blocked). Applied after the text filter and the top-n slice.",
-  lock: "Plugin settings lock file that Export writes to.",
+  lock: "Plugin settings lock file that Export writes to (the active scope's lock file).",
+  scope: "Role-config source: the user-level scope, or a project where /project-roles was used. Switching re-reads that scope's roles and universe from disk and points Export at its lock file. A project whose lock file is gone is unavailable.",
   refresh: "Refetch llm-stats and OpenRouter data (hits the network).",
   rank: "Rank among this role's eligible models, by value, descending.",
   delta: "Rank change against the role's saved (effective) definition: + means this definition ranks the model higher than the plugin does today.",
@@ -233,11 +236,32 @@ function availabilitySpan() {
   return el("span", { class: "muted", "data-tip": TIPS.availability, text: "availability unknown — enable OpenRouter → Settings → \"Filter the model catalog for API keys\"" });
 }
 
+/** The scope selector: the user-level scope plus every known project. A scope
+ * whose lock file is gone is disabled with a reason tooltip. */
+function scopeSelect() {
+  const sel = el("select", { id: "scope", "data-tip": TIPS.scope });
+  for (const s of state.scopes) {
+    sel.append(
+      el("option", {
+        value: s.id,
+        text: s.label,
+        disabled: s.present ? null : "",
+        title: s.present ? null : "unavailable — lock file missing",
+      }),
+    );
+  }
+  sel.value = state.activeScope;
+  sel.addEventListener("change", onScopeChange);
+  return sel;
+}
+
 function renderMeta(data) {
   const meta = document.getElementById("meta");
   meta.textContent = "";
   meta.append(
     el("span", { class: "brand", text: "omp-llm-role explorer" }),
+    el("span", { class: "sep", text: "·" }),
+    scopeSelect(),
     el("span", { class: "sep", text: "·" }),
     el("span", { "data-tip": TIPS.models, text: data.modelCount + " models" }),
     el("span", { class: "sep", text: "·" }),
@@ -870,7 +894,7 @@ async function onExport() {
   try {
     const res = await api("/api/export", { roles: dirty });
     if (res.ok) {
-      state.exportMessage = "wrote " + res.roles.length + " role(s)" + (res.backupPath ? " — backup: " + res.backupPath : "");
+      state.exportMessage = "wrote " + res.roles.length + " role(s) to " + (res.lockPath || state.lockPath) + (res.backupPath ? " — backup: " + res.backupPath : "");
       for (const role of res.roles) state.effective[role] = structuredClone(state.defs[role]);
       renderRoles();
       renderEditor();
@@ -909,12 +933,26 @@ function onDownload() {
 async function onRefresh() {
   if (!confirm("Refetch the leaderboard and OpenRouter data? This hits the network.")) return;
   try {
-    const data = await api("/api/refresh", {});
-    state.availability = data.availability;
-    renderMeta(data);
-    await recompute();
+    applyBootstrap(await api("/api/refresh", {}));
   } catch (err) {
     alert("Refresh failed: " + err.message);
+  }
+}
+
+/** Switch the active scope. Unsaved edits are confirmed first (mirroring
+ * Refresh); the returned payload rebuilds every per-scope panel. */
+async function onScopeChange(event) {
+  const id = event.target.value;
+  if (id === state.activeScope) return;
+  if (Object.keys(dirtyRoles()).length > 0 && !confirm("Discard unsaved role edits and switch scope?")) {
+    event.target.value = state.activeScope;
+    return;
+  }
+  try {
+    applyBootstrap(await api("/api/scope", { scope: id }));
+  } catch (err) {
+    alert("Scope switch failed: " + err.message);
+    event.target.value = state.activeScope;
   }
 }
 
@@ -922,8 +960,13 @@ async function onRefresh() {
 // Boot
 // ---------------------------------------------------------------------------
 
-async function boot() {
-  const data = await api("/api/bootstrap");
+/** Rebuild every panel from a bootstrap payload (boot, scope switch, refresh).
+ * The per-scope editing state is rebuilt from the payload, so dirty tracking is
+ * per scope; the previously selected role is kept when the new scope has it. */
+function applyBootstrap(data) {
+  const previousRole = state.role;
+  state.scopes = data.scopes || [];
+  state.activeScope = data.activeScope;
   state.universe = data.universe;
   state.effective = {};
   for (const [name, entry] of Object.entries(state.universe)) state.effective[name] = entry.def;
@@ -936,9 +979,27 @@ async function boot() {
   state.thinkingFactors = data.thinkingFactors;
   state.lockPath = data.lockPath;
   state.availability = data.availability;
-  initTips();
+  state.rows = [];
+  state.selectedId = null;
+  state.explain = null;
+  state.errors = [];
+  state.exportMessage = "";
   renderMeta(data);
   renderRoles();
+  renderErrors();
+  renderTable();
+  const role = previousRole && state.defs[previousRole] ? previousRole : Object.keys(state.defs)[0];
+  if (role) selectRole(role);
+  else {
+    state.role = null;
+    renderEditor();
+    renderExplain();
+  }
+}
+
+async function boot() {
+  initTips();
+  applyBootstrap(await api("/api/bootstrap"));
 
   document.getElementById("filter").addEventListener("input", (e) => {
     state.filter = e.target.value;
@@ -963,9 +1024,6 @@ async function boot() {
   const downloadBtn = document.getElementById("download");
   downloadBtn.dataset.tip = TIPS.download;
   downloadBtn.addEventListener("click", onDownload);
-
-  const first = Object.keys(state.defs)[0];
-  if (first) selectRole(first);
 }
 
 boot().catch((err) => {

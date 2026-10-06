@@ -14,12 +14,13 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, type Ranked, type RankData } from "./engine.ts";
 import { currentRankingId, enrichThinkingLevels, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
+import { registerProject } from "./project-registry.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
 
 export type DecisionReason = "adopted" | "switched" | "switched-cost" | "kept-margin" | "kept-eligible" | "no-current";
@@ -209,6 +210,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     // config, the whole run — config, state, history, lock — is scoped to
     // `<cwd>/.omp`; otherwise the global agent dir is used exactly as before.
     const projectDir = resolveProjectDir();
+    // Register the project in the global registry (issue #28) immediately after
+    // resolution and before any early return, so a day-stamped no-op session
+    // start still records it. Dry runs register nothing. The registry lives in
+    // the global agent dir, never the project's `.omp`.
+    if (projectDir !== null && opts?.dryRun !== true) registerProject(dirname(projectDir));
     const dir = projectDir ?? agentDir();
     const state = loadState(dir);
     const today = deps.nowUtcDay();

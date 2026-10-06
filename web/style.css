@@ -38,6 +38,7 @@ body {
 #meta .brand { font-weight: 600; color: var(--accent); }
 #meta .sep { color: var(--line); }
 #meta .lock { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+#meta #scope { max-width: 340px; }
 #meta button { margin-left: auto; }
 
 #roles {

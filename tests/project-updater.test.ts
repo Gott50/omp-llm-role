@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { PROJECT_REGISTRY_FILE, readProjectRegistry } from "../src/project-registry.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeModel } from "./helpers.ts";
 
@@ -89,4 +90,58 @@ test("project mode: the day gate is per scope (a second same-day run is a no-op)
   const second = await runInProject(ws.root, ws.globalDir, () => runUpdater("session-start", deps));
   assert.deepEqual(second.decisions, []);
   assert.equal(second.wrote, false);
+});
+
+// ---------------------------------------------------------------------------
+// Project registry (issue #28)
+// ---------------------------------------------------------------------------
+
+/** Write a registry file listing `roots` (no lock files needed). */
+function writeRegistry(dir: string, roots: string[]): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, PROJECT_REGISTRY_FILE), JSON.stringify({ projects: roots.map((root) => ({ root, lastUsed: "2026-10-06T00:00:00.000Z" })) }, null, 2));
+}
+
+test("project mode: registers the project in the global registry, not the project dir", async () => {
+  const ws = projectWorkspace({ "roles.default.thinking": "high" });
+  const deps = fakeDeps(MODELS, {}, { getSettings: async () => ({}) });
+  await runInProject(ws.root, ws.globalDir, () => runUpdater("manual", deps, { force: true }));
+
+  assert.deepEqual(readProjectRegistry(ws.globalDir).map((e) => e.root), [realpathSync(ws.root)]);
+  assert.equal(existsSync(join(ws.projectDir, PROJECT_REGISTRY_FILE)), false);
+});
+
+test("a day-gated no-op project run still registers the project", async () => {
+  const ws = projectWorkspace({ "roles.default.thinking": "high" });
+  // Stamp today so the run takes the day-gate early return, before any ranking.
+  writeFileSync(join(ws.projectDir, "llm-role-state.json"), JSON.stringify({ lastRunDay: "2026-09-22" }, null, 2));
+  const deps = fakeDeps(MODELS, {}, { getSettings: async () => ({}) });
+  const result = await runInProject(ws.root, ws.globalDir, () => runUpdater("session-start", deps));
+
+  assert.equal(result.aborted, undefined);
+  assert.deepEqual(result.decisions, []);
+  assert.deepEqual(readProjectRegistry(ws.globalDir).map((e) => e.root), [realpathSync(ws.root)]);
+});
+
+test("a run in a non-project cwd registers nothing", async () => {
+  const ws = projectWorkspace(null);
+  const deps = fakeDeps(MODELS, {}, { getSettings: async () => ({}) });
+  await runInProject(ws.root, ws.globalDir, () => runUpdater("manual", deps, { force: true }));
+  assert.deepEqual(readProjectRegistry(ws.globalDir), []);
+});
+
+test("a dry run registers nothing", async () => {
+  const ws = projectWorkspace({ "roles.default.thinking": "high" });
+  const deps = fakeDeps(MODELS, {}, { getSettings: async () => ({}) });
+  await runInProject(ws.root, ws.globalDir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
+  assert.deepEqual(readProjectRegistry(ws.globalDir), []);
+});
+
+test("a registry entry whose project lock is gone is pruned on the next write", async () => {
+  const ws = projectWorkspace({ "roles.default.thinking": "high" });
+  const gone = join(ws.root, "gone-project");
+  writeRegistry(ws.globalDir, [gone]);
+  const deps = fakeDeps(MODELS, {}, { getSettings: async () => ({}) });
+  await runInProject(ws.root, ws.globalDir, () => runUpdater("manual", deps, { force: true }));
+  assert.deepEqual(readProjectRegistry(ws.globalDir).map((e) => e.root), [realpathSync(ws.root)]);
 });

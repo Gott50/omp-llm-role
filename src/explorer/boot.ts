@@ -14,8 +14,10 @@
 import { execFile } from "node:child_process";
 import type { Server } from "node:http";
 import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability } from "../availability.ts";
-import type { RankData, RoleDef } from "../engine.ts";
-import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH, readPluginSettingsMap, resolveSettings, roleUniverse, type UniverseEntry } from "../settings.ts";
+import type { RankData } from "../engine.ts";
+import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH } from "../settings.ts";
+import { agentDir } from "../state.ts";
+import { readScopeRoles, resolveScope, resolveScopes, type Scope, type ScopeInputs } from "./scopes.ts";
 import { createExplorerServer } from "./server.ts";
 
 /** Preferred loopback port; a busy port falls back to an OS-assigned one. */
@@ -31,8 +33,12 @@ export type ExplorerHandle = {
 export type ExplorerBootOpts = {
   /** Directory holding the SPA (`web/`). */
   webDir: string;
-  /** Lock file the explorer reads roles from and exports to (default: the user lock file). */
+  /** User-level lock file (the user scope's read/export target; default: the plugin lock file). */
   lockPath?: string;
+  /** Session cwd; its project joins the scope list when it has a project role config. */
+  cwd?: string;
+  /** Agent dir holding the project registry (default: `agentDir()`). */
+  registryDir?: string;
   /** Today's ranking data, already fetched. */
   rank: RankData;
   /** omp catalog rows gating the thinking price factor (empty = OR-flag fallback). */
@@ -82,30 +88,29 @@ function listen(server: Server, port: number, onLog: (line: string) => void): Pr
  * must `close()` it on shutdown (the extension does so in `session_shutdown`). */
 export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHandle> {
   const onLog = opts.onLog ?? (() => {});
-  const lockPath = opts.lockPath ?? PLUGIN_SETTINGS_PATH;
+  const userLockPath = opts.lockPath ?? PLUGIN_SETTINGS_PATH;
+  const cwd = opts.cwd ?? process.cwd();
+  const scopeInputs: ScopeInputs = { userLockPath, cwd, registryDir: opts.registryDir };
   let rank = opts.rank;
   let availability = opts.availability;
   enrichThinkingLevels(rank.models, opts.catalog);
 
-  // User-level lock file only: project: null keeps any project-anchor file out
-  // of the merge (the explorer edits the user-level file). Re-read on every
-  // getState() so a page reload after Export reflects the write: the server
-  // outlives the edit, and a boot-time snapshot would keep reporting the old
-  // enabled/weights state (the lock file is the source of truth).
-  const readRoles = (): { roles: Record<string, RoleDef>; universe: Record<string, UniverseEntry> } => {
-    const raw = readPluginSettingsMap({ global: lockPath, project: null });
-    const { settings, errors } = resolveSettings(raw);
-    for (const e of errors) onLog(`settings warning: ${e}`);
-    // The resolved set is what the plugin does today; the universe adds the roles
-    // it knows but does not currently rank (shipped opt-ins, lock-file-only roles).
-    return { roles: settings.roles, universe: roleUniverse(raw, settings.roles) };
-  };
+  // Scope resolution is boot's job: the user-level scope, the registry's
+  // projects, and the session's project. Re-resolved on every request so a
+  // project registered by another session appears without a restart, and the
+  // active scope's roles/universe are re-read from its lock file so a page
+  // reload after Export reflects the write (the lock file is the source of
+  // truth). A project scope merges the project lock over the user-level lock —
+  // the exact read the updater performs.
+  const listScopes = (): Scope[] => resolveScopes(scopeInputs);
 
   const server = createExplorerServer({
     webDir: opts.webDir,
-    lockPath,
-    getState: () => {
-      const { roles, universe } = readRoles();
+    listScopes,
+    resolveScope: (requestedId) => resolveScope(listScopes(), requestedId, cwd),
+    getState: (scope) => {
+      const { roles, universe, errors } = readScopeRoles(scope, userLockPath);
+      for (const e of errors) onLog(`settings warning: ${e}`);
       return { rank, roles, universe, defaults: DEFAULT_ROLES, availability };
     },
     refresh: async () => {
@@ -127,7 +132,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   }
 
   const url = `http://127.0.0.1:${port}`;
-  onLog(`explorer: ${url}  (models: ${rank.models.length}, fetched: ${rank.fetchedAt.slice(0, 10)}, lock: ${lockPath})`);
+  onLog(`explorer: ${url}  (models: ${rank.models.length}, fetched: ${rank.fetchedAt.slice(0, 10)}, scopes: ${listScopes().length}, user lock: ${userLockPath})`);
   if (opts.open === true && process.platform === "darwin") execFile("open", [url], () => {});
 
   return {

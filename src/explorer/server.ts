@@ -4,12 +4,16 @@
  *
  *   GET  /                 -> web/index.html
  *   GET  /app.js /style.css -> static assets (traversal-guarded)
- *   GET  /api/bootstrap    -> roles, defaults, metric universe, dataset counts,
- *                             and the key-availability summary
+ *   GET  /api/bootstrap    -> the scope list + the active scope's roles,
+ *                             defaults, metric universe, dataset counts, and
+ *                             the key-availability summary
+ *   POST /api/scope        -> { scope } -> switch the active scope, return the
+ *                             new bootstrap payload
  *   POST /api/rank         -> { role, def } -> rows with baseline deltas and a
  *                             per-row `key` badge (usable/blocked/unknown)
  *   POST /api/explain      -> { role, def, modelId } -> full decomposition
- *   POST /api/export       -> { roles } -> validated, backed-up lock-file write
+ *   POST /api/export       -> { roles } -> validated, backed-up write of the
+ *                             active scope's lock file
  *   POST /api/refresh      -> refetch the dataset, return the bootstrap payload
  *
  * Bound to loopback by the caller; no auth. Every handler is
@@ -26,17 +30,24 @@ import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
 import { KNOWN_METRICS, type UniverseEntry } from "../settings.ts";
 import { explainModel, focusAssessments, metricMetaFor, rankRows, weightableMetrics } from "./explain.ts";
+import type { Scope } from "./scopes.ts";
 
 export type ExplorerOpts = {
   webDir: string;
-  lockPath: string;
+  /** All known scopes, re-resolved per call so a project registered by another
+   *  session appears without a restart. */
+  listScopes(): Scope[];
+  /** The scope a request should use: the requested id when known and present,
+   *  else the default (session project when present, else user-level). */
+  resolveScope(requestedId: string | null): Scope;
   /**
-   * Fresh state per call: `rank` (swapped by `refresh`) plus `roles`/`universe`
-   * re-read from the lock file, so a page reload after Export reflects the write
-   * instead of a boot-time snapshot. `availability` is the key-usable/key-blocked
-   * overlay derived from the OpenRouter keyed catalog (re-derived on refresh).
+   * Fresh state for one scope: `rank` (swapped by `refresh`) plus
+   * `roles`/`universe` re-read from that scope's lock file, so a page reload
+   * after Export reflects the write instead of a boot-time snapshot.
+   * `availability` is the key-usable/key-blocked overlay derived from the
+   * OpenRouter keyed catalog (re-derived on refresh).
    */
-  getState(): {
+  getState(scope: Scope): {
     rank: RankData;
     roles: Record<string, RoleDef>;
     /** Every known role (disabled included) with kind/enabled/locked + effective def. */
@@ -47,6 +58,9 @@ export type ExplorerOpts = {
   /** Re-runs loadRankData({ refresh: true }) and swaps the snapshot. */
   refresh(): Promise<void>;
 };
+
+/** Per-server mutable state: the active scope id (null = the default scope). */
+type ExplorerSession = { activeScopeId: string | null };
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -129,8 +143,16 @@ function thinkingFactors(): Record<string, number> {
   return out;
 }
 
-function bootstrapPayload(opts: ExplorerOpts): object {
-  const state = opts.getState();
+/** The scope a request should use, persisting the fallback so a scope that
+ * became unavailable does not keep re-resolving to the default. */
+function activeScope(opts: ExplorerOpts, session: ExplorerSession): Scope {
+  const scope = opts.resolveScope(session.activeScopeId);
+  session.activeScopeId = scope.id;
+  return scope;
+}
+
+function bootstrapPayload(opts: ExplorerOpts, scope: Scope): object {
+  const state = opts.getState(scope);
   // The metric universe the UI may weight: the shipped keys plus any external
   // metric a resolved role weights, with a derived metadata entry for each.
   const external = new Set<string>();
@@ -165,18 +187,30 @@ function bootstrapPayload(opts: ExplorerOpts): object {
       blockedCount: state.availability.blocked.size,
       fetchedAt: state.availability.fetchedAt,
     },
-    lockPath: opts.lockPath,
+    lockPath: scope.lockPath,
+    scopes: opts.listScopes().map((s) => ({ id: s.id, label: s.label, kind: s.kind, present: s.present })),
+    activeScope: scope.id,
   };
 }
 
-async function handleRank(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts): Promise<void> {
+async function handleScope(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
+  const body = await readJson(req);
+  if (!isRecord(body) || typeof body.scope !== "string") throw new HttpError(400, "expected { scope: string }");
+  const scope = opts.listScopes().find((s) => s.id === body.scope);
+  if (scope === undefined) throw new HttpError(404, `unknown scope: ${body.scope}`);
+  if (!scope.present) throw new HttpError(409, `scope unavailable: ${body.scope}`);
+  session.activeScopeId = scope.id;
+  sendJson(res, 200, bootstrapPayload(opts, scope));
+}
+
+async function handleRank(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
   const body = await readJson(req);
   if (!isRecord(body) || typeof body.role !== "string" || !isRecord(body.def)) {
     throw new HttpError(400, "expected { role: string, def: object }");
   }
   const role = body.role;
   const def = body.def as unknown as RoleDef;
-  const state = opts.getState();
+  const state = opts.getState(activeScope(opts, session));
   // Enabled roles baseline against their resolved def; a disabled or lock-file-only
   // role against its effective def (shipped defaults merged with its overrides) so
   // selecting it still shows deltas, not an empty baseline.
@@ -192,26 +226,27 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   });
 }
 
-async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts): Promise<void> {
+async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
   const body = await readJson(req);
   if (!isRecord(body) || typeof body.role !== "string" || !isRecord(body.def) || typeof body.modelId !== "string") {
     throw new HttpError(400, "expected { role: string, def: object, modelId: string }");
   }
   const def = body.def as unknown as RoleDef;
-  const state = opts.getState();
+  const state = opts.getState(activeScope(opts, session));
   const explanation = explainModel(def, state.rank.models, body.modelId, body.role, state.availability);
   sendJson(res, 200, { ...explanation, errors: validateRole(body.role, def) });
 }
 
-async function handleExport(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts): Promise<void> {
+async function handleExport(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
   const body = await readJson(req);
   if (!isRecord(body) || !isRecord(body.roles)) throw new HttpError(400, "expected { roles: object }");
-  const result = writeRoleSettings(opts.lockPath, body.roles as unknown as Record<string, RoleDef>);
+  const scope = activeScope(opts, session);
+  const result = writeRoleSettings(scope.lockPath, body.roles as unknown as Record<string, RoleDef>);
   if (!result.ok) return sendJson(res, 200, { ok: false, errors: result.errors });
-  sendJson(res, 200, { ok: true, backupPath: result.backupPath, roles: result.roles });
+  sendJson(res, 200, { ok: true, backupPath: result.backupPath, roles: result.roles, lockPath: scope.lockPath });
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts): Promise<void> {
+async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   const path = url.pathname;
   const method = req.method ?? "GET";
@@ -219,24 +254,28 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerO
   if (path.startsWith("/api/")) {
     if (path === "/api/bootstrap") {
       if (method !== "GET") return sendText(res, 405, "method not allowed");
-      return sendJson(res, 200, bootstrapPayload(opts));
+      return sendJson(res, 200, bootstrapPayload(opts, activeScope(opts, session)));
+    }
+    if (path === "/api/scope") {
+      if (method !== "POST") return sendText(res, 405, "method not allowed");
+      return handleScope(req, res, opts, session);
     }
     if (path === "/api/rank") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");
-      return handleRank(req, res, opts);
+      return handleRank(req, res, opts, session);
     }
     if (path === "/api/explain") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");
-      return handleExplain(req, res, opts);
+      return handleExplain(req, res, opts, session);
     }
     if (path === "/api/export") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");
-      return handleExport(req, res, opts);
+      return handleExport(req, res, opts, session);
     }
     if (path === "/api/refresh") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");
       await opts.refresh();
-      return sendJson(res, 200, bootstrapPayload(opts));
+      return sendJson(res, 200, bootstrapPayload(opts, activeScope(opts, session)));
     }
     return sendText(res, 404, "not found");
   }
@@ -246,8 +285,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerO
 }
 
 export function createExplorerServer(opts: ExplorerOpts): Server {
+  const session: ExplorerSession = { activeScopeId: null };
   return createServer((req, res) => {
-    handle(req, res, opts).catch((err: unknown) => {
+    handle(req, res, opts, session).catch((err: unknown) => {
       if (res.headersSent) {
         res.end();
         return;

@@ -13,9 +13,11 @@ explorer never reimplements `value = q − λ·$/M`.
 |---|---|
 | `src/explorer/server.ts` | Zero-dependency `node:http` surface: static SPA + JSON API. Exports `createExplorerServer`, `ExplorerOpts`. |
 | `src/explorer/explain.ts` | Pure explanation layer (no I/O): rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, and the keyed-catalog availability overlay. Exports `rankRows`, `explainModel`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`. |
-| `src/explorer/boot.ts` | Shared launcher: bind/port fallback, lock-file roles, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, `ExplorerHandle`, `ExplorerBootOpts`. |
+| `src/explorer/scopes.ts` | Scope resolution (no HTTP): the user-level scope, the registry's projects, and the session's project; the per-scope read; the dataset union. Exports `Scope`, `resolveScopes`, `defaultScopeId`, `resolveScope`, `readScopeRoles`, `unionRoles`. |
+| `src/explorer/boot.ts` | Shared launcher: bind/port fallback, scope resolution, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, `ExplorerHandle`, `ExplorerBootOpts`. |
+| `src/project-registry.ts` | The global project registry (`llm-role-projects.json` in the agent dir): read/register/prune, atomic write. Exports `PROJECT_REGISTRY_FILE`, `readProjectRegistry`, `registerProject`. |
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write). Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `timestamp`. |
-| `web/app.js` | The SPA: renders and edits role defs, calls the API. No framework, no build step, no external requests. |
+| `web/app.js` | The SPA: renders and edits role defs, switches scopes, calls the API. No framework, no build step, no external requests. |
 | `src/extension.ts` | `/explore-roles`: in-process `startExplorer` (catalog from the live model registry), closed on `session_shutdown`. |
 
 ## HTTP surface (`src/explorer/server.ts`)
@@ -29,10 +31,15 @@ caller; no auth. Every handler is wrapped so a throw becomes a 500 JSON error
 ```ts
 type ExplorerOpts = {
   webDir: string;
-  lockPath: string;
-  // Fresh per call: rank (swapped by refresh) plus roles/universe re-read from
-  // the lock file, so a page reload after Export reflects the write.
-  getState(): {
+  // All known scopes, re-resolved per call so a project registered by another
+  // session appears without a restart.
+  listScopes(): Scope[];
+  // The scope a request should use: the requested id when known and present,
+  // else the default (session project when present, else user-level).
+  resolveScope(requestedId: string | null): Scope;
+  // Fresh per call: rank (swapped by refresh) plus the scope's roles/universe
+  // re-read from its lock file, so a page reload after Export reflects the write.
+  getState(scope: Scope): {
     rank: RankData;
     roles: Record<string, RoleDef>;
     universe: Record<string, UniverseEntry>;  // every known role, disabled included
@@ -43,16 +50,21 @@ type ExplorerOpts = {
 };
 ```
 
+The server holds the active scope id as mutable state (alongside the mutable
+`rank`/`availability`); `activeScope` resolves it per request, persisting the
+fallback when the active scope became unavailable.
+
 Endpoints:
 
 | Method + path | Body | Response |
 |---|---|---|
 | `GET /` | — | `web/index.html` |
 | `GET /app.js`, `/style.css` | — | static asset (traversal-guarded) |
-| `GET /api/bootstrap` | — | `bootstrapPayload(opts)` |
+| `GET /api/bootstrap` | — | `bootstrapPayload(opts, activeScope)` |
+| `POST /api/scope` | `{scope}` | switch the active scope, then the bootstrap payload (404 unknown id, 409 non-present) |
 | `POST /api/rank` | `{role, def}` | `{eligible, lambda, derivedLambda, rows, errors}` |
 | `POST /api/explain` | `{role, def, modelId}` | `explainModel(...)` spread + `errors` |
-| `POST /api/export` | `{roles}` | `{ok:true, backupPath, roles}` or `{ok:false, errors}` |
+| `POST /api/export` | `{roles}` | `{ok:true, backupPath, roles, lockPath}` or `{ok:false, errors}` |
 | `POST /api/refresh` | — | `await opts.refresh()` (re-ranks and re-derives the availability overlay) then the bootstrap payload |
 
 - `bootstrapPayload` ships `roles` (resolved), `defaults` (`DEFAULT_ROLES`),
@@ -63,18 +75,23 @@ Endpoints:
   focus metrics over the resolved dataset), `levels` (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors`
   (per-level billed-blend multiplier from the engine's own `thinkingPriceFactor`,
   so the UI readout cannot drift), `fetchedAt`, `modelCount`, `orMatched`,
-  `orPriced`, `lockPath`, and `availability` (the keyed-catalog summary:
+  `orPriced`, `lockPath` (the **active scope's** lock file), `scopes` (id, label,
+  kind, present per known scope), `activeScope` (the active scope id), and
+  `availability` (the keyed-catalog summary:
   `{active, reason, publicCount, keyedCount, blockedCount, fetchedAt}`). Every
-  request calls `getState()`, which re-reads the lock file — so a page reload
-  after Export shows the new roles, not the boot-time snapshot.
+  request calls `getState(scope)`, which re-reads that scope's lock file — so a
+  page reload after Export shows the new roles, not the boot-time snapshot.
+- `handleScope` validates the requested id against `listScopes()`: an unknown id
+  is a 404, a known-but-not-present one a 409; a valid switch sets the active
+  scope and returns the new payload.
 - `handleRank` baselines against `state.roles[role] ?? state.universe[role]?.def ??
   state.defaults[role]`: an enabled role against its resolved def, a disabled or
   lock-file-only role against its effective def, so selecting it still shows
   deltas rather than an empty baseline. It passes `state.availability` to
   `rankRows`, so every row carries its `key` badge (usable/blocked/unknown) with
   no extra call.
-- `handleExport` calls `writeRoleSettings(opts.lockPath, body.roles)` and
-  returns its result verbatim.
+- `handleExport` calls `writeRoleSettings(activeScope.lockPath, body.roles)` and
+  returns its result verbatim plus the written `lockPath`.
 - Unknown `/api/*` → 404; wrong method → 405; non-API non-GET → 405.
 - `readBody` caps at `MAX_BODY = 1 MiB` (413); `readJson` → 400 on invalid JSON.
 - `serveStatic` resolves against `webDir` and rejects traversal (`full` must be
@@ -126,36 +143,51 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
 `startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHandle>` — the one
 launcher `/explore-roles` uses.
 
-- `EXPLORER_DEFAULT_PORT = 5177`; `listen` binds `127.0.0.1` and resolves the
+- `EXPLORER_DEFAULT_PORT = 5177`; `listen` binds the loopback address and resolves the
   actual port. A permanent `error` listener is attached before `listen`, so a
   post-listen socket error is logged instead of becoming an uncaughtException
   (which would tear down the whole omp session). `EADDRINUSE` → retry on port 0
   (OS-assigned).
-- Roles come from the **user-level** lock file only:
-  `readPluginSettingsMap({ global: lockPath, project: null })` keeps any
-  project-anchor file out of the merge. `resolveSettings` → `settings.roles`
-  (the resolved set = what the plugin does today); `roleUniverse(raw, roles)`
-  adds the roles it knows but does not rank (shipped opt-ins, lock-file-only
-  roles). `getState()` re-runs this read on **every** request, so a page reload
-  after Export reflects the write instead of the state at boot. The explorer is
-  **user-level only**: project-scoped roles (from `/project-roles`) never appear
-  here, and the Export never writes the project file.
+- **Scopes** (`src/explorer/scopes.ts`). A scope is a role-config source: the
+  user-level scope (`lockPath`, default `PLUGIN_SETTINGS_PATH`), or one project
+  where `/project-roles` was used. `resolveScopes({ userLockPath, cwd, registryDir })`
+  returns the user-level scope, the registry's projects (most recently used
+  first), and the session's project when `cwd` has a project role config (a
+  project lock with a non-empty `omp-llm-role` settings entry — the updater's own
+  `resolveProjectDir` test) — included immediately, before the registry records
+  it. A scope id is `user` or `project:<root>`; `present` is whether the lock
+  file exists (the user scope is always available — Export creates it). The
+  default active scope is the session's project when present, else user-level.
+  `listScopes()` re-resolves on **every** request, so a project registered by
+  another session appears without a restart.
+- **Per-scope read.** `readScopeRoles(scope, userLockPath)` reads the user-level
+  lock file for the user scope, and the project lock merged **over** the
+  user-level lock for a project scope — the exact read the updater performs, so
+  the explorer and the plugin agree. `resolveSettings` → `settings.roles` (the
+  resolved set = what the plugin does today); `roleUniverse(raw, roles)` adds the
+  roles it knows but does not rank (shipped opt-ins, lock-file-only roles).
+  `getState(scope)` re-runs this read on **every** request, so a page reload
+  after Export reflects the write instead of the state at boot.
+- **Dataset union.** The host loads the ranking data through `unionRoles(scopes,
+  userLockPath)` — the union of every known scope's resolved roles — plus the
+  shipped keys (`loadRankData({ roles, extraMetrics: Object.keys(KNOWN_METRICS) })`),
+  so the dataset carries every metric any scope weights — including a generic
+  llm-stats benchmark (`bench:<id>`) that only a project role pulls in. Loading
+  with no roles (`loadRankData({})`) fetches declared sources only, so a role
+  weighting an undeclared benchmark would rank on a dataset missing that metric
+  and the explorer would disagree with the updater. `extraMetrics` also forces
+  the `website`/`writing` fetches even when no role weights them. The union is
+  what keeps a scope switch free (one fetch) and is asserted as a pure call over
+  temp lock files, not through the injected `rank` fixture.
 - `enrichThinkingLevels(rank.models, opts.catalog)` gates the thinking price
   factor on the omp catalog; `refresh()` re-runs `opts.reload(true)`,
   re-enriches, and — when `opts.reloadAvailability` is supplied — re-derives the
   availability overlay.
-- The dataset is loaded with the **resolved roles plus the shipped keys**
-  (`loadRankData({ roles, extraMetrics: Object.keys(KNOWN_METRICS) })`), so it
-  carries every metric the UI can weight — including a generic llm-stats
-  benchmark (`bench:<id>`) that only a role's weights pull in. Loading with no
-  roles (`loadRankData({})`) fetches declared sources only, so a role weighting
-  an undeclared benchmark would rank on a dataset missing that metric and the
-  explorer would disagree with the updater. `extraMetrics` also forces the
-  `website`/`writing` fetches even when no role weights them.
-- `opts.availability` is the boot-time keyed-catalog overlay; `getState()` returns
-  it on every request, so `/api/rank` and `/api/explain` annotate rows without a
-  second fetch. `/explore-roles` builds it in-process from the session's
-  OpenRouter key (`ctx.modelRegistry.getApiKeyForProvider("openrouter")`) via
+- `opts.availability` is the boot-time keyed-catalog overlay; `getState(scope)`
+  returns it on every request, so `/api/rank` and `/api/explain` annotate rows
+  without a second fetch. It is scope-independent and carried across switches
+  unchanged. `/explore-roles` builds it in-process from the session's OpenRouter
+  key (`ctx.modelRegistry.getApiKeyForProvider("openrouter")`) via
   `fetchKeyAvailability`; a missing key or a failed fetch is `unavailable`
   (best-effort — the explorer still boots).
 - `unref` (extension only) detaches the server from the event loop so a
@@ -193,12 +225,21 @@ server-side; the client only renders and edits role defs. Model names come from
 a scraped third-party site, so the DOM is built with
 `textContent`/`createElement` only (the `el()` helper).
 
-- **Boot**: `boot()` → `GET /api/bootstrap` → fills `state` (`universe`,
-  `effective` = each entry's `def`, `defs` = a structuredClone of it, `defaults`,
-  `metrics`, `metricMeta`, `focusAssessments`, `levels`, `thinkingFactors`,
-  `lockPath`, `availability`), wires the
-  filter/topn/hide-key-blocked/export/copy/download controls, and selects the
-  first role.
+- **Boot**: `boot()` → `GET /api/bootstrap` → `applyBootstrap(data)`, which fills
+  `state` (`scopes`, `activeScope`, `universe`, `effective` = each entry's `def`,
+  `defs` = a structuredClone of it, `defaults`, `metrics`, `metricMeta`,
+  `focusAssessments`, `levels`, `thinkingFactors`, `lockPath`, `availability`),
+  renders the header/roles/table, and selects the previously selected role when
+  the new scope has it, else the first role. `boot()` then wires the
+  filter/topn/hide-key-blocked/export/copy/download controls.
+- **Scope switcher**: the header renders a `#scope` `<select>` from
+  `state.scopes` (the user-level scope plus every known project); a scope whose
+  lock file is gone is `disabled` with a reason `title`. Changing the selection
+  confirms first when there are unsaved edits (mirroring Refresh), then
+  `POST /api/scope {scope}` and `applyBootstrap` on the returned payload — so
+  every panel (universe, per-scope effective/edited defs, role tabs, editor,
+  table, meta, lock path) reflects the new scope, and dirty tracking is per
+  scope. The header names the active scope and its lock file path.
 - **Focus table**: the editor renders a `table.focus` for the role's weighted
   benchmark/percentile metrics (`focusMetricsOf`), one row per metric with the
   four signals from `focusAssessments[role]` (coverage, dispersion, composition,
@@ -223,7 +264,9 @@ a scraped third-party site, so the DOM is built with
   for API keys"** — the explorer never guesses.
 - **Dirty tracking**: `dirtyRoles()` compares `JSON.stringify(defs[role])` to
   `effective[role]`; only dirty roles are sent to `POST /api/export`. On success
-  the client updates `effective` for the written roles.
+  the client updates `effective` for the written roles and the status names the
+  written lock file. The state is rebuilt from the payload on a scope switch, so
+  dirty tracking is per scope.
 - **Deep-merge parking**: `dropWeight(metric)` parks an inherited metric (one
   the shipped default weights) at `EPSILON = 0.001` instead of deleting the key
   — the plugin deep-merges over `DEFAULT_ROLES`, so the default's weight would
@@ -234,8 +277,9 @@ a scraped third-party site, so the DOM is built with
   re-rendered tables and editors need no per-node wiring. Metric and role
   tooltips are built from the bootstrap payload (`METRIC_META` / role
   descriptions), not duplicated in the client.
-- **Refresh**: `onRefresh()` confirms, then `POST /api/refresh` → re-renders the
-  header meta and recomputes.
+- **Refresh**: `onRefresh()` confirms, then `POST /api/refresh` →
+  `applyBootstrap` on the returned payload (the scope list is re-resolved, so a
+  project registered by another session appears).
 
 ## Open defect
 

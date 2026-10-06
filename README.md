@@ -294,8 +294,9 @@ writes nothing; without `--force` an existing project role config is refused.
 When a project carries its own `omp-llm-role` settings entry, the updater scopes
 the whole run to `<cwd>/.omp` — the config, the state/history/lock files and the
 day gate — so the project's `modelRoles` are refreshed independently of the
-global `~/.omp/agent/config.yml`, which is never written in project mode. The
-explorer stays user-level only: project roles do not appear there.
+global `~/.omp/agent/config.yml`, which is never written in project mode. A
+successful apply registers the project, so the explorer's **scope switcher**
+lists it (see below).
 
 ## Explorer
 
@@ -304,6 +305,15 @@ explorer stays user-level only: project roles do not appear there.
 `@slow`?" and "what happens if I care more about price than agents?" without
 editing source and re-running the CLI.
 
+- **Scope switcher** — the header lists every role-config source: the
+  **user-level** scope, plus every project where `/project-roles` was used (the
+  plugin records each project root in a small global registry, and the current
+  session's project is listed immediately). The explorer opens on the session's
+  project when the cwd has a project role config, else user-level. Switching
+  re-reads that scope's roles and universe from disk and points **Export** at
+  that scope's lock file — a project scope resolves as the project lock merged
+  over the user-level lock, exactly what the updater ranks. A project whose lock
+  file is gone is shown disabled. Switching with unsaved edits asks first.
 - **Role tabs** — every role the plugin knows: the nine omp built-in roles, the
   shipped opt-in `designer`, and any role present only in the lock file. Each
   tab is tinted by provenance — `default` (omp built-in), `plugin` (shipped but

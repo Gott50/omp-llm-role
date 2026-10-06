@@ -78,6 +78,8 @@ from key tier + budget (§5). This interpretation was presented and accepted in 
     explorer/boot.ts        # shared explorer launcher (in-process server: bind, port fallback, close)
     explorer/server.ts      # explorer HTTP surface (static SPA + JSON API)
     explorer/explain.ts     # pure explanation layer (rank rows, decomposition, targets)
+    explorer/scopes.ts      # scope resolution: user-level + registry projects + session project; per-scope read; dataset union
+    project-registry.ts     # global project registry (llm-role-projects.json): read/register/prune, atomic write
     cli/llm-role-rank.ts    # report CLI (per-role tables + suggested modelRoles)
     cli/create-role.ts      # `node src/cli/create-role.ts --name <role> --weights m=w,...`
   docs/llm-role-rankings.md # generated report (value-ranking format)
@@ -695,7 +697,15 @@ session start so enabling/disabling a role takes effect on the next session.
   decision (kept lines included when verbose).
 - **`/explore-roles [--port N] [--no-open]`**: boots the interactive ranking explorer
   **in-process** (catalog from the live model registry), notifies the URL and opens the
-  browser. Roles come from the user-level lock file (`project: null`); a busy port falls
+  browser. The explorer is **scope-aware** (issue #28): a scope is a role-config source —
+  the user-level lock file, or one project where `/project-roles` was used. The header
+  lists every known scope (the user-level scope, the global project registry's projects,
+  and the session's project when its cwd has a project role config) and opens on the
+  session's project when present, else user-level. Switching a scope re-reads that
+  scope's roles and universe from disk (a project scope merges the project lock over the
+  user-level lock — the updater's own read) and points Export at that scope's lock file;
+  the ranking dataset is loaded once as the union of every known scope's resolved roles,
+  so a metric only one scope weights is fetched and switching is free. A busy port falls
   back to an OS-assigned one; a repeat invocation re-notifies the running URL; the handle
   is closed on `session_shutdown`.
 - **`/create-agent <request> [flags]`** (free text) or
@@ -747,8 +757,9 @@ session start so enabling/disabling a role takes effect on the next session.
   overrides the role set (`-name` drops a shipped role, `name` keeps/adds one,
   `name=purpose` adds a new role); `--dry-run` writes nothing; without `--force` an
   existing project role config is refused. It warns when `<cwd>/.omp` differs from
-  `findProjectAnchor()` (a session launched in a subdirectory). The explorer stays
-  user-level only — project roles do not appear there.
+  `findProjectAnchor()` (a session launched in a subdirectory). A successful apply
+  registers the project in the global registry, so the explorer's scope switcher
+  lists it (see the `/explore-roles` bullet).
 - **Role authoring**: `node src/cli/create-role.ts --name <role> --weights m=w,...` writes a
   validated role def into the settings lock file (backup + atomic write); the shipped
   skill `omp-llm-role-create-agent` drives agent authoring + role creation + verification

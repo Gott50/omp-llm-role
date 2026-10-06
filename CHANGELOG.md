@@ -10,6 +10,23 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Explorer scope switcher** — the explorer is no longer user-level only. A
+  **scope** is a role-config source: the user-level scope, or one project where
+  `/project-roles` was used. The header lists every known scope — the user-level
+  scope, the projects in a new global registry (`llm-role-projects.json` in the
+  agent dir, written by the project-aware updater on any project-scoped run,
+  before the day-gate early return, so a day-stamped no-op still registers), and
+  the current session's project when its cwd has a project role config — and
+  opens on the session's project when present, else user-level. Switching
+  re-reads that scope's roles and universe from disk (a project scope resolves
+  as the project lock merged over the user-level lock — the updater's own read)
+  and points Export at that scope's lock file, with the same validate → backup →
+  atomic write path; a project whose lock file is gone is shown disabled and
+  cannot be selected. The ranking dataset is loaded once as the union of every
+  known scope's resolved roles, so a metric only one scope weights (e.g. a
+  project-only declared `bench:<id>`) is fetched and switching is free. New
+  `POST /api/scope` endpoint; `GET /api/bootstrap` gains `scopes`/`activeScope`
+  and its `lockPath` is the active scope's. (issue #28)
 - **Endpoint capability ceilings as role filters** — a role may now gate its pool
   on the per-endpoint capability ceilings the model pages already carry:
   `filters.tools` (require a tool-capable route), `filters.minContextTokens` and

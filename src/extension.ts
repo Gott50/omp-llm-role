@@ -23,9 +23,10 @@ import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson, fetchKeyAvailability, type KeyAvailability } from "./availability.ts";
 import { loadRankData, rankRole, type Model } from "./engine.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
+import { resolveScopes, unionRoles } from "./explorer/scopes.ts";
 import { isRecord } from "./guards.ts";
 import { applyProfileOverrides, formatProjectRolesReport, parseProjectRolesArgs, PROJECT_ROLES_USAGE, setupProject, type ProjectProfile } from "./project-setup.ts";
-import { DEFAULT_ROLES, findProjectAnchor, KNOWN_METRICS, projectLockPath, readPluginSettingsMap, resolveSettings } from "./settings.ts";
+import { DEFAULT_ROLES, findProjectAnchor, KNOWN_METRICS, PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings } from "./settings.ts";
 import { runUpdater, type Deps } from "./updater.ts";
 
 /** SPA directory shipped beside this extension (repo `web/`). */
@@ -392,16 +393,17 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         notifyLines(ctx, "llm-role explorer: loading today's rankings…");
-        // The explorer ranks the resolved roles, so its dataset must carry every
-        // metric those roles weight — including generic llm-stats benchmarks
-        // (`bench:<id>`) that only a role's weights pull in. `loadRankData({})`
-        // loads declared sources only, so a role weighting an undeclared
-        // benchmark would rank on a dataset missing that metric and the explorer
-        // would disagree with the updater. Pass the resolved roles (the same
-        // user-level lock file the explorer reads) plus the shipped keys, so the
+        // The explorer ranks the resolved roles of every known scope, so its
+        // dataset must carry every metric any of them weights — including
+        // generic llm-stats benchmarks (`bench:<id>`) that only a project role
+        // pulls in. `loadRankData({})` loads declared sources only, so a role
+        // weighting an undeclared benchmark would rank on a dataset missing that
+        // metric and the explorer would disagree with the updater. Pass the
+        // union of every scope's resolved roles plus the shipped keys, so the
         // dataset stays a superset of any def the UI can rank (the UI can weight
-        // `website`/`writing` even when no role does).
-        const explorerRoles = () => resolveSettings(readPluginSettingsMap({ project: null })).settings.roles;
+        // `website`/`writing` even when no role does) and a scope switch is free.
+        const scopeInputs = { userLockPath: PLUGIN_SETTINGS_PATH, cwd: ctx.cwd };
+        const explorerRoles = () => unionRoles(resolveScopes(scopeInputs), PLUGIN_SETTINGS_PATH);
         const rank = await loadRankData({ roles: explorerRoles(), extraMetrics: Object.keys(KNOWN_METRICS) });
         const catalog = await extDeps(pi, ctx).getCatalog();
         // Best-effort key-availability overlay: a missing key or a failed fetch
@@ -414,6 +416,7 @@ export default function (pi: ExtensionAPI) {
         };
         explorer = await startExplorer({
           webDir: WEB_DIR,
+          cwd: ctx.cwd,
           rank,
           catalog,
           availability: await loadAvailability(),

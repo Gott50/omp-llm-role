@@ -8,11 +8,24 @@ import { type KeyAvailability } from "../src/availability.ts";
 import { cardinalMetric, rankRole, type RankData } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, rankRows } from "../src/explorer/explain.ts";
-import { createExplorerServer } from "../src/explorer/server.ts";
+import { createExplorerServer, type ExplorerOpts } from "../src/explorer/server.ts";
+import type { Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
 import { DEFAULT_ROLES, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 import { makeModel } from "./helpers.ts";
+
+/** A single-scope (user-level) explorer server over a temp lock file. */
+function userScopeOpts(lockPath: string, getState: ExplorerOpts["getState"]): ExplorerOpts {
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  return {
+    webDir: join(process.cwd(), "web"),
+    listScopes: () => [scope],
+    resolveScope: () => scope,
+    getState,
+    refresh: async () => {},
+  };
+}
 
 // premium dominates budget on quality but is far more expensive and slower, so a
 // quality-heavy role ranks premium first and a price/throughput-heavy role flips it.
@@ -260,12 +273,7 @@ test("export writes the lock file with a backup and stays valid", async () => {
   writeFileSync(lockPath, JSON.stringify(seed, null, 2));
 
   const rank: RankData = { models: MODELS, fetchedAt: "2026-09-26T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer({
-    webDir: join(process.cwd(), "web"),
-    lockPath,
-    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY }),
-    refresh: async () => {},
-  });
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -311,12 +319,7 @@ test("a role absent from the shipped defaults ranks and exports", async () => {
   writeFileSync(lockPath, JSON.stringify(seed, null, 2));
 
   const rank: RankData = { models: MODELS, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer({
-    webDir: join(process.cwd(), "web"),
-    lockPath,
-    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY }),
-    refresh: async () => {},
-  });
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -378,6 +381,7 @@ test("startExplorer serves lock-file roles and releases its port on close", asyn
   const handle = await startExplorer({
     webDir: join(process.cwd(), "web"),
     lockPath,
+    registryDir: dir,
     rank,
     catalog: [],
     availability: NO_AVAILABILITY,
@@ -457,6 +461,7 @@ test("a bootstrap after Export reflects the new lock state", async () => {
   const handle = await startExplorer({
     webDir: join(process.cwd(), "web"),
     lockPath,
+    registryDir: dir,
     rank,
     catalog: [],
     availability: NO_AVAILABILITY,
@@ -509,6 +514,7 @@ test("startExplorer falls back to an ephemeral port when the preferred one is bu
   const handle = await startExplorer({
     webDir: join(process.cwd(), "web"),
     lockPath,
+    registryDir: dir,
     rank,
     catalog: [],
     availability: NO_AVAILABILITY,
@@ -583,12 +589,7 @@ async function bootExplorer(availability: KeyAvailability): Promise<{ url: strin
   const lockPath = join(dir, "omp-plugins.lock.json");
   writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
   const rank: RankData = { models: MODELS, fetchedAt: "2026-10-03T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer({
-    webDir: join(process.cwd(), "web"),
-    lockPath,
-    getState: () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability }),
-    refresh: async () => {},
-  });
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;

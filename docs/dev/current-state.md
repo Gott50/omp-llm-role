@@ -8,6 +8,26 @@ copying the new numbers here; release prose belongs in
 below are the 2026-10-06 measurement (the input-price blend basis #21 and the
 #17/#18/#19/#20 wave; see the top bullet) and are not re-derived on read.
 
+- Explorer scope switcher (2026-10-06, issue #28): the explorer is no longer
+  user-level only. A **scope** is a role-config source — the user-level lock
+  file, or one project where `/project-roles` was used. `startExplorer` resolves
+  the scope list (the user-level scope, the projects in the new global registry
+  `llm-role-projects.json`, and the session's project when its cwd has a project
+  role config) and opens on the session's project when present, else user-level.
+  A project scope reads the project lock merged over the user-level lock — the
+  updater's own read — and Export writes that scope's lock file through the same
+  validate → backup → atomic path. The ranking dataset is loaded once as the
+  union of every known scope's resolved roles, so a metric only one scope
+  weights (a project-only declared `bench:<id>`) is fetched and switching is
+  free. The registry is written by the project-aware `runUpdater` immediately
+  after `resolveProjectDir()` and before any early return (guarded only by
+  `dryRun`), so a day-stamped no-op session start still registers; entries whose
+  project lock file is gone are pruned on the next write. New `POST /api/scope`;
+  `GET /api/bootstrap` gains `scopes`/`activeScope`. Verified live (headless
+  Chromium): the header lists both scopes, the project is selected by default,
+  switching to user drops the project role and repoints the lock path, and a
+  registry entry with no lock file renders disabled with a reason tooltip.
+
 - Wave (2026-10-06): the `1/price²` blend now weights routes by the **input
   (prompt) price** — the router's sort key — while reporting the billed 3:1 blend
   under that distribution (issue #21), so prices moved; endpoint capability
