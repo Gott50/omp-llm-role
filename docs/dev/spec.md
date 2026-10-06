@@ -433,7 +433,12 @@ the `1/price²` blend uses (§4.1, decision #14) — before the blend:
 - `minContextTokens` filters the **endpoint** `context_length`, not the
   model-level `context`;
 - `maxPriceUsdPerM` caps the thinking-adjusted `priceEff` (the price the role
-  actually pays), not the bare billed blend.
+  actually pays), not the bare billed blend;
+- a role that declares `tools`/`minContextTokens`/`minOutputTokens` is **priced**
+  on the surviving pool: its `price` and `throughput` are the `1/price²` blend
+  over the routes that clear the filters (`endpointFilteredModel`), not the
+  model's full-route blend, so the ranking reflects the routes the router would
+  actually choose from.
 
 A model dropped by the endpoint gate is recorded on the decision
 (`endpointBlocked[]`, rendered `; endpoint-blocked: …`) and reported by

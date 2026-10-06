@@ -148,6 +148,28 @@ test("minContextTokens narrows the priced pool to the routes that clear it", () 
   assert.equal(rankRole(roleWith({ minContextTokens: 64000 }), [m]).length, 0); // no route clears it
 });
 
+test("the find-route fallback is filtered too: priced on the surviving pool, not the find price", () => {
+  // The find row is ineligible (status 1), so it supplies only the fallback price (2)
+  // and throughput (100); the page route is the only eligible pool member.
+  const data = {
+    models: [{ slug: "org/m", supports_reasoning: false, endpoint: { id: "a", model_variant_permaslug: "org/m-1", is_free: false, status: 1 } }],
+    endpoint_perf: { a: { p50_latency: null, p50_throughput: 100 } },
+    endpoint_price: { a: 2 },
+    endpoint_weight_price: { a: 2 },
+  };
+  const enrichment = buildOpenRouterEnrichment(data, {
+    "org/m": [route({ id: "p1", status: 0, price: 1, weightPrice: 1, tput: null, supportsTools: false })],
+  });
+  assert.ok(enrichment.m);
+  assert.equal(enrichment.m.price, 2); // the find fallback price
+  assert.equal(enrichment.m.routes.length, 1); // the eligible page route
+  const m = makeModel("m", 40, 2, 100);
+  applyOpenRouterData([m], enrichment);
+  assert.equal(rankRole(roleWith({}), [m])[0].priceEff, 2); // no filter -> the fallback price
+  assert.equal(rankRole(roleWith({ tools: true }), [m]).length, 0); // no capable route (fallback does not resurrect it)
+  assert.equal(rankRole(roleWith({ minContextTokens: 16000 }), [m])[0].priceEff, 1); // priced on the surviving pool
+});
+
 test("a model with no route data has no capable route and is ineligible", () => {
   const m = makeModel("m", 40, 1, 100); // routes undefined
   assert.equal(modelPassesEndpointFilters(m, { tools: true }), false);
