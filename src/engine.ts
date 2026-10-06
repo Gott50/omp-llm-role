@@ -805,7 +805,7 @@ const INDEX_METRICS: Record<string, true> = {
 
 /** Chance-level pass rates for benchmark metrics (guessing baseline = true zero
  * of skill). Benchmarks absent here guess ≈ 0 and use the raw pass rate. */
-const BENCHMARK_CHANCE: Record<string, number> = {
+export const BENCHMARK_CHANCE: Record<string, number> = {
   gpqa: 0.25, // 4-way multiple choice
 };
 

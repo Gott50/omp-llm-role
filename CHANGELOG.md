@@ -204,6 +204,14 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **Explorer: `gpqa`'s "what would it take" target ignored the chance anchor** —
+  `inverseCardinal` returned the normalized target unchanged for `gpqa`, but the
+  forward transform is chance-anchored (`(v−0.25)/0.75`), so a role author was
+  told to reach a 0.50 pass rate when the model actually needs 0.625. The
+  inverse now reads the engine's `BENCHMARK_CHANCE` table (now exported) and
+  returns `t·(1−chance)+chance` for a chance-anchored metric, so forward and
+  inverse agree for every weightable metric; a round-trip property test over
+  every `KNOWN_METRICS` key guards it. (issue #29)
 - **Endpoint filters now gate the priced route pool, not just eligibility** —
   `rankRole` narrowed a model's eligibility to "has at least one route clearing
   the role's filters", but still priced it on the `1/price²` blend over the

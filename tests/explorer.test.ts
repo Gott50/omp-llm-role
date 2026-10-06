@@ -7,12 +7,12 @@ import { test } from "node:test";
 import { type KeyAvailability } from "../src/availability.ts";
 import { cardinalMetric, rankRole, type RankData } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
-import { explainModel, inverseCardinal, rankRows } from "../src/explorer/explain.ts";
+import { explainModel, inverseCardinal, METRIC_META, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer, type ExplorerOpts } from "../src/explorer/server.ts";
 import type { Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
-import { DEFAULT_ROLES, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
+import { DEFAULT_ROLES, KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 import { makeModel } from "./helpers.ts";
 
 /** A single-scope (user-level) explorer server over a temp lock file. */
@@ -103,41 +103,28 @@ test("explainModel: contributions sum to q, capability fill included", () => {
   assert.deepEqual(ex.closing.map((c) => c.metric).sort(), ["general", "price"]);
 });
 
-test("inverseCardinal round-trips cardinalMetric and rejects clamped targets", () => {
-  const cases: Array<[string, number]> = [
-    ["general", 0.3],
-    ["general", 0.9],
-    ["mrcr", 0.5],
-    ["throughput", 0.25],
-    ["throughput", 0.75],
-    // Issue #22: the new index fields must invert through the affine transform
-    // (METRIC_META kind "index"), not fall through to identity.
-    ["index_communication", 0.3],
-    ["index_finance", 0.7],
-    ["index_healthcare", 0.5],
-    ["index_legal", 0.9],
-    // The new 0-1 benchmark scores are identity in both directions.
-    ["simpleqa_score", 0.4],
-    ["hle_score", 0.26],
-    ["mmmu_score", 0.66],
-    ["mmmu_pro_score", 0.72],
-    ["mmmlu_score", 0.51],
-    ["browsecomp_score", 0.67],
-    ["swe_bench_pro_score", 0.6],
-    ["mcp_atlas_score", 0.36],
-    ["apex_agents_score", 0.1],
-    ["osworld_score", 0.21],
-    ["scicode_score", 0.24],
-    ["screenspot_pro_score", 0.26],
-    ["charxiv_r_score", 0.58],
-    ["frontiermath_score", 0.17],
-    ["toolathlon_score", 0.42],
-  ];
-  for (const [metric, t] of cases) {
-    const raw = inverseCardinal(metric, t);
-    assert.ok(raw !== null, `${metric}@${t} should be reachable`);
-    assert.ok(Math.abs(cardinalMetric(metric, raw) - t) < 1e-12);
+test("inverseCardinal round-trips cardinalMetric for every weightable metric", () => {
+  // Property: for every KNOWN_METRICS key, the explorer's inverse must undo the
+  // engine's forward transform. Raw values are chosen inside each transform's
+  // in-range region (throughput clamps outside [10,300]).
+  const rawsFor = (metric: string): number[] => {
+    const kind = METRIC_META[metric]?.kind;
+    if (kind === "throughput") return [10, 50, 300];
+    if (kind === "index") return [-20, 0, 20, 60];
+    if (kind === "price") return [0.5, 5, 50];
+    return [0, 0.4, 1]; // benchmark / percentile: 0-1
+  };
+  for (const metric of Object.keys(KNOWN_METRICS)) {
+    for (const raw of rawsFor(metric)) {
+      const t = cardinalMetric(metric, raw);
+      const back = inverseCardinal(metric, t);
+      assert.ok(back !== null, `${metric}@${raw} should be reachable`);
+      assert.ok(Math.abs(back - raw) < 1e-9, `${metric}: inverse(${t}) = ${back}, want ${raw}`);
+    }
   }
+  // gpqa's chance anchor: t = 0.5 is the raw pass rate 0.625, not 0.5.
+  assert.equal(inverseCardinal("gpqa", 0.5), 0.625);
+  assert.equal(inverseCardinal("gpqa", cardinalMetric("gpqa", 0.8)), 0.8);
   assert.equal(inverseCardinal("throughput", 1.4), null);
 });
 

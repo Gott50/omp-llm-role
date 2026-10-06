@@ -34,13 +34,14 @@ rank compression (real magnitude gaps now count) and field-dependent scales.
 **Invariant — forward and inverse must agree.** The explorer's "what would it
 take to move up" targets come from `inverseCardinal(metric, t)`
 (`src/explorer/explain.ts`), which must invert `cardinalMetric` for every
-weightable metric. It handles `index` (`t·80−20`) and `throughput` (`10·30^t`,
-null outside [0,1]) and returns identity for everything else. That identity is
-correct for the raw benchmarks and the percentiles but **wrong for `gpqa`**,
-whose forward transform is chance-anchored: `t = 0.5` should map to raw 0.625,
-not 0.5. Before adding a metric to `KNOWN_METRICS`, check that both
-`cardinalMetric` and `inverseCardinal` handle its transform; a chance-anchored
-metric needs a matching inverse (read `BENCHMARK_CHANCE`).
+weightable metric. It handles `index` (`t·80−20`), `throughput` (`10·30^t`,
+null outside [0,1]), and a chance-anchored metric (`t·(1−chance)+chance`, reading
+`BENCHMARK_CHANCE` from the engine so the two can never drift); everything else
+is identity. Forward and inverse therefore agree for every weightable metric —
+`gpqa`'s `t = 0.5` maps to raw 0.625, not 0.5. Before adding a metric to
+`KNOWN_METRICS`, check that both `cardinalMetric` and `inverseCardinal` handle
+its transform; a chance-anchored metric needs a matching inverse (read
+`BENCHMARK_CHANCE`).
 
 ## Quality composite `q`
 

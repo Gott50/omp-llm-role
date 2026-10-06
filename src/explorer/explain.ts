@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -217,6 +217,8 @@ export function inverseCardinal(metric: string, t: number): number | null {
     if (t < 0 || t > 1) return null; // forward clamps to [0,1]; outside is unreachable
     return 10 * 30 ** t;
   }
+  const chance = BENCHMARK_CHANCE[metric];
+  if (chance !== undefined) return t * (1 - chance) + chance;
   return t; // benchmark (mrcr), percentile (website) and price: identity
 }
 
