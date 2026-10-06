@@ -553,6 +553,323 @@ models the selector chooses from (the reachable pool has no covered model at
 all), and the capability fill reproduces the cost-promotion failure mode the
 0-fill posture exists to avoid.
 
+## Guardrail/alignment axis: measured, not landed (2026-10-06, issue #31)
+
+The catalog's guardrail/alignment entries were evaluated as a "completes the
+objective without tripping guardrails" axis and **not landed** — no role weights
+one. Measured over the 2026-10-06 400-model field (clean HEAD `01fd7f2`,
+throwaway worktree, `loadRankData({ roles: {} })` + `loadBenchmarkCatalog(false)`):
+the catalog carries 745 entries; 57 match a guardrail/alignment keyword
+(`guardrail`, `alignment`, `safety`, `attack`, `jailbreak`, `harm`, `refusal`,
+`automationbench`, `agentdojo`, `siren`, `trust`, `toxicity`, `bias`) in
+id/name/description/categories; 30 of those clear the pre-fetch count gate
+(`modelCount >= 3`).
+
+- **The semantically-relevant entries are at one model.** The pair the issue
+  names — `siren-agentdojo-attack-success` and `siren-agentdojo-utility` — and
+  `automationbench-aa` each carry `modelCount = 1`, below the count gate, so none
+  is even probe-fetchable. The rest of the `safety` category is the same:
+  `air-bench`, `wmdp`, `wmdp-bio`, `wmdp-chem`, `wmdp-cyber`, `cyberseceval-4`,
+  `cve-bench`, `cwe-bench`, `cathedralbench`, `gray-swan-ipi`, `mask`,
+  `miabench`, `biolp-bench`, `cloningscenarios`, `protocolqa`,
+  `protocolqa-open-ended`, `google-real-world-vulnerability-discovery`,
+  `ci-memories-coverage`, `ci-memories-violation` are all 1 model; `cybench`,
+  `mimo-cyber-bench`, `vct` are 2. Nothing in the catalog measures
+  guardrail-compliance at usable coverage.
+- **Coverage**: the best-covered candidate is 20/400 = **5.0%**
+  (`automationbench`, `cybergym`, `winogrande`; the llm-stats per-benchmark
+  endpoint caps `entries` at 20, so `automationbench` 22 and `winogrande` 23 load
+  only 20). Every other candidate is 0.7–4.0%. The 35% `FOCUS_COVERAGE_FLOOR` is
+  7× away from the best candidate and ~50× from the median. `general` covers
+  377/400 (94.3%) for scale. (The generic `bench:<id>` source is
+  capability-filled at 0.195, so `assessFocusMetric`'s coverage axis reads `ok`
+  for all of them — the raw share is the binding number here.)
+- **Correlation with `general`** (covered pool): the safety/security entries are
+  collinear — `capture-the-flag-challenges` 1.00, `figqa` 1.00, `exploitbench`
+  0.97, `sec-bench-pro` 0.97, `cybersecurity-ctfs` 0.97, `alignbench` 0.97,
+  `attaq` 0.93, `internal-research-debugging-evaluation` 0.92, `xstest` 0.91,
+  `exploitgym` 0.89. The only low-correlation candidate is `automationbench`
+  (r 0.24 with `general`, 0.30 with `agents`, 0.61 with `tool_calling`) — but it
+  is an agentic-automation benchmark (categories `reasoning|agents|tool_calling`),
+  not a guardrail axis, and it covers 5.0%.
+- **0-fill leader flip** (`default`, share taken from the collinear `code`+`agents`
+  block = 0.2842; baseline leader `deepseek-v4.1-flash` $0.599/M): most of the
+  flips that happen go to **pricier** models — `capture-the-flag-challenges` 0.04 →
+  `gpt-5.6-sol` ($6.13/M, 10.2×), `exploitbench` 0.04 → `glm-5.3` ($2.47/M,
+  4.1×), `internal-research-debugging-evaluation` 0.06 → `gpt-5.6-sol` (10.2×),
+  `cybersecurity-ctfs` 0.21 → `gpt-5.3-codex` ($4.81/M, 8.0×), `exploitgym` 0.22
+  → `gpt-5.6-sol` (10.2×), `cybergym` 0.30 → `mimo-v2.6-pro` ($0.543/M, cheaper),
+  `alignbench` 0.32 → `qwen3-14b` ($0.165/M, cheaper), `voicebench-avg` 0.14 →
+  `inkling-small` ($0.638/M, ≈same), `winogrande` 0.20 → `mimo-v2.5-pro`
+  ($0.622/M, ≈same). The capability-fill posture (the real posture for
+  `bench:<id>`) moves the thresholds only slightly (`exploitgym` 0.16,
+  `cybersecurity-ctfs` 0.26, `alignbench` 0.37) and never changes the direction.
+  `automationbench`, `attaq`, `xstest`, `pope`, `figqa`, `sec-bench-pro`,
+  `crag`, `big-bench`, `vqav2` do not flip the leader at any share up to 0.40 —
+  they are the least-covered entries.
+
+**Verdict: do not land.** No candidate clears the coverage bar (best 5.0% vs the
+35% floor), the semantically-relevant guardrail entries are at one model, and the
+safety/security entries that do carry data are collinear with `general`
+(r 0.89–1.00). The one low-correlation candidate (`automationbench`, r 0.24) is
+an agentic-automation benchmark, not a guardrail axis, and still covers only 5.0%.
+The 0-fill is a cost-promotion lottery: most of the flips that happen land on
+models 3–10× more expensive than the leader. No declarative source is authored —
+the catalog is the only fetchable guardrail-adjacent data and it is too sparse.
+
+### Candidate table (modelCount ≥ 3, 2026-10-06 field)
+
+`flip0` = 0-fill leader-flip share; `flipCap` = capability-fill (0.195) share;
+`none` = no flip up to 0.40. `rAgents` is `n/a` when fewer than 3 covered models
+carry `agents`.
+
+| catalog id | metric | modelCount | covered/400 | r(general) | r(agents) | dispersion | flip0 | flipCap |
+|---|---|---|---|---|---|---|---|---|
+| automationbench | bench:automationbench | 22 (20 loaded) | 20 (5.0%) | 0.24 | 0.30 | 0.62 | none | none |
+| cybergym | bench:cybergym | 20 | 20 (5.0%) | 0.48 | 0.75 | 0.14 | 0.30 → mimo-v2.6-pro | 0.30 → mimo-v2.6-pro |
+| winogrande | bench:winogrande | 23 (20 loaded) | 20 (5.0%) | 0.60 | n/a | 0.13 | 0.20 → mimo-v2.5-pro | 0.24 → mimo-v2.5-pro |
+| global-mmlu-lite | bench:global-mmlu-lite | 16 | 16 (4.0%) | 0.88 | n/a | 0.33 | 0.15 → inkling-small | 0.18 → inkling-small |
+| healthbench-professional | bench:healthbench-professional | 14 | 14 (3.5%) | 0.95 | 0.93 | 0.14 | 0.06 → gpt-5.6-sol | 0.09 → gpt-5.6-sol |
+| healthbench | bench:healthbench | 13 | 13 (3.3%) | 0.70 | 0.84 | 0.08 | 0.07 → gpt-5.6-sol | 0.10 → gpt-5.6-sol |
+| healthbench-hard | bench:healthbench-hard | 11 | 11 (2.8%) | 0.66 | 0.61 | 0.46 | 0.12 → gpt-5.6-sol | 0.30 → gpt-6.1-sol |
+| exploitbench | bench:exploitbench | 8 | 8 (2.0%) | 0.97 | 0.95 | 0.57 | 0.04 → glm-5.3 | 0.06 → glm-5.3 |
+| exploitgym | bench:exploitgym | 8 | 8 (2.0%) | 0.89 | 0.84 | 0.69 | 0.22 → gpt-5.6-sol | 0.16 → muse-spark-1.3 |
+| sec-bench-pro | bench:sec-bench-pro | 7 | 7 (1.8%) | 0.97 | 0.96 | 0.25 | none | none |
+| global-mmlu | bench:global-mmlu | 7 | 7 (1.8%) | 0.98 | 1.00 | 0.50 | 0.20 → mimo-v2.5-pro | 0.25 → mimo-v2.5-pro |
+| alignbench | bench:alignbench | 5 | 5 (1.3%) | 0.97 | n/a | 0.10 | 0.32 → qwen3-14b | 0.37 → qwen3-14b |
+| bfcl-v2 | bench:bfcl-v2 | 5 | 5 (1.3%) | 0.74 | n/a | 0.10 | 0.34 → llama-3.3-70b-instruct | 0.40 → llama-3.3-70b-instruct |
+| healthbench-consensus | bench:healthbench-consensus | 5 | 5 (1.3%) | 0.79 | 0.55 | 0.004 | 0.04 → gpt-5.6-sol | 0.05 → gpt-5.6-sol |
+| xstest | bench:xstest | 4 | 4 (1.0%) | 0.91 | n/a | 0.035 | none | none |
+| tempcompass | bench:tempcompass | 4 | 4 (1.0%) | 1.00 | 0.74 | 0.13 | 0.28 → seed-2.0-mini | 0.34 → seed-2.0-mini |
+| vlmsarebiased | bench:vlmsarebiased | 4 | 4 (1.0%) | 0.89 | 0.84 | 0.17 | 0.36 → seed-2.0-mini | none |
+| attaq | bench:attaq | 3 | 3 (0.7%) | 0.93 | n/a | 0.014 | none | none |
+| pope | bench:pope | 3 | 3 (0.7%) | 0.42 | n/a | 0.018 | none | none |
+| capture-the-flag-challenges | bench:capture-the-flag-challenges | 3 | 3 (0.7%) | 1.00 | 1.00 | 0.06 | 0.04 → gpt-5.6-sol | 0.05 → gpt-5.6-sol |
+| cybersecurity-ctfs | bench:cybersecurity-ctfs | 3 | 3 (0.7%) | 0.97 | n/a | 0.52 | 0.21 → gpt-5.3-codex | 0.26 → gpt-5.3-codex |
+| figqa | bench:figqa | 3 | 3 (0.7%) | 1.00 | n/a | 0.35 | none | none |
+| internal-research-debugging-evaluation | bench:internal-research-debugging-evaluation | 3 | 3 (0.7%) | 0.92 | 0.95 | 0.13 | 0.06 → gpt-5.6-sol | 0.08 → gpt-5.6-sol |
+| voicebench-avg | bench:voicebench-avg | 3 | 3 (0.7%) | 1.00 | n/a | 0.10 | 0.14 → inkling-small | 0.18 → inkling-small |
+| vqav2 | bench:vqav2 | 3 | 3 (0.7%) | 0.76 | n/a | 0.018 | none | none |
+| big-bench | bench:big-bench | 3 | 3 (0.7%) | 0.39 | n/a | 0.045 | none | none |
+| crag | bench:crag | 3 | 3 (0.7%) | 0.90 | n/a | 0.08 | none | none |
+
+Not loadable (404 on the per-benchmark endpoint): `alpacaeval-2.0` (4),
+`automationbench-1.0.6` (5), `vqav2-(val)` (3). Below the count gate (1–2 models):
+the `siren-agentdojo-*` pair, `automationbench-aa`, and the rest of the `safety`
+category listed above.
+
+## Per-task cost composite: measured, not landed (2026-10-06, issue #32)
+
+Issue #32 asked to rank on a per-task cost/throughput composite **when a per-task
+token profile is available**, keeping the current $/M price as the fallback, and
+to quantify the gap and defer when no profile source exists. **Verdict: defer.**
+No per-task (or per-role) token profile exists, so the $/M price stays the price
+axis. The closest available source — OpenRouter's per-model analytics, which the
+plugin already downloads and ignores — is a *platform-wide, per-request* profile,
+not the role's workload; using it would price OpenRouter's traffic mix, not the
+plugin's.
+
+### What the $/M proxy assumes
+
+`priceEff` is the billed 3:1 blend `(3·p_in + p_out)/4` scaled by the role's
+thinking factor. A per-task price is `tokens_per_task × priceEff`, so the proxy
+makes two assumptions the composite would relax:
+
+1. **A fixed 3:1 input:output token mix** (output = 25% of the mix). Measured on
+   6,813 real assistant turns in this repo's sessions: **5.74:1** (output =
+   14.8%). The blend over-weights the output price by ~1.7×. Per-model
+   `p_out/p_in` spans 0.8–800 (median 4.19) over the 448 OpenRouter models with
+   both prices, so the correction is a per-model price rescale of up to 1.72×.
+2. **A model-independent token count per task.** If `tokens_per_task` is constant
+   across models, the per-task price is a constant × `priceEff` — a pure λ
+   rescale with no ranking change. The composite only bites when
+   `tokens_per_task` varies by model (a verbose/retrying model costs more per
+   task).
+
+### Source 1 — a published per-task metric: none
+
+- **llm-stats leaderboard** (`LlmStatsRow`, 56 fields in the 2026-10-06 cache):
+  `input_price`/`output_price` ($/M), `throughput` (output tok/s), `latency`
+  (TTFT), the index/benchmark scores, `params`, `training_tokens`. No
+  token-usage, cost-per-task or output-tokens-per-task field. `training_tokens`
+  is a pretraining count, not per-task usage.
+- **Benchmark catalog** (`loadBenchmarkCatalog`, 745 entries): every entry is
+  `{id, name, description, categories, modelCount}`. No token/cost field; the
+  descriptions mention "token" only as context length.
+
+### Source 2 — omp's recorded per-role usage: auxiliary-only
+
+omp's session jsonl carries a dedicated `model_usage` event with a `role` tag
+(`{type:"model_usage", purpose, role, api, provider, model, usage:{input, output,
+cacheRead, cacheWrite, totalTokens, cost}}`). Across all 433 session files it
+holds **2,833 records, 2 roles, 2 models** — `typesafe` (2,832; the judge role)
+and `tiny` (1) — and every record is an *auxiliary* call: `judge_batch` 2,235,
+`unexpected-stop` 255, `auto-thinking` 218, `find` 122, `judge` 3. The main
+assistant turn's usage sits on the `message` record with `model` but **no role
+tag** (6,813 turns, 7 models, 36.9M input / 6.4M output). So omp records per-role
+usage only for harness-internal calls, never for the role's own work, and never
+per task. The plugin's own `llm-role-history.jsonl` records per-role *decisions*
+(`role, from, to, reason, score, bestScore, currentScore`) with no token fields.
+
+### Source 3 — OpenRouter analytics: a per-model profile, but not per-task/per-role
+
+The OpenRouter find payload the plugin already fetches
+(`openrouter.ai/api/frontend/v1/models/find`, cached as
+`openrouter-fetched-data.json`) carries `data.analytics`: per permaslug+variant,
+`count` (requests), `total_prompt_tokens`, `total_completion_tokens`,
+`total_native_tokens_reasoning`, `total_native_tokens_cached`, `total_usage` ($),
+`total_tool_calls`, `date`. `src/` reads none of it (`grep analytics src/` → no
+hits). It is a real per-model token+cost profile, but it does not satisfy the
+issue's requirement:
+
+- **Platform-wide, not the role's workload.** The plugin's own measured
+  input/req is **~10–14× lower** than the platform's prompt/req for the same
+  models (deepseek-v4.1-flash 4,451 vs 57,018; glm-5.3 4,533 vs 63,434;
+  mimo-v2.6-pro 7,556 vs 80,780; hy4-preview 9,302 vs 113,793). The platform's
+  prompt/req reflects long-context agentic traffic, not omp's turns. Output/req
+  is closer (deepseek 955 vs 926; glm-5.3-flash 906 vs 931), so the *verbosity*
+  signal is usable but the *workload* signal is not.
+- **Per-request, not per-task.** `count` is API calls; an agent task spans many.
+- **Single-day snapshot** (576/625 entries dated 2026-09-29), so it is
+  stale-prone.
+- **152/400 coverage** (standard variant, `count > 0`); the other 248 models
+  would fall back to $/M, giving a mixed axis.
+- **Not per-role.** The issue allows "per role, or per model × role"; this is
+  per-model only.
+
+### Measured effect (if the analytics were used as the profile)
+
+Re-ranking the 2026-10-06 field with `priceEff × (tokens_per_task / median)`,
+uncovered models at the $/M fallback (t = 1):
+
+| role | current #1 | composite #1 | change |
+|---|---|---|---|
+| `default` | deepseek-v4.1-flash | deepseek-v4.1-flash | same |
+| `plan` | muse-spark-1.3 | qwen3.8-flash | changed |
+| `slow` | muse-spark-1.3 | deepseek-v4.1-flash | changed |
+| `smol` | muse-spark-1.1 | mercury-2 | changed |
+
+The output-only variant (completion+reasoning per request, the model-controlled
+part) changes the same three roles. So the composite is not inert — but the
+change is driven by the platform's workload mix (tokens/req spans 437–114,810,
+262×), not by the role's task. The token-mix correction alone (3:1 → 5.74:1) does
+**not** change any leader (only a #5 swap in `default`).
+
+### Verdict
+
+**Do not land.** No per-task token profile exists: the published sources carry no
+per-task metric, omp's per-role usage is auxiliary-only (2 roles, 2 models), and
+the one per-model profile the plugin already has (OpenRouter analytics) is
+platform-wide aggregate traffic whose prompt/req is ~10–14× the plugin's own
+measured input/req. Landing it would price OpenRouter's workload mix, not the
+role's, and would change 3 of 4 leaders on that basis. The $/M proxy remains the
+price axis.
+
+**What would change the verdict:** a per-role (or per-model × role) token count
+from the plugin's own recorded usage. The plugin already sees the main-turn usage
+per model (session jsonl) and the role→model mapping (config.yml); recording the
+role alongside the turn's usage would give a per-role profile the composite could
+use without the platform-workload confound. Until then this is a measurement, not
+a weight change.
+
+## Agentic multi-agent axes: measured, not landed (2026-10-06, issue #33)
+
+The named multi-agent behaviours — delegation, small agent teams (SATs), agent
+handoffs, agent swarms, failure recovery / self-healing, agent-to-agent
+communication — were searched for in the llm-stats benchmark catalog and
+**not landed** — no role weights an axis for them, because no source measures
+them.
+
+**Sweep.** The catalog (745 entries) was swept on `id`/`name`/`description`/
+`categories` for `delegat`, `swarm`, `handoff`, `recover`, `self-heal`, `a2a`,
+`agent-to-agent`, `negotiat`, `multi-agent`, `team`, `coordination`,
+`orchestrat`, `collaborat`, `subagent`. **Zero hits** for delegat / swarm /
+handoff / recover / self-heal / a2a / agent-to-agent / negotiat / subagent. The
+17 hits that did match are:
+
+| catalog id | models | matched | what it actually measures |
+|---|---|---|---|
+| `supergpqa` | 37 | collaborat | graduate QA; "Human-LLM **collaborative** filtering" is annotation methodology |
+| `mcp-atlas` | 36 | coordinat | **single-agent** tool use ("coordinate and utilize multiple tools") |
+| `tau2-telecom` | 36 | coordination | dual-control **human↔agent** conversation (Dec-POMDP) |
+| `hmmt-2025` | 33 | team | math competition **team rounds** |
+| `multichallenge` | 32 | collaborat | multi-turn conversation (instruction retention, self-coherence) |
+| `hmmt25` | 28 | team | math competition team rounds |
+| `tau2-airline` | 24 | coordination | dual-control human↔agent conversation |
+| `automationbench` | 22 | orchestrat | **single-agent** tool orchestration |
+| `big-bench` | 3 | collaborat | "**collaborative** benchmark" = many contributors |
+| `phibench` | 3 | team | Microsoft internal math/coding benchmark |
+| `acebench` | 2 | multi-agent | the **only** multi-agent eval (an "Agent" sub-type); 2 models |
+| `mcp-universe` | 1 | orchestrat | single-agent MCP tool orchestration |
+| `cathedralbench` | 1 | team | red-team cyber |
+| `groundui-1k` | 2 | coordinat | UI grounding |
+| `swe-bench-verified-(agentic-coding)` | 2 | coordinat | single-agent coding |
+| `swe-bench-verified-(agentless)` | 2 | coordinat | single-agent coding |
+| `swe-bench-verified-(multiple-attempts)` | 1 | coordination | single-agent coding |
+
+A broader sweep of the agentic vocabulary (`agent`, `tool`, `plan`, `memory`,
+`workflow`, `long-horizon`, `computer-use`, `mcp`, `environment`, `simulat`,
+`theory of mind`, `cooperat`, `adversar`, …) returns ~40 agentic benchmarks
+(`toolathlon` 42, `terminal-bench-2` 53, `agents-last-exam` 21, `t2-bench` 23,
+`nl2repo` 23, `osworld-2.0` 15, `claw-eval` 14, `tau3-banking` 12, `mcp-mark` 9,
+`coworkbench` 6, `vending-bench-2` 4, …). **Every one is single-agent**
+long-horizon / tool-use / computer-use; none scores delegation, teams, handoffs,
+swarms, recovery or a2a. The nearest thing to a multi-agent axis in the whole
+catalog is `acebench`'s "Agent (multi-agent interactions)" sub-type, at 2 models.
+
+**Four-axis gate on the candidates with ≥ 3 models** (metric = `bench:<id>`,
+generic llm-stats source, joined direct on `model_id`):
+
+| candidate | catalog | loaded | covered | dispersion | composition | freshness | r(general) | r(agents) | gate |
+|---|---|---|---|---|---|---|---|---|---|
+| `supergpqa` | 37 | 20 | 20/400 (5.0%) | 0.062 | below-bar (Google, OpenAI) | 3.2 mo | 0.867 | 0.765 | reject |
+| `mcp-atlas` | 36 | 20 | 20/400 (5.0%) | 0.092 | ok | 1.1 mo | 0.607 | 0.695 | reject |
+| `tau2-telecom` | 36 | 20 | 20/400 (5.0%) | 0.061 | below-bar (Qwen, Google) | 4.3 mo | 0.735 | 0.429 | reject |
+| `hmmt-2025` | 33 | 20 | 20/400 (5.0%) | 0.048 | below-bar (Google) | 3.4 mo | 0.615 | 0.199 | reject (dispersion) |
+| `multichallenge` | 32 | 20 | 20/400 (5.0%) | 0.194 | below-bar (Google) | 3.8 mo | 0.355 | 0.326 | reject |
+| `hmmt25` | 28 | 20 | 20/400 (5.0%) | 0.147 | below-bar (Google, OpenAI) | 1.1 mo | **0.909** | 0.712 | reject (collinear) |
+| `tau2-airline` | 24 | 20 | 20/400 (5.0%) | 0.149 | below-bar (Google) | 5.7 mo | 0.694 | 0.439 | reject |
+| `automationbench` | 22 | 20 | 20/400 (5.0%) | 0.622 | ok | 0.0 mo | 0.242 | 0.299 | **clears all axes** |
+| `big-bench` | 3 | 3 | 3/400 (0.8%) | 0.045 | below-bar | 27.1 mo | 0.389 | — | reject |
+| `phibench` | 3 | 3 | 3/400 (0.8%) | 0.128 | below-bar | 17.0 mo | 0.993 | — | reject |
+| `acebench` | 2 | 2 | 2/400 (0.5%) | 0.000 | below-bar | 12.8 mo | — | — | reject (below 3-model floor) |
+| `mcp-universe` | 1 | 1 | 1/400 (0.3%) | — | below-bar | 9.9 mo | — | — | reject (below 3-model floor) |
+
+`automationbench` is the only candidate that clears the implemented four-axis
+gate (dispersion 0.62, composition ok, freshness ok, r(general) 0.24,
+r(agents) 0.30) — but it measures **single-agent tool orchestration**, not
+delegation / teams / handoffs / swarms / recovery / a2a, and it covers 5% of the
+field. Landing it under an agentic-axis label would be mislabeling, and the
+issue forbids a stub or synthetic axis.
+
+**Coverage ceiling (structural).** The per-benchmark endpoint caps `entries` at
+`BENCHMARK_ENTRY_CAP = 20` regardless of `limit`/`offset`/`page`/`per_page`, so
+a generic `bench:<id>` metric can never cover more than 20 of the 400 models —
+5.0%, against a `FOCUS_COVERAGE_FLOOR` of 0.35 (≥ 140 models). The best-covered
+agentic candidate in the catalog (`toolathlon`, 42) would still load ≤ 20. The
+top of the catalog by `model_count` is general-knowledge / coding (`gpqa` 250,
+`mmlu-pro` 142, `aime-2025` 122, `swe-bench-verified` 116, `humanity's-last-exam`
+104, `mmlu` 103); the highest-modelCount **agentic** entry is `toolathlon` at 42,
+and the field already carries `toolathlon_score` (42 covered) from the index
+payload.
+
+**The general agentic axis is already covered; the multi-agent sub-axes are
+not.** The field already carries agentic proxies, all in `KNOWN_METRICS`:
+`agents` (index) 192/400 (48.0%, r(general) 0.918), `tool_calling` 202/400
+(50.5%, r(general) 0.799, r(agents) 0.879), `mcp_atlas_score` 36 (9.0%),
+`toolathlon_score` 42 (10.5%), `osworld_score` 21 (5.3%), `apex_agents_score` 10
+(2.5%). The agentic-adjacent candidates that do have data are collinear with
+them (`osworld` r(general) 0.927 / r(agents) 0.921; `browsecomp` 0.897 / 0.916;
+`toolathlon` 0.828 / 0.858; `mcp_atlas` 0.772 / 0.805), so even a landed
+tool-orchestration axis would add little independent signal.
+
+**Verdict: do not land.** No catalog benchmark measures the named axes; the one
+multi-agent eval is below the 3-model floor; the endpoint cap makes the coverage
+bar unreachable for any generic benchmark; and the agentic-adjacent candidates
+are either collinear with the shipped `agents`/`tool_calling` indices or measure
+single-agent tool use. The honest outcome is the recorded evidence, mirroring
+the domain-knowledge (#23) and truthfulness (#24) verdicts.
+
 ## Changing a weight — checklist
 
 1. Keep Σ = 1 and Σ(non-price) = 1 − w_price (rescale the others; do not touch

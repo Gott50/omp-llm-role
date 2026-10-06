@@ -116,6 +116,14 @@ things that only bite someone changing or debugging the code.
   fallback would fetch the normalized (404-ing) URL; the declaration
   `catalogBenchmarkDeclaration` builds at discovery/authoring time is what
   carries the raw id, and without it the metric is dead weight.
+- **A capability-filled generic benchmark bypasses the coverage gate.** The
+  generic llm-stats source (`genericBenchmarkSource` / `llmStatsBenchmarkDeclaration`)
+  declares `fill: 0.195`, and `focusCoverageOk` returns `ok` for any metric whose
+  `metricFill > 0` — so a `bench:<id>` metric with 1 covered model reports
+  `coverage.status = "ok"` and is rejected (if at all) on dispersion,
+  composition or freshness, never on coverage. Measured 2026-10-06: `bench:supergpqa`
+  covers 20/400 (5.0%) and still reports `status=ok`. The coverage floor only
+  binds fill-0 metrics. Do not read `coverage.status = "ok"` as "well covered".
 - **The per-benchmark endpoint caps `entries` at 20** (`BENCHMARK_ENTRY_CAP`),
   regardless of `limit`/`offset`/`page`/`per_page`, so a generic `bench:<id>`
   metric can never load more and no pagination loop helps. `total_models` still

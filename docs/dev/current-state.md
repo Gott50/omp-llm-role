@@ -28,6 +28,19 @@ below are the 2026-10-06 measurement (the input-price blend basis #21 and the
   switching to user drops the project role and repoints the lock path, and a
   registry entry with no lock file renders disabled with a reason tooltip.
 
+- Measurement wave (2026-10-06, issues #31–#33): three candidate axes were
+  measured and **not** landed — guardrail/alignment (#31: the semantically
+  relevant catalog entries sit at one model, the best-covered candidate covers
+  5.0% of the field vs the 35% floor, and the safety/security entries that carry
+  data are collinear with `general`, r 0.89–1.00), per-task cost (#32: no
+  per-task or per-role token profile exists — the only per-model profile the
+  plugin already has is OpenRouter's platform-wide traffic, ~10–14× the plugin's
+  own input/req, so the $/M price stays the price axis), and agentic multi-agent
+  axes (#33: no catalog benchmark measures delegation/teams/handoffs/swarms/
+  recovery/a2a, the one multi-agent eval is below the 3-model floor, and the
+  20-entry endpoint cap makes the coverage bar unreachable). Numbers and verdicts
+  in `scoring.md`.
+
 - Wave (2026-10-06): the `1/price²` blend now weights routes by the **input
   (prompt) price** — the router's sort key — while reporting the billed 3:1 blend
   under that distribution (issue #21), so prices moved; endpoint capability

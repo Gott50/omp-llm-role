@@ -133,6 +133,29 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Changed
 
+- **Guardrail/alignment axis evaluated and not landed** — the catalog's
+  guardrail/alignment entries were measured as a "completes the objective without
+  tripping guardrails" axis and left unweighted: the semantically-relevant
+  entries (`siren-agentdojo-*`, `automationbench-aa`) sit at one model, the
+  best-covered candidate covers 5.0% of the field (7× below the 35% floor), and
+  the safety/security entries that do carry data are collinear with `general`
+  (r 0.89–1.00) — the 0-fill is a cost-promotion lottery that lands on models
+  3–10× pricier. Numbers and verdict in `docs/dev/scoring.md`. (issue #31)
+- **Per-task cost composite evaluated and deferred** — no per-task (or per-role)
+  token profile exists: the published sources carry no per-task metric, omp's
+  per-role usage is auxiliary-only (2 roles, 2 models), and the one per-model
+  profile the plugin already has (OpenRouter analytics) is platform-wide
+  aggregate traffic whose prompt/req is ~10–14× the plugin's own measured
+  input/req, so landing it would price OpenRouter's workload mix, not the role's.
+  The $/M price stays the price axis. Numbers and verdict in
+  `docs/dev/scoring.md`. (issue #32)
+- **Agentic multi-agent axes evaluated and not landed** — no source measures
+  delegation, teams, handoffs, swarms, recovery or a2a: the catalog sweep returns
+  zero hits, the one multi-agent eval (`acebench`) is below the 3-model floor,
+  the per-benchmark endpoint's 20-entry cap makes the 35% coverage bar
+  unreachable for any generic benchmark, and the agentic-adjacent candidates are
+  collinear with the shipped `agents`/`tool_calling` indices. Numbers and verdict
+  in `docs/dev/scoring.md`. (issue #33)
 - **Truthfulness axis evaluated and not landed** — the llm-stats
   `simpleqa_score` was measured as a truthfulness axis and left unweighted: it
   covers 11.8% of the field (0/3 on the probe-walk-reachable pool), correlates
