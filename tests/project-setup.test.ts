@@ -259,3 +259,24 @@ test("formatProjectRolesReport lists kept/dropped/added and each new role's weig
   assert.match(report, /top pick: openrouter\/org\/model-a/);
   assert.match(report, /warning: a divergence warning/);
 });
+
+test("setupProject creates <project>/.omp/plugins when the project has no .omp yet", () => {
+  // A fresh project: no <root>/.omp at all, as when /project-roles runs in a
+  // repo where the plugin was never installed. The lock write must create the
+  // dir rather than fail with ENOENT on its temp file.
+  const root = mkdtempSync(join(tmpdir(), "project-setup-fresh-"));
+  process.env.OMP_LLM_ROLE_AGENT_DIR = join(root, "global-agent-dir");
+  const projectDir = join(root, ".omp");
+  const lockPath = join(projectDir, "plugins", "omp-plugins.lock.json");
+  const result = setupProject(DOCS, {
+    projectDir,
+    lockPath,
+    configPath: join(projectDir, "config.yml"),
+    dryRun: false,
+    force: false,
+    yes: true,
+  });
+  assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+  assert.equal(existsSync(lockPath), true);
+  assert.equal(existsSync(join(projectDir, "agents", "prose.md")), true);
+});

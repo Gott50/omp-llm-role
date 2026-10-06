@@ -17,7 +17,8 @@
  * observed house style: keys at 4, list items at 6).
  */
 
-import { renameSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export class ConfigEditError extends Error {}
 
@@ -438,7 +439,9 @@ function patchDisabledAgents(out: string[], adds: string[], removes: string[]): 
 /**
  * Atomic write: re-stat mtime first — a changed mtime means config.yml moved
  * underneath us and the caller must re-read and recompute ("conflict"). Writes
- * a temp file in the same directory and renames over the target.
+ * a temp file in the same directory and renames over the target. Creates the
+ * target's directory when missing: the project scope writes into
+ * `<cwd>/.omp/plugins/`, which omp does not create until something writes there.
  */
 export function writeConfigAtomic(path: string, patchedText: string, mtimeBefore: number): "written" | "conflict" {
   let mtimeNow: number | null = null;
@@ -450,6 +453,7 @@ export function writeConfigAtomic(path: string, patchedText: string, mtimeBefore
   const changed = mtimeNow === null ? mtimeBefore !== 0 : mtimeNow !== mtimeBefore;
   if (changed) return "conflict";
   const tmp = `${path}.llm-role-tmp`;
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(tmp, patchedText);
   renameSync(tmp, path);
   return "written";

@@ -45,9 +45,11 @@ Rules the algorithm enforces:
   disabled-agent add/remove). On any mismatch it throws — never corrupt.
 - **Atomic write.** `writeConfigAtomic(path, patchedText, mtimeBefore)` re-stats
   the mtime first; a changed mtime means the config moved underneath and returns
-  `"conflict"` (the caller re-reads and recomputes). Otherwise it writes
-  `<path>.llm-role-tmp` and `rename`s over the target. A file absent at read
-  time (`mtimeBefore === 0`) is writable only while still absent.
+  `"conflict"` (the caller re-reads and recomputes). Otherwise it `mkdir -p`s the
+  target's directory, writes `<path>.llm-role-tmp` and `rename`s over the target.
+  A file absent at read time (`mtimeBefore === 0`) is writable only while still
+  absent. The `mkdir -p` is what lets the project scope write into
+  `<cwd>/.omp/plugins/`, which omp does not create until something writes there.
 - **3-attempt mtime retry.** `writePatch` (`src/updater.ts`) loops up to
   `CONFLICT_RETRIES = 3`: read → patch → atomic write; a `"conflict"` retries,
   three conflicts abort with `CONFLICT_ABORT`.

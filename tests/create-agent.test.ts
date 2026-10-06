@@ -499,9 +499,12 @@ test("formatCreateAgentReport prints coverage, a below-bar warning, and the diff
 
 test("createAgent writes the agent file before the role and rolls it back when the role write fails", () => {
   const { dir, lockPath, agentsDir } = workspace();
-  // A lock path under a directory that does not exist: the dry-run pre-flight
-  // only reads (a missing file is `{}`), but the real atomic write throws ENOENT.
-  const badLock = join(dir, "missing", "omp-plugins.lock.json");
+  // A lock path whose parent is a FILE, not a directory: the dry-run pre-flight
+  // only reads (a missing file is `{}`), but the real atomic write cannot create
+  // the parent dir and throws ENOTDIR.
+  const blocker = join(dir, "blocker");
+  writeFileSync(blocker, "");
+  const badLock = join(blocker, "omp-plugins.lock.json");
 
   const result = createAgent(request(badLock));
   assert.equal(result.ok, false);
@@ -518,7 +521,9 @@ test("createAgent --force restores the prior agent file when the role write fail
   mkdirSync(agentsDir, { recursive: true });
   const prior = "---\nname: changelog\ndescription: hand-written\n---\n\nKeep me.\n";
   writeFileSync(join(agentsDir, "changelog.md"), prior);
-  const badLock = join(dir, "missing", "omp-plugins.lock.json");
+  const blocker = join(dir, "blocker");
+  writeFileSync(blocker, "");
+  const badLock = join(blocker, "omp-plugins.lock.json");
 
   const result = createAgent(request(badLock, { force: true }));
   assert.equal(result.ok, false);

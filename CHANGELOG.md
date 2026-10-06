@@ -198,6 +198,13 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **`/project-roles` failed on a project with no `.omp` yet** — the atomic
+  writer wrote its `<path>.llm-role-tmp` sibling without creating the target's
+  directory, so the first project-scoped write into `<cwd>/.omp/plugins/` (which
+  omp does not create until something writes there) died with
+  `ENOENT: ... omp-plugins.lock.json.llm-role-tmp`. `writeConfigAtomic` now
+  `mkdir -p`s the target's directory, which also covers the project `config.yml`
+  and the project agents dir.
 - **Explorer dataset now carries role-weighted benchmarks** — the explorer
   loaded its ranking data with `loadRankData({})`, which fetches declared
   benchmark sources only. A role weighting a generic llm-stats benchmark

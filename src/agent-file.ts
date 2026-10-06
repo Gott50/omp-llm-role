@@ -16,8 +16,8 @@
  *     the effort and prices it; a second pin would silently disagree with it.
  */
 
-import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { writeConfigAtomic } from "./config-edit.ts";
 import { agentDir } from "./state.ts";
 
@@ -99,9 +99,6 @@ export function writeAgentFile(path: string, text: string, force: boolean): Agen
   if (existsSync(path) && !force) {
     return { ok: false, error: `${path} already exists — pass --force to overwrite` };
   }
-  // A first agent may be the first thing in the dir (~/.omp/agent/agents is not
-  // created by omp until something writes there).
-  mkdirSync(dirname(path), { recursive: true });
   const mtimeBefore = existsSync(path) ? statSync(path).mtimeMs : 0;
   const result = writeConfigAtomic(path, text, mtimeBefore);
   if (result === "conflict") return { ok: false, error: `${path} changed while writing — refusing to overwrite` };

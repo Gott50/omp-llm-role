@@ -297,3 +297,10 @@ test("writeConfigAtomic writes atomically and detects mtime conflicts", () => {
   // Absent at read time but present now -> conflict.
   assert.equal(writeConfigAtomic(missing, "a: 2\n", 0), "conflict");
 });
+
+test("writeConfigAtomic creates a missing parent directory", () => {
+  const dir = mkdtempSync(join(tmpdir(), "llm-role-mkdir-"));
+  const path = join(dir, "nested", "deeper", "config.yml");
+  assert.equal(writeConfigAtomic(path, "a: 1\n", 0), "written");
+  assert.equal(readFileSync(path, "utf8"), "a: 1\n");
+});
