@@ -169,6 +169,14 @@ So even where coverage were adequate, they would not separate roles. The video's
   `hle_score` (104/400 = 26%, r 0.88 with `general`). `buildModels` maps neither.
   So this axis is a mapping + coverage question, not a missing source.
 
+  > **Update (2026-10-06, issues #22/#24):** the mapping landed — `buildModels`
+  > now maps `simpleqa_score` and `hle_score` (and the other leaderboard
+  > `*_score` fields), both registered in `KNOWN_METRICS`. The axis was then
+  > measured and **not weighted**: `simpleqa_score` covers 11.8% of the field
+  > (12.7% of the default-eligible pool) and the reachable top-10 are all
+  > uncovered, so a 0-fill weight is a pure lottery; `hle_score` is collinear
+  > with `general` (r 0.88). Numbers and verdict in `scoring.md`.
+
 The same holds for the video's "domain proxies over SWE tunnel vision" point: the
 fetched leaderboard carries `index_finance` (228/400 = 57%), `index_legal`
 (213/400 = 53.3%) and `index_healthcare` (248/400 = 62%) — all clear the 35% bar
@@ -182,6 +190,13 @@ missing value scores 0, not the 0.195 capability fill, so weighting one at 57%
 coverage penalizes the other 43% of the pool. Adding one needs a `CAPABILITY_FILL`
 entry (as `long_context`/`website` got) or it is the same coverage lottery §1
 objects to.
+
+> **Update (2026-10-06, issues #22/#23):** the mapping landed — `buildModels`
+> now maps `index_communication`/`index_finance`/`index_healthcare`/`index_legal`
+> and all four are in `KNOWN_METRICS`. The axis was then measured and **not
+> weighted**: the three domain indices correlate 0.66–0.84 with `general`, and a
+> 0-fill weight flips the leader to a 3–6× pricier model. Numbers and verdict in
+> `scoring.md`.
 
 So guardrail/alignment is the only true gap; truthfulness and domain knowledge
 are already in hand at marginal-to-usable coverage, and the work is mapping +
@@ -226,6 +241,12 @@ index"* is the per-role weight design.
   (they are r 0.94–0.95 with each other) and take the share from the collinear
   capability block (`code`+`agents` in `default`/`slow`/`task`, r 0.947), not
   from `throughput`/`price`.
+
+  > **Update (2026-10-06, issues #22/#23/#24):** the mapping + `KNOWN_METRICS`
+  > halves landed; the **weight** half was measured and rejected for both axes
+  > (0-fill coverage lottery / collinearity — `scoring.md`). No `CAPABILITY_FILL`
+  > entry was added because neither axis is weighted. Guardrail/alignment remains
+  > the one true gap.
 - **Keep the 3-D posture.** Performance + cost + speed as one unit is the
   project's core; the video is independent confirmation, not a change.
 - **Per-task cost is the open modelling gap.** The video's "useful agent output
