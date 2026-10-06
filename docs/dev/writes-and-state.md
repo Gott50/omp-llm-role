@@ -16,7 +16,9 @@ surfaces:
   indent; delete the line for a role that left the managed set);
 - the managed keys inside `retry.fallbackChains` (replace-in-place, never
   duplicate a YAML key; prune keys the plugin wrote on a previous run and no
-  longer references);
+  longer references). A pinned role's chain key is the level-free form of its
+  selector and carries the `@<slug>` pin (`openrouter/<id>@<slug>`); the pin
+  rides before the thinking suffix on the values (§6.5);
 - the plugin-managed names in `task.disabledAgents` (add/remove, other entries
   and their order preserved).
 
@@ -83,7 +85,9 @@ settings entry the global behavior is unchanged.
 - `managedRoles` drives `roleRemovals`: a role the plugin managed on a previous
   run but no longer does (disabled via `enabled: false` / `weights: null`, or
   removed from settings) has its `modelRoles.<role>` line deleted, so a stale
-  pin cannot keep routing `@<role>`.
+  pin cannot keep routing `@<role>`. A role whose provider pin matched no route
+  joins `managedRoles` without a rewrite, so its current chain survives the
+  prune (§6.5).
 - `managedDisabledAgents` is the set of agent names the plugin added to
   `task.disabledAgents`; a later run removes a name whose agent file is gone
   (e.g. `/remove-agent`) or whose role is no longer disabled.
@@ -93,7 +97,9 @@ settings entry the global behavior is unchanged.
   **not** enumerated — it can be hundreds of ids; `blocked[]` keeps its old meaning,
   the probe-blocked ids examined in the walk. `endpointBlocked[]` records the ranking
   ids the role's endpoint filters dropped (no capable standard-tier route), rendered
-  `; endpoint-blocked: …` on the decision line.
+  `; endpoint-blocked: …` on the decision line; `pinBlocked[]` records the ranking ids
+  the role's provider pin dropped (no route matching the pin), rendered
+  `; pin-blocked: …`.
 - Role removal (`/remove-agent`) goes through `removeRoleSettings` in
   `src/role-settings.ts` — the same validate/backup/atomic-write path as
   `writeRoleSettings`, deleting the role's flat dotted keys and any nested entry.
@@ -164,7 +170,9 @@ untouched:
   lock it cannot acquire is benign (`{ decisions: [], wrote: false }`); a
   conflict aborts with `CONFLICT_ABORT`.
 - A role whose probed candidates are all blocked is left untouched with a notify
-  note (not an abort).
+  note (not an abort). A role whose provider pin matches no route is likewise
+  left untouched — no selector or chain upsert — with a notify note naming the
+  role and the pin (§6.5).
 - The live-session model hook (`applySessionModel`) runs only after a real write
   and only on a real `default` change; a hook failure is notified but never
   fails the run (the config write already succeeded).

@@ -173,7 +173,7 @@ The one validated role write path, shared by the explorer's Export,
 - `mergeExport(existing, dirty)` → `{lock}` or `{error}`. Preserves `plugins` and
   every sibling settings key. Writes each dirty role as **flat dotted keys**
   (`roles.<name>.weights.<metric>`, `.description`, `.enabled`, `.locked`,
-  `.required`, `.thinking`, `.lambda`, `.filters.image`) because omp's
+  `.required`, `.thinking`, `.providerPin`, `.lambda`, `.filters.image`) because omp's
   `/settings` Plugins tab shallow-merges the settings object and does not
   flatten nested objects — a nested `roles` object would render as schema
   defaults. A pre-existing nested entry for a dirty role is deleted, so an older

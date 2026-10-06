@@ -15,7 +15,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, type Ranked, type RankData } from "./engine.ts";
+import { computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, type Ranked, type RankData } from "./engine.ts";
 import { currentRankingId, enrichThinkingLevels, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
@@ -37,6 +37,9 @@ export type Decision = {
   /** Ranking ids dropped by the role's endpoint capability filters (no capable
    * standard-tier route) — recorded like a probe-blocked candidate. */
   endpointBlocked: string[];
+  /** Ranking ids dropped by the role's provider pin (no route matching the pin) —
+   * recorded like a probe-blocked candidate. */
+  pinBlocked: string[];
   /** Availability source for this role's selection: the keyed-catalog fast path or the probe walk. */
   availabilitySource: "keyed-catalog" | "probe";
   /** Candidates pruned as key-blocked (present in the public catalog, absent from the keyed one). */
@@ -95,9 +98,10 @@ function decisionLine(d: Decision): string {
   const scores = `value ${d.value.toFixed(3)}, best ${d.bestValue.toFixed(3)}${d.currentValue == null ? "" : `, was ${d.currentValue.toFixed(3)}`}`;
   const blocked = d.blocked.length > 0 ? `; blocked: ${d.blocked.join(", ")}` : "";
   const endpoint = d.endpointBlocked.length > 0 ? `; endpoint-blocked: ${d.endpointBlocked.join(", ")}` : "";
+  const pin = d.pinBlocked.length > 0 ? `; pin-blocked: ${d.pinBlocked.join(", ")}` : "";
   return d.from === d.to
-    ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked}${endpoint})`
-    : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked}${endpoint})`;
+    ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked}${endpoint}${pin})`
+    : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked}${endpoint}${pin})`;
 }
 
 /**
@@ -293,8 +297,10 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       );
     }
     const poolByRole: Record<string, Candidate[]> = {};
-    /** Per managed role: its bare chain key, role suffix, and the pool it was chosen from. */
-    const chainPlanByRole: Record<string, { key: string; suffix: string | undefined; pool: Candidate[]; chosenIdx: number }> = {};
+    /** Per managed role: its bare chain key, role suffix, provider pin, and the pool it was chosen from. */
+    const chainPlanByRole: Record<string, { key: string; suffix: string | undefined; pin: string; pool: Candidate[]; chosenIdx: number }> = {};
+    /** Roles whose `providerPin` matched no route: left unchanged, their current chain preserved. */
+    const pinUnmatched: string[] = [];
     const probe = deps.probeModel ?? probeModel;
     const probeVerdicts = new Map<string, ProbeVerdict>();
     for (const [role, def] of Object.entries(settings.roles)) {
@@ -306,7 +312,17 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         const catalogId = resolveVariant(ranked.model.id, eligible, tier);
         if (catalogId !== null) candidates.push({ ranked, catalogId });
       }
-      if (candidates.length === 0) continue; // nothing eligible — role untouched
+      if (candidates.length === 0) {
+        // A pin that matches no route must never silently unpin: leave the role
+        // unchanged (no selector write, no chain write) and say so. The ranking
+        // already drops route-less models for a pinned role, so an empty pool
+        // here means the pin matched nothing.
+        if (def.providerPin !== undefined) {
+          notes.push(`@${role}: providerPin "${def.providerPin}" matches no route — role untouched`);
+          pinUnmatched.push(role);
+        }
+        continue; // nothing eligible — role untouched
+      }
 
       const currentSelector = current.modelRoles[role] ?? null;
       const currentId = currentSelector === null ? null : currentRankingId(currentSelector);
@@ -393,12 +409,17 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       }
 
       const suffix = def.thinking;
+      // A provider pin rides as the selector's `@<slug>` suffix, before the
+      // thinking level (`openrouter/<id>@<slug>:<level>`) — omp's
+      // `splitUpstreamRouting` parses the trailing `@<slug>` and applies
+      // `compat.openRouterRouting = { only: [slug] }`.
+      const pin = def.providerPin !== undefined ? `@${def.providerPin}` : "";
       const chosenRow = rowById.get(chosen.catalogId);
       // Append only a level the model's catalog thinking[] actually supports —
       // omp clamps unsupported levels, so an unsupported pin would run at a
       // different effort than the role intends (and than the ranking priced).
       const appendSuffix = suffix !== undefined && chosenRow !== undefined && (META_LEVELS[suffix] === true || chosenRow.thinking.includes(suffix));
-      const finalSelector = `openrouter/${chosen.catalogId}${appendSuffix ? `:${suffix}` : ""}`;
+      const finalSelector = `openrouter/${chosen.catalogId}${pin}${appendSuffix ? `:${suffix}` : ""}`;
       decisions.push({
         role,
         from: currentSelector,
@@ -409,6 +430,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         currentValue: currentEntry?.ranked.value ?? null,
         blocked: blockedForRole,
         endpointBlocked: endpointFilterDrops(def, rank.models),
+        pinBlocked: providerPinDrops(def, rank.models),
         availabilitySource: availability.active ? "keyed-catalog" : "probe",
         keyBlockedCount,
       });
@@ -418,7 +440,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // came from. Values are built after the loop, once every key claim is known.
       if (settings.writeFallbackChains) {
         const key = suffix !== undefined && finalSelector.endsWith(`:${suffix}`) ? finalSelector.slice(0, -(suffix.length + 1)) : finalSelector;
-        chainPlanByRole[role] = { key, suffix, pool, chosenIdx: pool.indexOf(chosen) };
+        chainPlanByRole[role] = { key, suffix, pin, pool, chosenIdx: pool.indexOf(chosen) };
       }
     }
 
@@ -451,7 +473,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           ...new Set(chainPool.map((p) => {
             const row = rowById.get(p.catalogId);
             const level = suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix)) ? `:${suffix}` : "";
-            return `openrouter/${p.catalogId}${level}`;
+            return `openrouter/${p.catalogId}${plan.pin}${level}`;
           })),
         ].filter((v) => v !== plan.key);
         referenced.add(plan.key);
@@ -459,7 +481,9 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // Locked roles keep their current chain: the plugin neither rewrites nor
       // prunes it, so its key must count as referenced. A chain key is the
       // current selector minus a trailing `:level` (chain keys are level-free).
-      for (const role of lockedRoles) {
+      // A role whose pin matched no route is likewise left unchanged, so its
+      // current chain must survive the prune.
+      for (const role of [...lockedRoles, ...pinUnmatched]) {
         const sel = current.modelRoles[role];
         if (sel === undefined) continue;
         const colon = sel.lastIndexOf(":");
@@ -484,7 +508,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const previousRoles = res.status === "written" && res.before !== null ? parseConfig(res.before).modelRoles : null;
 
       state.lastRunDay = today;
-      state.managedRoles = [...decisions.map((d) => d.role), ...lockedRoles];
+      state.managedRoles = [...decisions.map((d) => d.role), ...lockedRoles, ...pinUnmatched];
       state.managedDisabledAgents = nextManagedDisabled;
       for (const d of decisions) state.roleLastSelector[d.role] = d.to;
       if (settings.writeFallbackChains) state.pluginWrittenChainKeys = [...referenced];

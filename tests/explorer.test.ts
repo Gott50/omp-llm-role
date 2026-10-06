@@ -230,6 +230,29 @@ test("endpoint filters round-trip through writeRoleSettings/resolveSettings, and
   }
 });
 
+// Issue #19: the per-role provider pin must serialize as a flat dotted key and
+// round-trip through the explorer's Export, and removal must delete it.
+test("providerPin round-trips through writeRoleSettings/resolveSettings, and removal deletes it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "role-pin-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+
+  const result = writeRoleSettings(lockPath, { slow: { ...DEFAULT_ROLES.slow, providerPin: "deepinfra/fp8" } });
+  assert.equal(result.ok, true);
+
+  const written = JSON.parse(readFileSync(lockPath, "utf8")) as { settings: { "omp-llm-role": Record<string, unknown> } };
+  assert.equal(written.settings["omp-llm-role"]["roles.slow.providerPin"], "deepinfra/fp8");
+
+  const { settings, errors } = resolveSettings(readPluginSettingsMap({ global: lockPath, project: null }));
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.slow.providerPin, "deepinfra/fp8");
+
+  const removed = removeRoleSettings(lockPath, ["slow"]);
+  assert.equal(removed.ok, true);
+  const after = JSON.parse(readFileSync(lockPath, "utf8")) as { settings: { "omp-llm-role": Record<string, unknown> } };
+  assert.equal(after.settings["omp-llm-role"]["roles.slow.providerPin"], undefined);
+});
+
 test("export writes the lock file with a backup and stays valid", async () => {
   const dir = mkdtempSync(join(tmpdir(), "explorer-test-"));
   const lockPath = join(dir, "omp-plugins.lock.json");

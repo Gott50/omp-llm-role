@@ -147,6 +147,11 @@ probability proportional to `1/price²`). The weight basis is the **input
   `m.throughput`, `m.metrics.price`/`throughput`, and `m.thinking`
   (`supports_reasoning`).
 
+A role with a `providerPin` (spec §7) does **not** use this blend: it prices the
+model's matching route directly — the route's billed 3:1 price and its p50
+throughput (scoring.md, *Route-aware pricing*). The blend is the unpinned
+default.
+
 ## OpenRouter — keyed catalog (availability)
 
 The account setting **"Filter the model catalog for API keys"** (openrouter.ai/settings)

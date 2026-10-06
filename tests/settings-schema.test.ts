@@ -23,7 +23,7 @@ test("schema covers every global knob and every shipped role field", () => {
     assert.ok(key in schema, `missing global ${key}`);
   }
   for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
-    for (const suffix of ["enabled", "thinking", "required"]) {
+    for (const suffix of ["enabled", "thinking", "providerPin", "required"]) {
       assert.ok(`roles.${name}.${suffix}` in schema, `missing roles.${name}.${suffix}`);
     }
     for (const metric of Object.keys(def.weights)) {

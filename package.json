@@ -93,6 +93,10 @@
           "auto"
         ]
       },
+      "roles.default.providerPin": {
+        "type": "string",
+        "description": "Provider slug the default role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
       "roles.default.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for default",
@@ -204,6 +208,10 @@
           "auto"
         ]
       },
+      "roles.smol.providerPin": {
+        "type": "string",
+        "description": "Provider slug the smol role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
       "roles.smol.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for smol",
@@ -307,6 +315,10 @@
           "auto"
         ]
       },
+      "roles.slow.providerPin": {
+        "type": "string",
+        "description": "Provider slug the slow role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
       "roles.slow.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for slow",
@@ -409,6 +421,10 @@
           "max",
           "auto"
         ]
+      },
+      "roles.vision.providerPin": {
+        "type": "string",
+        "description": "Provider slug the vision role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
       "roles.vision.required": {
         "type": "string",
@@ -521,6 +537,10 @@
           "auto"
         ]
       },
+      "roles.plan.providerPin": {
+        "type": "string",
+        "description": "Provider slug the plan role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
       "roles.plan.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for plan",
@@ -615,6 +635,10 @@
           "max",
           "auto"
         ]
+      },
+      "roles.commit.providerPin": {
+        "type": "string",
+        "description": "Provider slug the commit role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
       "roles.commit.required": {
         "type": "string",
@@ -711,6 +735,10 @@
           "auto"
         ]
       },
+      "roles.tiny.providerPin": {
+        "type": "string",
+        "description": "Provider slug the tiny role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
       "roles.tiny.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for tiny",
@@ -797,6 +825,10 @@
           "max",
           "auto"
         ]
+      },
+      "roles.task.providerPin": {
+        "type": "string",
+        "description": "Provider slug the task role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
       "roles.task.required": {
         "type": "string",
@@ -909,6 +941,10 @@
           "auto"
         ]
       },
+      "roles.advisor.providerPin": {
+        "type": "string",
+        "description": "Provider slug the advisor role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
+      },
       "roles.advisor.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for advisor",
@@ -1003,6 +1039,10 @@
           "max",
           "auto"
         ]
+      },
+      "roles.designer.providerPin": {
+        "type": "string",
+        "description": "Provider slug the designer role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)"
       },
       "roles.designer.required": {
         "type": "string",

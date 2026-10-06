@@ -77,6 +77,27 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   keyed by their raw leaderboard field names. They are 0-filled by default and no
   shipped role weights them, so `DEFAULT_ROLES` is unchanged; `coding_arena_score`,
   `latency` and `context` stay unmapped. (issue #22)
+- **Provider pinning (`roles.<role>.providerPin`)** — a role may pin its requests
+  to one OpenRouter provider route; the plugin emits the pin as a trailing
+  `@<slug>` on the selector (`openrouter/<id>@<slug>[:<level>]`, the thinking
+  suffix after the slug), and every fallback-chain value carries it (the chain
+  key stays level-free). Hysteresis strips the pin for identity, so a pinned
+  current selector still resolves to its base ranking id. A pin that matches no
+  route leaves the role **unchanged** — no selector or chain upsert, the existing
+  chain preserved — with a notify naming the role and the pin. The explorer's
+  Export round-trips `roles.<n>.providerPin` and the `/settings` schema exposes
+  it. OpenRouter's `only` routing is exclusive, so a pinned request opts out of
+  auto-Exacto tool routing — pinning is opt-in for that reason. (issue #19)
+- **Route-aware pricing for pinned roles** — when `providerPin` is set, `rankRole`
+  prices the model's matching route (exact, tiered-verbatim `providerSlug`)
+  instead of the `1/price²` blend: the route's billed 3:1 price × the role's
+  thinking factor, the route's p50 throughput (falling back to the blended
+  throughput when the route has no p50, so a sparse route never zeroes it), and
+  `maxPriceUsdPerM` capping the route price. A model with no matching route is
+  ineligible for that role and is recorded (`providerPinDrops` →
+  `Decision.pinBlocked`, rendered `; pin-blocked: …`); `explainModel` mirrors the
+  gate and pricing. An unpinned role ignores `routes` and is unchanged.
+  (issue #20)
 
 ### Changed
 

@@ -345,7 +345,7 @@ that declare weights):
 
 ```
 best        = candidates[0]                       // highest value
-current     = today's config.yml value for role   // suffix stripped for identity
+current     = today's config.yml value for role   // `:level` and `@<slug>` stripped for identity
 if no current entry            → adopt best
 else if current fails tier or catalog gate
   (incl. not in today's ranked pool) → adopt best
@@ -443,7 +443,8 @@ shipped role sets an endpoint filter.
 After decisions, for **every managed role** (switched, adopted, or kept):
 
 - key = chosen selector **without thinking suffix** (a chain key matches the active
-  model id, never a level)
+  model id, never a level); a pinned role's key also carries its `@<slug>` pin
+  (`openrouter/<id>@<slug>`, §6.5)
 - value = the next `fallbackChainDepth` (default 2) tier-eligible candidates after the
   chosen one, **preferring candidates priced at or below the chosen model** (by
   `priceEff`); when fewer than `fallbackChainDepth` such candidates exist, the remainder
@@ -468,6 +469,43 @@ Maintenance rules:
   `weights: null`, or removed from settings. A stale pin would otherwise keep routing
   `@<role>` (the shipped `designer` agent falls through to its `@default` chain entry
   only when the key is gone).
+
+### 6.5 Provider pin (route-aware pricing, `@<slug>` emission)
+
+A role may set `roles.<role>.providerPin` — a provider slug, optionally tiered
+like `deepinfra/fp8` — to pin its requests to one OpenRouter route (§7).
+
+**Pricing (issue #20).** When the pin is set, `rankRole` resolves the model's
+route by exact, tiered-verbatim `providerSlug` (no normalization) and prices
+that route instead of the `1/price²` blend: the route's billed 3:1 price × the
+role's thinking factor (the same `runsAtLevel` gate as step 1). The
+`throughput` weight reads the route's p50, falling back to the model's blended
+throughput when the route has no p50 (a sparse route must not zero it);
+`maxPriceUsdPerM` caps the route price. Every other metric is the model's own. A
+model with **no matching route** is ineligible for that role (`providerPinDrops`
+→ `Decision.pinBlocked`, rendered `; pin-blocked: …`); `explainModel` mirrors
+the gate and pricing. An unpinned role ignores `routes` entirely — the blend
+path (decision #14) is unchanged.
+
+**Emission (issue #19).** The pin is emitted as a trailing `@<slug>` on the
+selector: `openrouter/<catalogId>@<slug>[:<level>]` — the thinking suffix rides
+**after** the slug (omp's `splitUpstreamRouting` parses the trailing `@<slug>`
+and applies `compat.openRouterRouting = { only: [slug] }`; a tiered slug keeps
+its path). Every `retry.fallbackChains` **value** carries the pin; the chain
+**key** is the level-free selector and therefore also carries the pin
+(`openrouter/<id>@<slug>`, §6.4). Hysteresis identity (`currentRankingId`)
+strips a trailing `@<slug>` — dropped whole, tiered path included — in addition
+to `:level` and the `openrouter/` prefix, so a pinned current selector resolves
+to its base ranking id and stays visible to the margin.
+
+**No-match guard.** A pin that matches no route in today's dataset must never
+silently unpin: the role is left **unchanged** — no selector upsert, no chain
+upsert, its existing chain preserved (treated like a locked role for the prune)
+— with a notify naming the role and the pin.
+
+**Caveat.** OpenRouter's `only` routing is exclusive, so a pinned request opts
+out of auto-Exacto tool routing; pinning is opt-in for that reason (README, the
+`providerPin` knob; `../research/openrouter-endpoint-routing.md`).
 
 ## 7. Plugin settings schema
 
@@ -500,6 +538,12 @@ and any nested entry, backup + atomic write).
       "weights": { "general": 0.26, "reasoning": 0.26, "code": 0.18, "agents": 0.13,
                    "math": 0.08, "throughput": 0.04, "price": 0.05 },
       "required": ["general", "price", "throughput"],
+      // Provider slug the role's requests are pinned to (OpenRouter `@<slug>`
+      // routing; may be tiered like `deepinfra/fp8`). Set = the role is priced
+      // by that route (billed price + p50 throughput), not the 1/price² blend,
+      // and a model with no matching route is ineligible. Absent = default
+      // routing (the blend). (§6.5)
+      "providerPin": "deepinfra",
       "thinking": "high",
       // Per-role thinking level (decision #5; moved out of the former `suffixes`
       // map). The shipped VALUES are hand-authored (design session, never
@@ -533,7 +577,9 @@ screenspot_pro_score, charxiv_r_score, frontiermath_score, toolathlon_score,
 price, throughput} (the eligibility gate,
 independent of weights), weightable metric names ∈ the same set, `roles.<role>.thinking` ∈
 {off, minimal, low, medium, high, xhigh, max, auto}, `switchMargin` and
-`priceSwitchFraction` ∈ [0, 1], `roles.<role>.enabled` a boolean. A role entry with
+`priceSwitchFraction` ∈ [0, 1], `roles.<role>.enabled` a boolean,
+`roles.<role>.providerPin` a non-empty string without `@` or `:` (the selector's
+own delimiters, so a pin cannot smuggle a second suffix). A role entry with
 `weights: null` explicitly opts that role out; `enabled: false` drops a shipped role
 from the resolved set (the `designer` default) and keeps any agent whose `model:` chain
 pins it in `task.disabledAgents` (§6.2). Legacy `suffixes.*` keys are rejected with a migration hint

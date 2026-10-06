@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { CAPABILITY_FILL, cardinalMetric, modelPassesEndpointFilters, paretoFrontier, rankRole, roleLambda, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { CAPABILITY_FILL, cardinalMetric, modelPassesEndpointFilters, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], avai
       org: r.model.org,
       price: r.model.price,
       priceEff: r.priceEff,
-      throughput: r.model.throughput,
+      throughput: roleMetricValue(r.model, "throughput", pinnedRoute(r.model, def.providerPin)),
       context: r.model.context,
       multimodal: r.model.multimodal,
       value: r.value,
@@ -280,9 +280,12 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   if (!model) return { eligible: false, reasons: ["model not found in today's dataset"] };
 
   const reasons: string[] = [];
-  const missingRequired = def.required.filter((k) => model.metrics[k] == null);
+  // A pinned role prices and gates on the model's matching route (mirrors rankRole).
+  const route = pinnedRoute(model, def.providerPin);
+  const missingRequired = def.required.filter((k) => roleMetricValue(model, k, route) == null);
   if (missingRequired.length > 0) reasons.push(`missing required metric(s): ${missingRequired.join(", ")}`);
   if (def.filters?.image && !model.multimodal) reasons.push("role requires image input; model is text-only");
+  if (def.providerPin !== undefined && route === null) reasons.push("no route matches the role's provider pin");
   if (!modelPassesEndpointFilters(model, def.filters)) reasons.push("no standard-tier route satisfies the role's endpoint filters");
   if (model.price == null) reasons.push("no billed OpenRouter route");
   if (reasons.length > 0) return { eligible: false, reasons };
@@ -301,7 +304,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   const contributions: Contribution[] = [];
   for (const [metric, w] of Object.entries(def.weights)) {
     if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
-    const stored = model.metrics[metric] ?? null;
+    const stored = roleMetricValue(model, metric, route) ?? null;
     // Mirror rankRole: a sparse capability metric with no data scores at
     // CAPABILITY_FILL *as a cardinal value* (no transform), not 0 — otherwise
     // the parts would not sum to q.
@@ -383,7 +386,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     priceEff: self.priceEff,
     role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking },
     contributions,
-    cost: { priceEff: self.priceEff, billedPrice: model.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
+    cost: { priceEff: self.priceEff, billedPrice: route?.price ?? model.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
     gapAbove,
     gapToTop,
     above,

@@ -1,12 +1,25 @@
-# Current state (2026-10-03)
+# Current state (2026-10-06)
 
 Dated snapshot of the ranking as of the date in the heading — matched/priced/
 eligible counts, per-role leaders, and the open defects. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The ranking numbers
-below are the 2026-10-03 measurement (the #13 role-weight rebalance and the #16
-`plan` cost posture; see the top bullets) and are not re-derived on read.
+below are the 2026-10-06 measurement (the input-price blend basis #21 and the
+#17/#18/#19/#20 wave; see the top bullet) and are not re-derived on read.
+
+- Wave (2026-10-06): the `1/price²` blend now weights routes by the **input
+  (prompt) price** — the router's sort key — while reporting the billed 3:1 blend
+  under that distribution (issue #21), so prices moved; endpoint capability
+  filters (#18), the four-axis benchmark-quality gate (#17), provider pinning
+  (#19) and route-aware pricing (#20) landed. The domain-knowledge (#23) and
+  truthfulness (#24) axes were measured and **not** landed (`scoring.md`). Fresh
+  measurement: 400 models, throughput-matched 151/400, priced 150. Eligible:
+  `default`/`smol`/`slow`/`plan`/`commit`/`tiny`/`task`/`advisor` 143, `vision`
+  75, `designer` 88. Leaders: `default`/`task`/`designer` DeepSeek-V4.1-Flash,
+  `smol`/`commit` Muse Spark 1.1 (was DeepSeek-V4.1-Flash), `slow`/`plan`/
+  `advisor` Muse Spark 1.3, `vision` Qwen3.8 Flash, `tiny` Gemini 3.1
+  Flash-Lite.
 
 - `plan` cost posture (2026-10-03, issue #16): `plan`'s `price` raised 0.12 → 0.25
   (λ 0.00682 → 0.01667) so the posture binds on the **reachable** pool — the pool

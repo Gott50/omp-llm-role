@@ -80,6 +80,35 @@ value = q − λ · priceEff
 - `value` is the sort key; ties break score desc → blended $/M asc → id asc
   (determinism, spec §6.1).
 
+### Route-aware pricing (provider pin)
+
+A role may pin its requests to one OpenRouter provider route
+(`roles.<role>.providerPin`, spec §7). When it does, the role is priced by that
+route instead of the `1/price²` blend:
+
+- `pinnedRoute(model, pin)` (`src/engine.ts`) resolves the model's route by
+  **exact, tiered-verbatim** `providerSlug` — `deepinfra` and `deepinfra/fp8`
+  are different routes, with no normalization — and returns `null` on no match.
+- `priceEff` is the route's billed 3:1 price (not the blend), scaled by the same
+  thinking factor and gated by the same `runsAtLevel` rule as an unpinned role:
+  the pin changes the base price, not the thinking math.
+- the `throughput` weight reads the route's p50, falling back to the model's
+  blended throughput when the route carries no p50 — a sparse route must not
+  zero the metric (an absent p50 is unknown, not slow).
+- `maxPriceUsdPerM` caps the pinned route price (the thinking-adjusted price the
+  role actually pays), like the blend cap.
+- `roleMetricValue(model, metric, route)` is the accessor `rankRole` and
+  `explainModel` share: for a pinned role it returns the route's `price` and
+  `throughput`, and the model's own value for every other metric.
+- a model with **no matching route** is ineligible for that role
+  (`providerPinDrops` → `Decision.pinBlocked`, rendered `; pin-blocked: …`);
+  `explainModel` reports "no route matches the role's provider pin".
+- an **unpinned** role ignores `routes` entirely — the blend path is unchanged.
+
+The pin is a cost-and-throughput posture, not a quality edit: it moves the price
+axis to the route's billed price and the throughput axis to the route's p50,
+while every other weighted metric stays the model's own.
+
 ## Eligibility
 
 A model ranks for a role only when:
@@ -88,9 +117,12 @@ A model ranks for a role only when:
   **independent of weights** — the shipped defaults require `throughput`
   without weighting it, so validation checks `required ⊆ KNOWN_METRICS`, not
   `required ⊆ weights`);
-- it has a billed price (`m.price != null`);
+- it has a billed price (`m.price != null`; a pinned role uses its matching
+  route's price — see *Route-aware pricing*);
 - `filters.image` (if set) is satisfied (`m.multimodal`);
-- the role's **endpoint filters** (if any) are satisfied (below).
+- the role's **endpoint filters** (if any) are satisfied (below);
+- for a **pinned** role, the model has a route matching `providerPin`
+  (`pinnedRoute != null`) — a route-less model is ineligible.
 
 ### Endpoint filters
 

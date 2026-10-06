@@ -314,6 +314,10 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       default: def.thinking ?? "auto",
       values: Object.keys(SUFFIX_LEVELS),
     };
+    schema[`${p}.providerPin`] = {
+      type: "string",
+      description: `Provider slug the ${name} role's requests are pinned to (OpenRouter @<slug> routing; empty = default routing)`,
+    };
     schema[`${p}.required`] = {
       type: "string",
       description: `Comma-separated metrics a model must have to rank for ${name}`,
@@ -599,6 +603,19 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
       if (typeof rdef.lambda !== "number" || !Number.isFinite(rdef.lambda) || rdef.lambda < 0) {
         errors.push(`role ${name}: lambda must be a number ≥ 0`);
         delete rdef.lambda;
+      }
+    }
+    // providerPin is a provider slug (may be tiered like `deepinfra/fp8`); `@`
+    // and `:` are the selector's own delimiters, so they cannot appear in it.
+    if (rdef.providerPin !== undefined) {
+      if (
+        typeof rdef.providerPin !== "string" ||
+        rdef.providerPin.length === 0 ||
+        rdef.providerPin.includes("@") ||
+        rdef.providerPin.includes(":")
+      ) {
+        errors.push(`role ${name}: providerPin must be a non-empty string without "@" or ":"`);
+        delete rdef.providerPin;
       }
     }
     if (rdef.description === undefined) rdef.description = "";

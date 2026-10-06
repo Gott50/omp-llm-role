@@ -34,6 +34,16 @@ test("currentRankingId drops thinking suffix and openrouter/ prefix", () => {
   assert.equal(currentRankingId("openrouter/org/model:batch"), "model:batch");
 });
 
+test("currentRankingId drops a trailing @<slug> provider pin", () => {
+  // The pin rides before the thinking level; both are stripped for identity.
+  assert.equal(currentRankingId("openrouter/z-ai/glm-4.7@cerebras:high"), "glm-4.7");
+  assert.equal(currentRankingId("openrouter/z-ai/glm-4.7@cerebras"), "glm-4.7");
+  // A tiered pin is dropped whole (everything from the last @).
+  assert.equal(currentRankingId("openrouter/z-ai/glm-4.7@deepinfra/fp8:high"), "glm-4.7");
+  // No pin: unchanged.
+  assert.equal(currentRankingId("openrouter/z-ai/glm-4.7:high"), "glm-4.7");
+});
+
 test("exact id beats dated alias and bare alias", () => {
   const got = resolveVariant(
     "deepseek-v4-flash",

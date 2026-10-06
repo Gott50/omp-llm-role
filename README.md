@@ -125,6 +125,7 @@ Per-role knobs (`roles.<name>.*`):
 | `filters.minOutputTokens` | `0` (off) | Drop routes whose endpoint output ceiling is below this (tokens) |
 | `filters.maxPriceUsdPerM` | `0` (off) | Drop a model whose thinking-adjusted blend exceeds this ($/M) |
 | `thinking` | shipped level | Thinking level appended to the selector (`off`…`max`, `auto`) |
+| `providerPin` | `""` (unset) | Pin the role's requests to one OpenRouter provider route (`@<slug>`, may be tiered like `deepinfra/fp8`). The role is then priced and gated by that route — its billed price and p50 throughput, not the `1/price²` blend — and a model with no matching route is ineligible |
 | `lambda` | derived | Explicit λ ($ per quality point) override |
 | `locked` | `false` | Leave the role alone: rank it but never rewrite its selector or chain (explorer toggle) |
 
@@ -381,6 +382,12 @@ The plugin keeps only models the OpenRouter key can actually run:
 - **Provider whitelist.** The account's allowed-providers whitelist blocks many
   models, so the report's #1 and the written selector can differ — judge weights
   on the reachable pool.
+- **Provider pinning opts out of auto-Exacto.** A `providerPin` writes a trailing
+  `@<slug>` on the selector, which omp applies as OpenRouter
+  `provider: { only: [slug] }` routing. `only` is exclusive, so a pinned role's
+  requests bypass OpenRouter's automatic Exacto tool routing (which routes tool
+  calls by tool-call correctness) and run on the pinned route. Pin only where you
+  know the endpoint you want; leave tool-heavy roles on the default routing.
 - **Model concentration.** The cheapest pick concentrates on one vendor; the
   fallback chains mitigate it.
 

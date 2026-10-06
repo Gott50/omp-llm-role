@@ -188,6 +188,12 @@ export type RoleDef = {
    * catalog entry supports thinking; absent = bare (session default level).
    * Also scales the price axis for ranking (thinkingPriceFactor). */
   thinking?: SuffixLevel;
+  /** Provider slug the role's requests are pinned to (OpenRouter `@<slug>`
+   * routing); may be tiered like `deepinfra/fp8`. When set, the role is priced
+   * by that route — its billed price and p50 throughput — not the 1/price²
+   * blend, and a model with no matching route is ineligible. Absent = OpenRouter
+   * default routing (the blend, unchanged). */
+  providerPin?: string;
   /** Locked role: the plugin still ranks it (so it stays in the universe and its
    * sources are fetched) but never rewrites its `modelRoles` selector or fallback
    * chain, and never removes it. Enable/disable still applies. */
@@ -968,6 +974,43 @@ export function endpointFilterDrops(def: RoleDef, models: Model[]): string[] {
     .map((m) => m.id);
 }
 
+/** The model's route matching the role's provider pin (exact, tiered verbatim);
+ * null when the role is unpinned or the model has no such route. */
+export function pinnedRoute(model: Model, providerPin: string | undefined): OpenRouterEndpointRecord | null {
+  if (providerPin === undefined) return null;
+  return (model.routes ?? []).find((r) => r.providerSlug === providerPin) ?? null;
+}
+
+/** The metric value a role sees for a model. A pinned role's throughput is its
+ * route's p50, falling back to the model's blended throughput when the route has
+ * no p50 (a sparse route must not zero the metric), and its price is the route's
+ * billed price; every other metric is the model's own. */
+export function roleMetricValue(m: Model, metric: string, route: OpenRouterEndpointRecord | null): number | null {
+  if (route !== null) {
+    if (metric === "throughput") return route.tput ?? m.throughput;
+    if (metric === "price") return route.price;
+  }
+  return m.metrics[metric];
+}
+
+/** Ranking ids dropped by the role's provider pin: they pass every other
+ * eligibility gate (required metrics, image, billed price, endpoint filters) but
+ * have no route matching the pin, so the request cannot be routed to it. For the
+ * decision log; empty when the role is unpinned. */
+export function providerPinDrops(def: RoleDef, models: Model[]): string[] {
+  if (def.providerPin === undefined) return [];
+  return models
+    .filter(
+      (m) =>
+        def.required.every((k) => m.metrics[k] != null) &&
+        !(def.filters?.image && !m.multimodal) &&
+        m.price != null &&
+        modelPassesEndpointFilters(m, def.filters) &&
+        pinnedRoute(m, def.providerPin) === null,
+    )
+    .map((m) => m.id);
+}
+
 export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
   const wPrice = def.weights.price ?? 0;
   const qW = 1 - wPrice;
@@ -975,9 +1018,17 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
   const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
   const ranked: Ranked[] = [];
   for (const m of models) {
-    if (def.required.some((k) => m.metrics[k] == null)) continue;
     if (def.filters?.image && !m.multimodal) continue;
-    if (m.price == null) continue; // value needs a billed price
+    // Provider pin: a pinned role prices and gates on the model's matching route,
+    // not the 1/price² blend. A model with no matching route cannot be routed to
+    // the pin and is ineligible (recorded by `providerPinDrops`).
+    const route = pinnedRoute(m, def.providerPin);
+    if (def.providerPin !== undefined && route === null) continue;
+    if (def.required.some((k) => roleMetricValue(m, k, route) == null)) continue;
+    // The billed price the role actually pays: the pinned route's price, else the
+    // model's blended price. Value needs one.
+    const basePrice = route !== null ? route.price : m.price;
+    if (basePrice == null) continue;
     // Endpoint capability gate: a role that declares endpoint filters ranks only
     // models with at least one capable standard-tier route. A null capability
     // field is kept; a model whose every route fails (or that has no route data)
@@ -993,16 +1044,16 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     const runsAtLevel = levels
       ? levels.length > 0 && (def.thinking === undefined || META_LEVELS[def.thinking] === true || levels.includes(def.thinking))
       : m.thinking;
-    const priceEff = levelFactor === 1 || !runsAtLevel ? m.price : m.price * levelFactor;
-    // maxPriceUsdPerM caps the role-priced blend (the thinking-adjusted price the
-    // role actually pays); 0 = off.
+    const priceEff = levelFactor === 1 || !runsAtLevel ? basePrice : basePrice * levelFactor;
+    // maxPriceUsdPerM caps the role-priced price (the thinking-adjusted price the
+    // role actually pays — the pinned route's price when pinned); 0 = off.
     if ((def.filters?.maxPriceUsdPerM ?? 0) > 0 && priceEff > (def.filters?.maxPriceUsdPerM as number)) continue;
 
     let q = 0;
     const parts: Record<string, number> = {};
     for (const [metric, w] of Object.entries(def.weights)) {
       if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
-      const raw = m.metrics[metric];
+      const raw = roleMetricValue(m, metric, route);
       if (raw == null) {
         // Sparse capability metrics are capability-filled (below-median, not 0)
         // so absence is not a coverage penalty; every other metric contributes
