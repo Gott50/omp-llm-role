@@ -139,7 +139,13 @@ A model ranks for a role only when:
 - `minContextTokens` filters the **endpoint** `context_length`, not the
   model-level `context`;
 - `maxPriceUsdPerM` caps the thinking-adjusted `priceEff` (the price the role
-  actually pays), not the bare billed blend.
+  actually pays), not the bare billed blend;
+- a role that declares `tools`/`minContextTokens`/`minOutputTokens` is **priced**
+  on the surviving pool: `endpointFilteredModel` recomputes `price`/`throughput`
+  as the `1/price²` blend over the routes that clear the filters
+  (`blendRoutePool`), so the role is priced on the routes the router would
+  actually choose from — not the model's full-route blend. No endpoint filter
+  leaves the model's own blend unchanged.
 
 `endpointFilterDrops(def, models)` lists the ranking ids the gate removed (they
 pass every other eligibility gate but have no capable route) for the decision

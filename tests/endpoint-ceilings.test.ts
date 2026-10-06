@@ -117,6 +117,37 @@ test("a model with an unstated capability field is kept", () => {
   assert.equal(rankRole(roleWith({ tools: true, minContextTokens: 16000, minOutputTokens: 4096 }), [m]).length, 1);
 });
 
+test("a role with endpoint filters is priced on the surviving routes' 1/price² blend", () => {
+  const m = makeModel("m", 40, 1, 100);
+  m.routes = [
+    route({ id: "cheap", price: 1, weightPrice: 1, tput: 100, supportsTools: false }),
+    route({ id: "tool", price: 100, weightPrice: 100, tput: 10, supportsTools: true }),
+  ];
+  // Without a filter the model keeps its own blend (dominated by the cheap route).
+  assert.equal(rankRole(roleWith({}), [m])[0].priceEff, 1);
+  // Requiring tools narrows the priced pool to the tool-capable route: the price and
+  // throughput are that route's, not the cheap non-tool route's.
+  const filtered = rankRole(roleWith({ tools: true }), [m]);
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].priceEff, 100);
+  assert.equal(filtered[0].model.price, 100);
+  assert.equal(filtered[0].model.throughput, 10);
+  // The explain layer mirrors it.
+  const ex = explainModel(roleWith({ tools: true }), [m], "m");
+  assert.ok(ex.eligible);
+  assert.equal(ex.cost.billedPrice, 100);
+});
+
+test("minContextTokens narrows the priced pool to the routes that clear it", () => {
+  const m = makeModel("m", 40, 1, 100);
+  m.routes = [
+    route({ id: "small", price: 1, weightPrice: 1, contextLength: 8000 }),
+    route({ id: "big", price: 8, weightPrice: 8, contextLength: 32000 }),
+  ];
+  assert.equal(rankRole(roleWith({ minContextTokens: 16000 }), [m])[0].priceEff, 8);
+  assert.equal(rankRole(roleWith({ minContextTokens: 64000 }), [m]).length, 0); // no route clears it
+});
+
 test("a model with no route data has no capable route and is ineligible", () => {
   const m = makeModel("m", 40, 1, 100); // routes undefined
   assert.equal(modelPassesEndpointFilters(m, { tools: true }), false);

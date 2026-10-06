@@ -287,6 +287,30 @@ export type OpenRouterEndpointPages = Record<string, OpenRouterEndpointRecord[]>
 
 export type OrEnrichment = { tput: number; latency: number | null; price: number | null; thinking: boolean; routes: OpenRouterEndpointRecord[] };
 
+/** Expected price/throughput/latency of one request over a route pool under the
+ * router's default price-based load balancing: P(route i) ∝ 1/input_price_i² — the
+ * router sorts on the input (prompt) price alone, so the weight basis is
+ * `weightPrice`, not the reported 3:1 billed blend. `price` is the w-weighted mean
+ * of the billed 3:1 price; throughput and latency renormalize over the routes that
+ * carry p50 data (a provider without recent traffic cannot contribute). Only routes
+ * with a usable billed and input price can be scored; an unscorable pool returns
+ * all-null. This is the model-level blend AND the pool a role with endpoint filters
+ * is priced on (issue #18). */
+export function blendRoutePool(routes: OpenRouterEndpointRecord[]): { price: number | null; tput: number | null; latency: number | null } {
+  const usable = routes.filter((r) => r.price !== null && r.price > 0 && r.weightPrice !== null && r.weightPrice > 0);
+  if (usable.length === 0) return { price: null, tput: null, latency: null };
+  const weighted = usable.map((r) => ({ r, w: 1 / ((r.weightPrice as number) * (r.weightPrice as number)) }));
+  const wSum = weighted.reduce((a, x) => a + x.w, 0);
+  const price = weighted.reduce((a, x) => a + x.w * (x.r.price as number), 0) / wSum;
+  const tputKnown = weighted.filter((x) => x.r.tput !== null);
+  const tputW = tputKnown.reduce((a, x) => a + x.w, 0);
+  const tput = tputW > 0 ? tputKnown.reduce((a, x) => a + x.w * (x.r.tput as number), 0) / tputW : null;
+  const latKnown = tputKnown.filter((x) => x.r.latency !== null);
+  const latW = latKnown.reduce((a, x) => a + x.w, 0);
+  const latency = latW > 0 ? latKnown.reduce((a, x) => a + x.w * (x.r.latency as number), 0) / latW : null;
+  return { price, tput, latency };
+}
+
 /**
  * Build llm-stats model_id -> OpenRouter enrichment (throughput, latency, blended
  * price, thinking support). :batch variants are skipped (no perf data, half-price
@@ -364,22 +388,9 @@ export function buildOpenRouterEnrichment(data: OpenRouterFindData, pages?: Open
         r.weightPrice > 0 &&
         !r.variant.endsWith(":batch"),
     );
-    const withTput = eligible.filter((r) => r.tput !== null);
-    if (eligible.length > 0 && withTput.length > 0) {
-      // Expected price/throughput of one request under price-based load balancing:
-      // P(route i) ∝ 1/input_price_i² — the router sorts on the input (prompt) price
-      // alone, so the weight basis is `weightPrice`, not the reported 3:1 billed blend.
-      // Throughput renormalizes over the routes with data.
-      const weighted = eligible.map((r) => ({ r, w: 1 / (r.weightPrice * r.weightPrice) }));
-      const wSum = weighted.reduce((a, x) => a + x.w, 0);
-      const price = weighted.reduce((a, x) => a + x.w * x.r.price, 0) / wSum;
-      const tputKnown = weighted.filter((x) => x.r.tput !== null);
-      const tputW = tputKnown.reduce((a, x) => a + x.w, 0);
-      const tput = tputKnown.reduce((a, x) => a + x.w * (x.r.tput ?? 0), 0) / tputW;
-      const latKnown = tputKnown.filter((x) => x.r.latency !== null);
-      const latW = latKnown.reduce((a, x) => a + x.w, 0);
-      const latency = latW > 0 ? latKnown.reduce((a, x) => a + x.w * (x.r.latency ?? 0), 0) / latW : null;
-      out[suffix] = { tput, latency, price, thinking: cands.some((c) => c.think), routes: eligible };
+    const blend = blendRoutePool(eligible);
+    if (eligible.length > 0 && blend.tput !== null && blend.price !== null) {
+      out[suffix] = { tput: blend.tput, latency: blend.latency, price: blend.price, thinking: cands.some((c) => c.think), routes: eligible };
       continue;
     }
     // Fallback: the find route alone. Throughput is the highest-p50 variant, :free
@@ -957,6 +968,21 @@ export function modelPassesEndpointFilters(model: Model, filters: RoleDef["filte
   return (model.routes ?? []).some((r) => routePassesEndpointFilters(r, filters));
 }
 
+/** The model as a role with endpoint filters sees it: the route pool is narrowed to
+ * the standard-tier routes that satisfy every declared filter, and `price`/`throughput`
+ * become the 1/price² blend over that pool — the routes the router would actually
+ * choose from. Returns null when no route survives (the model is ineligible for the
+ * role). A role with no endpoint filter gets the model unchanged. */
+export function endpointFilteredModel(m: Model, filters: RoleDef["filters"]): Model | null {
+  if (!hasEndpointFilters(filters)) return m;
+  const pool = (m.routes ?? []).filter((r) => routePassesEndpointFilters(r, filters));
+  if (pool.length === 0) return null;
+  const { price, tput } = blendRoutePool(pool);
+  const effPrice = price ?? m.price;
+  const effTput = tput ?? m.throughput;
+  return { ...m, price: effPrice, throughput: effTput, metrics: { ...m.metrics, price: effPrice, throughput: effTput } };
+}
+
 /** Ranking ids dropped by the role's endpoint filters: they pass every other
  * eligibility gate (required metrics, image, billed price) but have no capable
  * standard-tier route. For the decision log; empty when the role declares no
@@ -1024,16 +1050,18 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     // the pin and is ineligible (recorded by `providerPinDrops`).
     const route = pinnedRoute(m, def.providerPin);
     if (def.providerPin !== undefined && route === null) continue;
-    if (def.required.some((k) => roleMetricValue(m, k, route) == null)) continue;
+    // Endpoint capability gate: a role that declares endpoint filters is priced on
+    // the 1/price² blend over the routes that survive them — the pool the router
+    // would actually choose from. A model whose every route fails (or that has no
+    // route data) has no such pool and is ineligible; the find-route fallback does
+    // not resurrect it. No endpoint filter leaves the model's own blend unchanged.
+    const em = endpointFilteredModel(m, def.filters);
+    if (em === null) continue;
+    if (def.required.some((k) => roleMetricValue(em, k, route) == null)) continue;
     // The billed price the role actually pays: the pinned route's price, else the
-    // model's blended price. Value needs one.
-    const basePrice = route !== null ? route.price : m.price;
+    // role's route-pool blend. Value needs one.
+    const basePrice = route !== null ? route.price : em.price;
     if (basePrice == null) continue;
-    // Endpoint capability gate: a role that declares endpoint filters ranks only
-    // models with at least one capable standard-tier route. A null capability
-    // field is kept; a model whose every route fails (or that has no route data)
-    // is ineligible — the find-route fallback does not resurrect it.
-    if (!modelPassesEndpointFilters(m, def.filters)) continue;
 
     // The factor assumes the model runs at the role's level. omp clamps
     // unsupported levels, so a model whose catalog thinking[] excludes the
@@ -1053,7 +1081,7 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     const parts: Record<string, number> = {};
     for (const [metric, w] of Object.entries(def.weights)) {
       if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
-      const raw = roleMetricValue(m, metric, route);
+      const raw = roleMetricValue(em, metric, route);
       if (raw == null) {
         // Sparse capability metrics are capability-filled (below-median, not 0)
         // so absence is not a coverage penalty; every other metric contributes
@@ -1069,7 +1097,7 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
       parts[metric] = contrib;
       q += contrib;
     }
-    ranked.push({ model: m, value: q - lambda * priceEff, q, priceEff, parts });
+    ranked.push({ model: em, value: q - lambda * priceEff, q, priceEff, parts });
   }
   ranked.sort((a, b) => b.value - a.value);
   return ranked;

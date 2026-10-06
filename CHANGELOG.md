@@ -198,6 +198,16 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **Endpoint filters now gate the priced route pool, not just eligibility** —
+  `rankRole` narrowed a model's eligibility to "has at least one route clearing
+  the role's filters", but still priced it on the `1/price²` blend over the
+  **unfiltered** pool, so a `filters.tools` (or `minContextTokens`/
+  `minOutputTokens`) role ranked a model on its cheap incapable routes. The role
+  is now priced on the blend over the routes that survive the filters — the pool
+  the router would actually choose from (`blendRoutePool` /
+  `endpointFilteredModel`, issue #18) — and `explainModel`/the explorer rows
+  carry the same effective price. No shipped role declares an endpoint filter,
+  so the default ranking is unchanged.
 - **`/project-roles` failed on a project with no `.omp` yet** — the atomic
   writer wrote its `<path>.llm-role-tmp` sibling without creating the target's
   directory, so the first project-scoped write into `<cwd>/.omp/plugins/` (which
