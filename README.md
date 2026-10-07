@@ -130,13 +130,54 @@ Per-role knobs (`roles.<name>.*`):
 | `lambda` | derived | Explicit λ ($ per quality point) override |
 | `locked` | `false` | Leave the role alone: rank it but never rewrite its selector or chain (explorer toggle) |
 
+**Capability flags** (`features.<id>` global, `roles.<role>.features.<id>` per
+role). One named flag per opt-in capability; turning it on applies the plugin's
+recommended settings for that capability to the role. Every individual knob
+stays settable, and an explicit knob always beats the flag. **Every flag ships
+OFF** — with no flags set, the resolved roles are byte-identical to the shipped
+defaults.
+
+| Flag | Recommended settings | What it buys |
+|---|---|---|
+| `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | Routes that cannot call tools and routes whose output ceiling is below 16 384 tokens leave the pool — a reasoning model is not cut off mid-thought |
+| `cachePricing` | `cacheHitRate: 0.5` | The role is priced on a cache-heavy agent loop's invoice (the endpoint's `cacheReadPrice` blended in) rather than the sticker price |
+| `providerPinning` | `preferOwnProvider: true` | A model is priced on **its own lab's** route where one exists (DeepSeek's own endpoint, 94.5 % cache hit), falling back to the default blend otherwise |
+| `costCap` | `filters.maxPriceUsdPerM: 10` | The priciest tail of the eligible pool leaves it, so the pick cannot be an expensive outlier |
+
+Precedence is one rule:
+
+```
+effective def = shipped default  ⊕  preset(enabled flags)  ⊕  explicit user keys
+```
+
+A flag is on when `roles.<role>.features.<id>` is present (it wins either way)
+and otherwise when the global `features.<id>` is `true` — so a per-role `false`
+beats a global `true`. The preset fills only knobs the role does not already
+set, and an explicit key is merged last, so it always wins. `providerPinning`'s
+recommended setting is a **soft per-model policy** (`preferOwnProvider`), not a
+hard `providerPin`: it re-prices a model on its own lab's route where one exists
+and never makes a model ineligible (the hard `providerPin` stays available by
+hand). `minContextTokens` is deliberately **not** part of `endpointCeilings` —
+the complaint it would answer is an endpoint advertising a *fraction of the
+model's own window*, which an absolute token floor cannot express, so it stays a
+hand-set knob.
+
+The flags are settable from every role-authoring surface: `--feature <id,...>`
+(comma-separated) on `node src/cli/create-role.ts`, `/create-agent` and
+`/project-roles` (`--list-features` lists them on the first two), plus the
+explorer's Features panel. An
+unknown flag id or a non-boolean value aborts the run with the offending key and
+no write.
+
 **Validation.** A run aborts (notify, no write) on: a weight ≤ 0, or a role's
 weights not summing to 1.0 ± 0.01; a `required` entry or a weighted metric
 outside the known-metric set; a `thinking` level outside
 `off|minimal|low|medium|high|xhigh|max|auto`; `switchMargin`/`priceSwitchFraction`
 outside `[0, 1]`; a non-boolean `enabled`; a `cacheHitRate` outside `[0, 1]`; a
 `providerPin` that is empty or
-contains `@`/`:` (the selector's own delimiters). `weights: null` opts a role out;
+contains `@`/`:` (the selector's own delimiters); an unknown capability id
+(global or per-role) or a non-boolean flag value; a non-boolean
+`preferOwnProvider`. `weights: null` opts a role out;
 the legacy `suffixes.*` keys are rejected with a migration hint (moved into
 `roles.<role>.thinking`).
 
@@ -160,11 +201,11 @@ with the offending role/key and no write.
 /create-agent <request> [options]       # agent + role + wiring (free text or flags)
 /create-agent --name <n> --purpose <text> [options]   # agent + role + wiring
 /remove-agent --name <n> [--scope user|project] [--lock PATH] [--yes] [--dry-run]   # delete an agent and its role
-/project-roles [--purpose <text>] [--roles <spec>] [--force] [--yes] [--dry-run] [--json]   # project-scoped role set
+/project-roles [--purpose <text>] [--roles <spec>] [--feature <id,...>] [--force] [--yes] [--dry-run] [--json]   # project-scoped role set
 
 # CLI
 node src/cli/llm-role-rank.ts [--top N] [--json] [--out FILE] [--refresh] [--all] [--url URL]
-node src/cli/create-role.ts --name <role> --weights m=w,... [--required m,...] [--thinking <level>] [--description <text>] [--image] [--lambda N] [--lock PATH] [--dry-run] [--json]
+node src/cli/create-role.ts --name <role> --weights m=w,... [--required m,...] [--thinking <level>] [--description <text>] [--image] [--lambda N] [--feature <id,...>] [--list-features] [--lock PATH] [--dry-run] [--json]
 node --test tests/
 ```
 
@@ -245,7 +286,9 @@ validated role into the settings lock file, and runs the updater in-process so
 `modelRoles.review` lands in `config.yml` — nothing to remember. Options:
 `--archetype <id>`, `--weights m=w,...`, `--required`, `--thinking`, `--tools`,
 `--benchmarks m,...` (extra metrics to fold in; `--list-benchmarks` prints the
-weightable set, including any external benchmark in use), `--scope user|project`,
+weightable set, including any external benchmark in use), `--feature <id,...>`
+(comma-separated capability flags; `--list-features` prints the capability set),
+`--scope user|project`,
 `--body`/`--body-file`, `--force` (overwrite an existing agent file), `--yes`
 (accept a proposed benchmark source without prompting), `--no-discover` (skip
 catalog discovery), `--dry-run`, `--json`. In

@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { type KeyAvailability } from "../src/availability.ts";
-import { cardinalMetric, rankRole, type RankData } from "../src/engine.ts";
+import { cardinalMetric, rankRole, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, METRIC_META, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer, type ExplorerOpts } from "../src/explorer/server.ts";
-import type { Scope } from "../src/explorer/scopes.ts";
+import { readScopeRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
 import { DEFAULT_ROLES, KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
@@ -260,7 +260,7 @@ test("export writes the lock file with a backup and stays valid", async () => {
   writeFileSync(lockPath, JSON.stringify(seed, null, 2));
 
   const rank: RankData = { models: MODELS, fetchedAt: "2026-09-26T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY })));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -306,7 +306,7 @@ test("a role absent from the shipped defaults ranks and exports", async () => {
   writeFileSync(lockPath, JSON.stringify(seed, null, 2));
 
   const rank: RankData = { models: MODELS, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY })));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -576,7 +576,7 @@ async function bootExplorer(availability: KeyAvailability): Promise<{ url: strin
   const lockPath = join(dir, "omp-plugins.lock.json");
   writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
   const rank: RankData = { models: MODELS, fetchedAt: "2026-10-03T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability })));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability, features: {} })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -641,4 +641,144 @@ test("a non-active availability reads unknown everywhere", async () => {
   } finally {
     await handle.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Capability flags (issue #40)
+// ---------------------------------------------------------------------------
+
+/** One standard-tier route with a cache-read price, so a role's `cacheHitRate`
+ * actually moves the model's effective price (a route-less model is dropped by
+ * the cache-priced path). */
+function cacheRoute(id: string, price: number, weightPrice: number, cacheReadPrice: number, tput: number): OpenRouterEndpointRecord {
+  return { id, providerSlug: "org", serviceTier: null, status: 0, free: false, variant: "standard", price, weightPrice, cacheReadPrice, tput, latency: null, contextLength: 200000, maxCompletionTokens: 100000, supportsTools: true };
+}
+
+const CACHE_MODELS: Model[] = [
+  { ...makeModel("premium", 90, 20, 50), routes: [cacheRoute("premium-r", 20, 20, 2, 50)] },
+  { ...makeModel("budget", 60, 0.5, 200), routes: [cacheRoute("budget-r", 0.5, 0.5, 0.05, 200)] },
+];
+
+/** Boot a single-scope explorer over a temp lock file with a fixed getState. */
+async function bootWithState(getState: ExplorerOpts["getState"]): Promise<{ url: string; close: () => Promise<void> }> {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-features-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const server = createExplorerServer(userScopeOpts(lockPath, getState));
+  const { promise, resolve } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", resolve);
+  await promise;
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+  return { url: `http://127.0.0.1:${address.port}`, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+// The Δ baseline is the role's RESOLVED def (`state.roles[role]`), so a posted
+// AUTHORED def carrying a flag must be expanded with the scope's global flags
+// before ranking — otherwise every row's Δ would be a lie.
+test("a posted def carrying a capability flag ranks identically to the resolved def", async () => {
+  const rank: RankData = { models: CACHE_MODELS, fetchedAt: "2026-10-07T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  // The baseline is the role's resolved def (no flag), so the flag's effect shows
+  // up as a real Δ rather than a null baseline.
+  const handle = await bootWithState(() => ({ rank, roles: { ...DEFAULT_ROLES, tiny: TINY }, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  try {
+    const post = async (def: unknown): Promise<{ rows: unknown; lambda: number; derivedLambda: number; errors: unknown }> => {
+      const res = await fetch(`${handle.url}/api/rank`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "tiny", def }),
+      });
+      return (await res.json()) as { rows: unknown; lambda: number; derivedLambda: number; errors: unknown };
+    };
+    const authored = await post({ ...TINY, features: { cachePricing: true } });
+    const resolved = await post({ ...TINY, cacheHitRate: 0.5 });
+    assert.ok(Array.isArray(authored.rows));
+    assert.equal(authored.rows.length, 2);
+    assert.deepEqual(authored.rows, resolved.rows);
+    assert.equal(authored.lambda, resolved.lambda);
+    assert.equal(authored.derivedLambda, resolved.derivedLambda);
+    assert.deepEqual(authored.errors, []);
+    // The flag is not inert: the cache-priced ranking differs from the uncached one.
+    const plain = await post(TINY);
+    assert.notDeepEqual(authored.rows, plain.rows);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("bootstrap carries the scope's global flags and the feature registry", async () => {
+  const rank: RankData = { models: MODELS, fetchedAt: "2026-10-07T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await bootWithState(() => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: { cachePricing: true } }));
+  try {
+    const boot: unknown = await (await fetch(`${handle.url}/api/bootstrap`)).json();
+    assert.ok(isRecord(boot));
+    assert.ok(isRecord(boot.features));
+    assert.equal(boot.features.cachePricing, true);
+    assert.ok(Array.isArray(boot.featureRegistry));
+    const registry = boot.featureRegistry as Array<{ id: string; label: string; description: string; buys: string; recommended: Record<string, unknown> }>;
+    assert.deepEqual(registry.map((f) => f.id), ["endpointCeilings", "cachePricing", "providerPinning", "costCap"]);
+    for (const f of registry) {
+      assert.equal(typeof f.label, "string");
+      assert.equal(typeof f.description, "string");
+      assert.equal(typeof f.buys, "string");
+      assert.ok(isRecord(f.recommended));
+    }
+    assert.deepEqual(registry.find((f) => f.id === "cachePricing")?.recommended, { cacheHitRate: 0.5 });
+    assert.deepEqual(registry.find((f) => f.id === "providerPinning")?.recommended, { preferOwnProvider: true });
+  } finally {
+    await handle.close();
+  }
+});
+
+test("readScopeRoles carries the scope's global capability flags", () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-scope-features-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(
+    lockPath,
+    JSON.stringify(
+      {
+        plugins: { "omp-llm-role": { enabled: true } },
+        settings: {
+          "omp-llm-role": {
+            "features.cachePricing": true,
+            roles: { tiny: { description: "", weights: { general: 0.25, price: 0.4, throughput: 0.35 }, required: ["general", "price", "throughput"], features: { costCap: true } } },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { features, roles, errors } = readScopeRoles(scope, lockPath);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(features, { cachePricing: true });
+  // The global flag reaches every role; the per-role flag is the role's own.
+  assert.equal(roles.tiny.cacheHitRate, 0.5);
+  assert.equal(roles.tiny.filters?.maxPriceUsdPerM, 10);
+});
+
+// Export must write the FLAG, never the expanded knobs: a future change to the
+// recommendation then keeps reaching the role (user story 11).
+test("export writes the capability flag, never the expanded knobs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-feature-export-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const authored = { ...TINY, features: { cachePricing: true, costCap: true } };
+  const result = writeRoleSettings(lockPath, { tiny: authored });
+  assert.equal(result.ok, true);
+  const written = JSON.parse(readFileSync(lockPath, "utf8")) as { settings: { "omp-llm-role": Record<string, unknown> } };
+  const plugin = written.settings["omp-llm-role"];
+  assert.equal(plugin["roles.tiny.features.cachePricing"], true);
+  assert.equal(plugin["roles.tiny.features.costCap"], true);
+  assert.equal(plugin["roles.tiny.cacheHitRate"], undefined);
+  assert.equal(plugin["roles.tiny.filters.maxPriceUsdPerM"], undefined);
+  assert.equal(plugin["roles.tiny.filters.tools"], undefined);
+  assert.equal(plugin["roles.tiny.filters.minOutputTokens"], undefined);
+  assert.equal(plugin["roles.tiny.preferOwnProvider"], undefined);
+  // Round-trip: the written lock resolves to the expanded def.
+  const { settings, errors } = resolveSettings(readPluginSettingsMap({ global: lockPath, project: null }));
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.tiny.cacheHitRate, 0.5);
+  assert.equal(settings.roles.tiny.filters?.maxPriceUsdPerM, 10);
 });

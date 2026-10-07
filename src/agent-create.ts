@@ -15,6 +15,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_NAME_RE, RESERVED_AGENT_NAMES, isReadOnlyTools, projectAgentsDir, removeAgentFile, renderAgentFile, userAgentsDir, writeAgentFile } from "./agent-file.ts";
 import { CAPABILITY_FILL, cardinalMetric, rankRole, type Model, type RoleDef, type SuffixLevel } from "./engine.ts";
+import { FEATURES, featureById } from "./features.ts";
 import { metricMeta } from "./explorer/explain.ts";
 import { ARCHETYPES, archetypeById, fitArchetype, type Archetype } from "./role-archetypes.ts";
 import { writeRoleSettings, type RoleWriteResult } from "./role-settings.ts";
@@ -42,6 +43,14 @@ export type CreateAgentRequest = {
   tools?: string[];
   scope: "user" | "project";
   image?: boolean;
+  /**
+   * Capability flags to author on the role (`roles.<name>.features.<id>`). The
+   * request wins over the archetype's own `features` list; an unknown id is
+   * rejected by the parser before any write. The flag is persisted, not the
+   * knobs it expands to, so a later change to the recommendation still reaches
+   * the role.
+   */
+  features?: Record<string, boolean>;
   /** Override the generated body. */
   body?: string;
   /**
@@ -962,6 +971,15 @@ export function resolveRole(request: CreateAgentRequest): { archetype: Archetype
   const thinking = request.thinking ?? archetype.thinking;
   if (thinking !== undefined) def.thinking = thinking;
   if (request.image === true || (request.image === undefined && archetype.image === true)) def.filters = { image: true };
+  // The request's flags win; otherwise the archetype's own list (no shipped
+  // archetype sets one, so a plugin-created role starts from nothing unless the
+  // user asks). The flag is authored, not expanded — `resolveSettings` expands it.
+  let features: Record<string, boolean> | undefined = request.features;
+  if (features === undefined && archetype.features !== undefined && archetype.features.length > 0) {
+    features = {};
+    for (const id of archetype.features) features[id] = true;
+  }
+  if (features !== undefined) def.features = features;
   return { archetype, matched: match.matched, def };
 }
 
@@ -1096,8 +1114,11 @@ export const CREATE_AGENT_USAGE = [
   "  --thinking <level>     off|minimal|low|medium|high|xhigh|max|auto",
   "  --tools <a,b,...>      builtin tool allowlist (default: the archetype's)",
   "  --benchmarks <m,...>   extra benchmarks to fold into the weights (see --list-benchmarks)",
+  "  --feature <id,...>     capability flag(s) to author on the role (see --list-features);",
+  "                         repeatable, comma-separated, merged",
   "  --no-discover          skip benchmark discovery (rank only on named benchmarks)",
   "  --list-benchmarks      print the weightable benchmarks and exit",
+  "  --list-features        print the capability flags and the settings each applies, then exit",
   "  --scope <user|project> where the agent file goes (default: user)",
   "  --image                require image input (filters.image)",
   "  --body <text>          override the generated agent body",
@@ -1161,13 +1182,13 @@ function parseList(spec: string): string[] {
 }
 
 export type ParsedCreateAgentArgs =
-  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean; freeText: boolean; yes: boolean; noDiscover: boolean; explicitBenchmarks: boolean }
+  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; listFeatures: boolean; help: boolean; freeText: boolean; yes: boolean; noDiscover: boolean; explicitBenchmarks: boolean }
   | { ok: false; error: string };
 
 /** The flag half of the parse, without the required-name/purpose check (the
  * free-text form supplies those itself). */
 type ParsedFlags =
-  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; help: boolean; yes: boolean; noDiscover: boolean; explicitBenchmarks: boolean }
+  | { ok: true; request: CreateAgentRequest; json: boolean; bodyFile: string | undefined; listArchetypes: boolean; listBenchmarks: boolean; listFeatures: boolean; help: boolean; yes: boolean; noDiscover: boolean; explicitBenchmarks: boolean }
   | { ok: false; error: string };
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -1183,6 +1204,7 @@ function parseFlags(argv: string[]): ParsedFlags {
   let bodyFile: string | undefined;
   let listArchetypes = false;
   let listBenchmarks = false;
+  let listFeatures = false;
   let help = false;
   let yes = false;
   let noDiscover = false;
@@ -1200,6 +1222,10 @@ function parseFlags(argv: string[]): ParsedFlags {
     }
     if (flag === "--list-benchmarks") {
       listBenchmarks = true;
+      continue;
+    }
+    if (flag === "--list-features") {
+      listFeatures = true;
       continue;
     }
     if (flag === "--force") {
@@ -1241,6 +1267,17 @@ function parseFlags(argv: string[]): ParsedFlags {
     else if (flag === "--benchmarks") {
       explicitBenchmarks = true;
       request.extraBenchmarks = parseList(value);
+    } else if (flag === "--feature") {
+      const ids = parseList(value);
+      if (ids.length === 0) return { ok: false, error: `--feature: no capability id given\n\n${CREATE_AGENT_USAGE}` };
+      const features = request.features ?? {};
+      for (const id of ids) {
+        if (featureById(id) === null) {
+          return { ok: false, error: `--feature: unknown capability "${id}" — one of ${FEATURES.map((f) => f.id).join(", ")}\n\n${CREATE_AGENT_USAGE}` };
+        }
+        features[id] = true;
+      }
+      request.features = features;
     } else if (flag === "--scope") {
       if (value !== "user" && value !== "project") return { ok: false, error: `--scope must be user or project, got "${value}"` };
       request.scope = value;
@@ -1250,14 +1287,14 @@ function parseFlags(argv: string[]): ParsedFlags {
     else return { ok: false, error: `unknown flag "${flag}"\n\n${CREATE_AGENT_USAGE}` };
   }
 
-  return { ok: true, request, json, bodyFile, listArchetypes, listBenchmarks, help, yes, noDiscover, explicitBenchmarks };
+  return { ok: true, request, json, bodyFile, listArchetypes, listBenchmarks, listFeatures, help, yes, noDiscover, explicitBenchmarks };
 }
 
 /** Parse the flag form of `/create-agent` into a request. */
 export function parseCreateAgentArgs(argv: string[]): ParsedCreateAgentArgs {
   const parsed = parseFlags(argv);
   if (!parsed.ok) return parsed;
-  if (!parsed.help && !parsed.listArchetypes && !parsed.listBenchmarks) {
+  if (!parsed.help && !parsed.listArchetypes && !parsed.listBenchmarks && !parsed.listFeatures) {
     if (parsed.request.name === "") return { ok: false, error: `--name is required\n\n${CREATE_AGENT_USAGE}` };
     if (parsed.request.purpose === "") return { ok: false, error: `--purpose is required\n\n${CREATE_AGENT_USAGE}` };
   }
@@ -1322,7 +1359,7 @@ export function parseCreateAgentInput(raw: string): ParsedCreateAgentArgs {
   if (purpose === "") return { ok: false, error: `nothing to create\n\n${CREATE_AGENT_USAGE}` };
   const parsed = parseFlags(firstFlag === -1 ? [] : tokens.slice(firstFlag));
   if (!parsed.ok) return parsed;
-  if (parsed.help || parsed.listArchetypes || parsed.listBenchmarks) return { ...parsed, freeText: false };
+  if (parsed.help || parsed.listArchetypes || parsed.listBenchmarks || parsed.listFeatures) return { ...parsed, freeText: false };
 
   parsed.request.purpose = purpose;
   if (parsed.request.extraBenchmarks === undefined) {
@@ -1379,6 +1416,7 @@ export function formatCreateAgentReport(
 ): string {
   const weights = Object.entries(result.def.weights).map(([metric, weight]) => `${metric}=${weight}`).join(",");
   const fit = result.matched.length > 0 ? `matched ${result.matched.join(", ")}` : "fallback (no purpose keyword matched)";
+  const featureEntries = Object.entries(result.def.features ?? {});
   const lines = [
     `create-agent: ${result.dryRun ? "(dry run) " : ""}${result.name}`,
     `  archetype: ${result.archetype.id} (${result.archetype.label}) — ${fit}`,
@@ -1387,6 +1425,7 @@ export function formatCreateAgentReport(
     `  agent:     ${result.agentPath}${result.readOnly ? "  (read-only)" : ""}`,
     `             model: ${result.model}`,
   ];
+  if (featureEntries.length > 0) lines.push(`  features:  ${featureEntries.map(([id, on]) => `${id}=${on}`).join(",")}`);
   if (result.bench.added.length > 0) lines.push(`  benchmarks: added ${result.bench.added.join(", ")}`);
   if (result.bench.duplicates.length > 0) lines.push(`  benchmarks: already weighted (skipped) ${result.bench.duplicates.join(", ")}`);
   if (result.bench.unknown.length > 0) lines.push(`  benchmarks: unknown (skipped) ${result.bench.unknown.join(", ")}`);

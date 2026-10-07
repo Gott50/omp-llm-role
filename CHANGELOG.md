@@ -10,6 +10,38 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Capability presets: one opt-in flag per capability** — a role can now turn on
+  a whole capability with one named flag instead of hand-tuning its knobs. Four
+  flags ship: `endpointCeilings` (`filters.tools: true`,
+  `filters.minOutputTokens: 16384`), `cachePricing` (`cacheHitRate: 0.5`),
+  `providerPinning` (`preferOwnProvider: true`) and `costCap`
+  (`filters.maxPriceUsdPerM: 10`). The registry (`FEATURES` in
+  `src/features.ts`) is the single source of truth for every surface, and
+  `expandFeatures` is the single implementation of the precedence rule
+  (`effective def = shipped default ⊕ preset(enabled flags) ⊕ explicit user
+  keys`): a flag is on when `roles.<role>.features.<id>` is present (it wins
+  either way) and otherwise when the global `features.<id>` is `true`, so a
+  per-role `false` beats a global `true`; the preset fills only knobs the role
+  does not already set, and an explicit key is merged last, so it always wins.
+  The flags are settable from every role-authoring surface — `--feature <id,...>`
+  on `create-role.ts`, `/create-agent` and `/project-roles`, with
+  `--list-features` on the first two, and the explorer's new Features panel
+  (tri-state per
+  capability, recommended vs effective values, derived values marked; Export
+  writes the flag, never the expanded knobs) — and the explorer's
+  `/api/rank`/`/api/explain` expand the posted def with the scope's global flags
+  before ranking, so the preview matches the baseline Δ. **Every flag ships off**
+  and no shipped role sets one, so installing this change changes nothing until a
+  user opts in (the resolved roles are byte-identical to `DEFAULT_ROLES`).
+  `providerPinning`'s recommended setting is a **soft per-model policy**
+  (`preferOwnProvider`), not a hard `providerPin`: it re-prices a model on its
+  own lab's route where one exists (a slug-prefix match on the model's `orgId`,
+  with the display `org` as a second try) and falls back to the `1/price²` blend
+  otherwise, so it never makes a model ineligible — an org whose lab slug differs
+  (`zai-org` → `z-ai`) keeps the blend rather than being mis-pinned. The hard
+  `providerPin` (an explicit slug) is untouched. `minContextTokens` is
+  deliberately not part of `endpointCeilings` (an absolute floor cannot express
+  the video's fraction-of-the-model's-own-window complaint). (issue #40)
 - **Cross-source axis on the focus-metric gate** — the ninth focus-metric axis
   cross-checks the plugin's own price/context against the zeroeval per-benchmark
   payload's **second, independent** set of the same quantities.

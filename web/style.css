@@ -225,6 +225,28 @@ button.x { padding: 1px 7px; color: var(--down); }
 .checks { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .check { display: flex; gap: 5px; align-items: center; color: var(--muted); font-size: 12px; }
 
+/* Capability flags (issue #40): one tri-state control per capability, the
+   recommended bundle, and the knobs it fills. A knob whose value is DERIVED
+   from an enabled capability gets a dashed accent border + a "derived" badge;
+   an authored (explicit) value gets a solid line + an "authored" badge. */
+.features { display: flex; flex-direction: column; gap: 8px; }
+.feature { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.feature.on { border-color: var(--accent); }
+.feature-head { display: flex; gap: 8px; align-items: center; }
+.feature-state { flex: 0 0 auto; }
+.feature-label { color: var(--fg); }
+.feature-origin { margin-left: auto; font-size: 11px; }
+.feature-bundle { font-family: var(--mono); font-size: 11px; margin-top: 2px; }
+.feature-knobs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+.knob { display: flex; gap: 5px; align-items: center; font-family: var(--mono); font-size: 11px; }
+.knob-input { width: 84px; }
+.knob-name { color: var(--muted); }
+.knob.derived .knob-input { border-style: dashed; border-color: var(--accent); }
+.knob-badge { padding: 0 5px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; line-height: 15px; }
+.knob-badge.derived { color: var(--accent); border-color: var(--accent); }
+.knob-badge.authored { color: var(--up); border-color: var(--up); }
+.knob-badge.none { color: var(--muted); }
+
 #export-bar {
   display: flex;
   gap: 8px;

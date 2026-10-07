@@ -146,6 +146,16 @@ effect on the next session.
   agent is never destroyed. The step-3 benchmark prompt previews the request's
   resolved weights (`resolveRole`), so the "already in this role's weights"
   marker appears live.
+- **Capability flags on `/create-agent`.** `--feature <id,...>` (comma-separated)
+  sets the new role's `features.<id>` so it starts from the plugin's recommended
+  settings for that capability; `--list-features` prints each capability id, the
+  settings it applies and what it buys, without creating anything. An unknown id
+  fails with a non-zero exit and no write. The archetype table
+  (`src/role-archetypes.ts`) carries an optional `features` list the architect
+  may *propose*, but **no archetype auto-applies a flag** — a role gets a flag
+  only when the user asks for it. `create-role.ts` exposes the same
+  `--feature`/`--list-features` surfaces, and `/project-roles` takes `--feature`
+  (its help points at `/create-agent --list-features`).
 - **`/project-roles`** (in-session) discovers the project's usecase from its own
   artifacts through the profile architect, then authors an agent per new role
   **into the project scope** (`<cwd>/.omp/agents/`) and writes the project's

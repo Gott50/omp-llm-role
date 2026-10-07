@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import { parseConfig } from "../src/config-edit.ts";
+import { mergeRemove } from "../src/role-settings.ts";
 import { resolveSettings } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
@@ -23,6 +24,32 @@ test("resolveSettings: locked boolean survives, non-boolean errors", () => {
 
   const bad = resolveSettings({ roles: { slow: { locked: "yes" } } });
   assert.ok(bad.errors.some((e) => e.includes("locked must be a boolean")));
+});
+
+test("mergeRemove deletes a role's feature keys with the rest of the role", () => {
+  const existing = {
+    settings: {
+      "omp-llm-role": {
+        "roles.gone.description": "x",
+        "roles.gone.features.cachePricing": true,
+        "roles.gone.features.costCap": false,
+        "roles.gone.preferOwnProvider": true,
+        "roles.keep.features.cachePricing": true,
+      },
+    },
+  };
+  const merged = mergeRemove(existing, ["gone"]);
+  assert.ok("lock" in merged);
+  assert.deepEqual(merged.removed, ["gone"]);
+  // mergeRemove's lock contract (see role-settings.ts): a settings bag keyed by plugin id.
+  const lock = merged.lock as { settings: { "omp-llm-role": Record<string, unknown> } };
+  const plugin = lock.settings["omp-llm-role"];
+  // The `roles.<name>.` prefix covers the flag keys and the policy key.
+  assert.equal(plugin["roles.gone.description"], undefined);
+  assert.equal(plugin["roles.gone.features.cachePricing"], undefined);
+  assert.equal(plugin["roles.gone.features.costCap"], undefined);
+  assert.equal(plugin["roles.gone.preferOwnProvider"], undefined);
+  assert.equal(plugin["roles.keep.features.cachePricing"], true);
 });
 
 test("locked role is not switched while a sibling unlocked role switches", async () => {

@@ -27,6 +27,7 @@ import {
   type FocusCoverage,
 } from "./agent-create.ts";
 import type { RoleDef, SuffixLevel } from "./engine.ts";
+import { FEATURES, featureById } from "./features.ts";
 import { isRecord } from "./guards.ts";
 import { validateRole, writeRoleSettings } from "./role-settings.ts";
 import { DEFAULT_ROLES, isKnownMetric, readPluginSettingsMap, resolveSettings, roleUniverse } from "./settings.ts";
@@ -66,6 +67,12 @@ export type SetupProjectOpts = {
   force: boolean;
   yes: boolean;
   coverage?: FocusCoverage;
+  /**
+   * Capability flags to author on every new project role (`--feature`). Passed
+   * through to each planned request, so `resolveRole` sets `def.features` and
+   * the flag is persisted (not the knobs it expands to).
+   */
+  features?: Record<string, boolean>;
   /** Role validator; defaults to the plugin's own `validateRole`. */
   validate?: (name: string, def: RoleDef) => string[];
 };
@@ -148,6 +155,7 @@ export function setupProject(profile: ProjectProfile, opts: SetupProjectOpts): S
       thinking: role.thinking,
       tools: role.tools,
       spec: role.spec,
+      features: opts.features,
       extraBenchmarks: role.benchmarks ?? [],
       coverage: opts.coverage,
       scope: "project",
@@ -233,6 +241,8 @@ export const PROJECT_ROLES_USAGE = [
   "  --roles <spec>     override the role set: comma-separated entries;",
   "                     `-name` drops a shipped role, `name` keeps/adds one,",
   "                     `name=purpose` adds a new role with that purpose",
+  "  --feature <id,...> capability flag(s) to author on every new project role",
+  "                     (see /create-agent --list-features); repeatable, merged",
   "  --force            overwrite an existing project role config",
   "  --yes              apply without prompting",
   "  --dry-run          print the plan without writing",
@@ -271,7 +281,7 @@ export function parseRolesSpec(spec: string): ProposedRole[] | string {
 }
 
 export type ParsedProjectRolesArgs =
-  | { ok: true; purpose: string | undefined; roles: ProposedRole[] | undefined; force: boolean; yes: boolean; dryRun: boolean; json: boolean; help: boolean }
+  | { ok: true; purpose: string | undefined; roles: ProposedRole[] | undefined; features: Record<string, boolean> | undefined; force: boolean; yes: boolean; dryRun: boolean; json: boolean; help: boolean }
   | { ok: false; error: string };
 
 /** Parse the raw text after `/project-roles` (tokenized here, so the command and
@@ -280,6 +290,7 @@ export function parseProjectRolesArgs(raw: string): ParsedProjectRolesArgs {
   const argv = tokenizeArgs(raw);
   let purpose: string | undefined;
   let roles: ProposedRole[] | undefined;
+  let features: Record<string, boolean> | undefined;
   let force = false;
   let yes = false;
   let dryRun = false;
@@ -307,17 +318,28 @@ export function parseProjectRolesArgs(raw: string): ParsedProjectRolesArgs {
       json = true;
       continue;
     }
-    if (flag !== "--purpose" && flag !== "--roles") return { ok: false, error: `unknown flag "${flag}"\n\n${PROJECT_ROLES_USAGE}` };
+    if (flag !== "--purpose" && flag !== "--roles" && flag !== "--feature") return { ok: false, error: `unknown flag "${flag}"\n\n${PROJECT_ROLES_USAGE}` };
     const value = argv[++i];
     if (value === undefined) return { ok: false, error: `${flag} requires a value\n\n${PROJECT_ROLES_USAGE}` };
     if (flag === "--purpose") purpose = value;
-    else {
+    else if (flag === "--feature") {
+      const ids = value.split(",").map((token) => token.trim()).filter((token) => token.length > 0);
+      if (ids.length === 0) return { ok: false, error: `--feature: no capability id given\n\n${PROJECT_ROLES_USAGE}` };
+      const merged = features ?? {};
+      for (const id of ids) {
+        if (featureById(id) === null) {
+          return { ok: false, error: `--feature: unknown capability "${id}" — one of ${FEATURES.map((f) => f.id).join(", ")}\n\n${PROJECT_ROLES_USAGE}` };
+        }
+        merged[id] = true;
+      }
+      features = merged;
+    } else {
       const parsed = parseRolesSpec(value);
       if (typeof parsed === "string") return { ok: false, error: `${parsed}\n\n${PROJECT_ROLES_USAGE}` };
       roles = parsed;
     }
   }
-  return { ok: true, purpose, roles, force, yes, dryRun, json, help };
+  return { ok: true, purpose, roles, features, force, yes, dryRun, json, help };
 }
 
 /** Apply the `--purpose`/`--roles` overrides to a discovered profile. */

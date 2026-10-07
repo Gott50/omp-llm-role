@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 import { applyFocusBenchmarks, assessFocusMetric, belowBarReason, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_DATASET_STALENESS_MONTHS, FOCUS_DISPERSION_FLOOR, FOCUS_METRIC_CAP, FOCUS_ORG_MIN_SHARE, FOCUS_PROVENANCE_DOMINANT_SHARE, FOCUS_SELF_REPORTED_MAX_SHARE, FOCUS_STALENESS_MONTHS, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, PRICE_AGREEMENT_TOLERANCE, resolveRole, type CreateAgentRequest, type FocusMetricAssessment } from "../src/agent-create.ts";
 import type { BenchmarkCatalogEntry } from "../src/benchmark-sources.ts";
 import { buildModels, rankRole, type Model, type RoleDef } from "../src/engine.ts";
+import { formatFeatures } from "../src/features.ts";
 import { isRecord } from "../src/guards.ts";
 import { fitArchetype } from "../src/role-archetypes.ts";
 import { KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
@@ -1171,4 +1172,65 @@ test("buildModels carries the row's release_date onto the model record", () => {
   assert.equal(model.releaseDate, "2025-01-02");
   const [missing] = buildModels([makeRow()]);
   assert.equal(missing.releaseDate, null);
+});
+
+// ---------------------------------------------------------------------------
+// Capability flags (issue #40): `--feature` authors the flag, `--list-features`
+// prints the registry.
+// ---------------------------------------------------------------------------
+
+test("parseCreateAgentInput --feature sets the request's capability flags", () => {
+  const parsed = parseCreateAgentInput('--name reviewer --purpose "review code" --feature costCap');
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+  assert.deepEqual(parsed.request.features, { costCap: true });
+
+  // Repeatable and comma-separated, merged.
+  const merged = parseCreateAgentInput('--name reviewer --purpose "review code" --feature cachePricing,costCap --feature endpointCeilings');
+  assert.ok(merged.ok, merged.ok ? "" : merged.error);
+  assert.deepEqual(merged.request.features, { cachePricing: true, costCap: true, endpointCeilings: true });
+});
+
+test("parseCreateAgentInput --feature rejects an unknown id before any write", () => {
+  const parsed = parseCreateAgentInput('--name reviewer --purpose "review code" --feature katz');
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.ok ? "" : parsed.error, /unknown capability "katz"/);
+});
+
+test("createAgent authors the flag, not the knobs it expands to", () => {
+  const { lockPath } = workspace();
+  const parsed = parseCreateAgentInput('--name reviewer --purpose "review code" --feature costCap');
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+  parsed.request.lockPath = lockPath;
+
+  const result = createAgent(parsed.request);
+  assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
+  assert.deepEqual(result.def.features, { costCap: true });
+
+  const written: unknown = JSON.parse(readFileSync(lockPath, "utf8"));
+  assert.ok(isRecord(written));
+  const settingsBag = written.settings as Record<string, unknown>;
+  const plugin = settingsBag["omp-llm-role"] as Record<string, unknown>;
+  assert.equal(plugin["roles.reviewer.features.costCap"], true);
+  assert.equal(plugin["roles.reviewer.filters.maxPriceUsdPerM"], undefined);
+
+  const { settings, errors } = resolveSettings(readPluginSettingsMap({ global: lockPath, project: null }));
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.reviewer.filters?.maxPriceUsdPerM, 10);
+});
+
+test("parseCreateAgentInput --list-features needs no name or purpose", () => {
+  const parsed = parseCreateAgentInput("--list-features");
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.error);
+  assert.equal(parsed.listFeatures, true);
+});
+
+test("formatFeatures prints every capability id and the settings it applies", () => {
+  const out = formatFeatures();
+  for (const id of ["endpointCeilings", "cachePricing", "providerPinning", "costCap"]) {
+    assert.ok(out.includes(id), `missing ${id} in:\n${out}`);
+  }
+  assert.match(out, /endpointCeilings[^\n]*filters\.tools=true, filters\.minOutputTokens=16384/);
+  assert.match(out, /cachePricing[^\n]*cacheHitRate=0\.5/);
+  assert.match(out, /providerPinning[^\n]*preferOwnProvider=true/);
+  assert.match(out, /costCap[^\n]*filters\.maxPriceUsdPerM=10/);
 });

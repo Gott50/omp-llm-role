@@ -52,6 +52,7 @@ export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): 
     plugin[`${prefix}.required`] = def.required;
     if (def.thinking !== undefined) plugin[`${prefix}.thinking`] = def.thinking;
     if (def.providerPin !== undefined) plugin[`${prefix}.providerPin`] = def.providerPin;
+    if (def.preferOwnProvider !== undefined) plugin[`${prefix}.preferOwnProvider`] = def.preferOwnProvider;
     if (def.cacheHitRate !== undefined) plugin[`${prefix}.cacheHitRate`] = def.cacheHitRate;
     if (def.lambda !== undefined) plugin[`${prefix}.lambda`] = def.lambda;
     if (def.filters?.image !== undefined) plugin[`${prefix}.filters.image`] = def.filters.image;
@@ -59,6 +60,13 @@ export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): 
     if (def.filters?.minContextTokens !== undefined) plugin[`${prefix}.filters.minContextTokens`] = def.filters.minContextTokens;
     if (def.filters?.minOutputTokens !== undefined) plugin[`${prefix}.filters.minOutputTokens`] = def.filters.minOutputTokens;
     if (def.filters?.maxPriceUsdPerM !== undefined) plugin[`${prefix}.filters.maxPriceUsdPerM`] = def.filters.maxPriceUsdPerM;
+    // The capability flags are written as flat dotted keys too, so omp's
+    // shallow settings merge keeps them and `mergeRemove`'s `roles.<name>.`
+    // prefix deletes them with the rest of the role. Both `true` and `false`
+    // are written: a per-role `false` is how a role opts out of a global flag.
+    if (def.features !== undefined) {
+      for (const [id, on] of Object.entries(def.features)) plugin[`${prefix}.features.${id}`] = on;
+    }
     for (const [metric, weight] of Object.entries(def.weights)) plugin[`${prefix}.weights.${metric}`] = weight;
   }
   return { lock };

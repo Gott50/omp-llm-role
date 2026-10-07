@@ -76,7 +76,10 @@ Endpoints:
   (per-level billed-blend multiplier from the engine's own `thinkingPriceFactor`,
   so the UI readout cannot drift), `fetchedAt`, `modelCount`, `orMatched`,
   `orPriced`, `lockPath` (the **active scope's** lock file), `scopes` (id, label,
-  kind, present per known scope), `activeScope` (the active scope id), and
+  kind, present per known scope), `activeScope` (the active scope id),
+  the active scope's global capability flags and the feature registry (the
+  `FEATURES` rows: id, label, description, recommended bundle, buys), so the SPA
+  can expand a posted def the same way the server does, and
   `availability` (the keyed-catalog summary:
   `{active, reason, publicCount, keyedCount, blockedCount, fetchedAt}`). Every
   request calls `getState(scope)`, which re-reads that scope's lock file — so a
@@ -89,7 +92,13 @@ Endpoints:
   lock-file-only role against its effective def, so selecting it still shows
   deltas rather than an empty baseline. It passes `state.availability` to
   `rankRows`, so every row carries its `key` badge (usable/blocked/unknown) with
-  no extra call.
+  no extra call. **`handleRank`/`handleExplain` expand the posted def** with the
+  active scope's global flags (`expandFeatures(def, …)`) *before*
+  `rankRows`/`explainModel`: the handlers rank the client's def verbatim, while
+  the Δ baseline is the resolved def (`state.roles[role]`), so without the
+  expansion the preview would omit the preset the baseline includes and every
+  row's Δ would be a lie. The posted def is the **authored** def (flags + explicit
+  keys); the expansion is applied only for the ranking call, never persisted.
 - `handleExport` calls `writeRoleSettings(activeScope.lockPath, body.roles)` and
   returns its result verbatim plus the written `lockPath`.
 - Unknown `/api/*` → 404; wrong method → 405; non-API non-GET → 405.
@@ -248,6 +257,18 @@ a scraped third-party site, so the DOM is built with
   freshness, trust, modality, maintenance, provenance, cross-source). A below-bar cell is warned (tint + glyph), `unknown` is muted —
   never green. A metric the editor just added reads "not assessed" until the next
   reload (the payload is computed over the resolved definition).
+- **Features panel**: the editor renders one **tri-state** control per capability
+  (inherit / on / off) from the bootstrap payload's feature registry, showing the
+  recommended bundle and the effective values. A value the preset filled (rather
+  than an explicit key) is marked as **derived**, so authored and derived are
+  distinguishable. Toggling a control edits the role's `features.<id>` (the
+  tri-state's *inherit* leaves the key absent, so the global flag applies) and
+  re-ranks; the individual
+  per-knob fields the preset fills stay editable, and an explicit value wins over
+  the flag. **Export writes the flag**, never the expanded knobs — `dirtyRoles()`
+  is unchanged (it already compares the authored def against the authored
+  baseline), so a role whose only change is a flag exports just
+  `roles.<name>.features.<id>`.
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
   `recompute()`. `recompute()` → `POST /api/rank {role, def}` → `state.rows`,
   `lambda`, `derivedLambda`, `errors`; re-renders the table and readouts, and

@@ -20,6 +20,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { RoleDef, SuffixLevel } from "../engine.ts";
+import { FEATURES, featureById, formatFeatures } from "../features.ts";
 import { writeRoleSettings } from "../role-settings.ts";
 
 type CreateRoleArgs = {
@@ -30,6 +31,8 @@ type CreateRoleArgs = {
   description: string;
   image: boolean;
   lambda: number | undefined;
+  features: Record<string, boolean> | undefined;
+  preferOwnProvider: boolean;
   lockPath: string;
   dryRun: boolean;
   json: boolean;
@@ -45,6 +48,10 @@ const USAGE = [
   "  --description <text>   one-line role description",
   "  --image                require image input (filters.image)",
   "  --lambda <n>           explicit λ override ($ per quality point)",
+  "  --feature <id,...>     capability flag(s) to author on the role (see --list-features);",
+  "                         repeatable, comma-separated, merged",
+  "  --prefer-own-provider  price the role on each model's own lab route where one exists",
+  "  --list-features        print the capability flags and the settings each applies, then exit",
   "  --lock <path>          settings lock file (default ~/.omp/plugins/omp-plugins.lock.json)",
   "  --dry-run              validate and print without writing",
   "  --json                 print the result as JSON",
@@ -84,6 +91,8 @@ function parseArgs(argv: string[]): CreateRoleArgs {
     description: "",
     image: false,
     lambda: undefined,
+    features: undefined,
+    preferOwnProvider: false,
     lockPath: join(homedir(), ".omp", "plugins", "omp-plugins.lock.json"),
     dryRun: false,
     json: false,
@@ -94,6 +103,10 @@ function parseArgs(argv: string[]): CreateRoleArgs {
       args.image = true;
       continue;
     }
+    if (flag === "--prefer-own-provider") {
+      args.preferOwnProvider = true;
+      continue;
+    }
     if (flag === "--dry-run") {
       args.dryRun = true;
       continue;
@@ -101,6 +114,10 @@ function parseArgs(argv: string[]): CreateRoleArgs {
     if (flag === "--json") {
       args.json = true;
       continue;
+    }
+    if (flag === "--list-features") {
+      console.log(formatFeatures());
+      process.exit(0);
     }
     if (flag === "--help" || flag === "-h") {
       console.log(USAGE);
@@ -114,7 +131,16 @@ function parseArgs(argv: string[]): CreateRoleArgs {
     else if (flag === "--thinking") args.thinking = value as SuffixLevel;
     else if (flag === "--description") args.description = value;
     else if (flag === "--lambda") args.lambda = Number(value);
-    else if (flag === "--lock") args.lockPath = value;
+    else if (flag === "--feature") {
+      const ids = parseList(value);
+      if (ids.length === 0) fail(`--feature: no capability id given\n\n${USAGE}`);
+      const features = args.features ?? {};
+      for (const id of ids) {
+        if (featureById(id) === null) fail(`--feature: unknown capability "${id}" — one of ${FEATURES.map((f) => f.id).join(", ")}`);
+        features[id] = true;
+      }
+      args.features = features;
+    } else if (flag === "--lock") args.lockPath = value;
     else fail(`unknown flag "${flag}"\n\n${USAGE}`);
   }
   if (!args.name) fail(`--name is required\n\n${USAGE}`);
@@ -131,6 +157,8 @@ function buildRoleDef(args: CreateRoleArgs): RoleDef {
   if (args.thinking !== undefined) def.thinking = args.thinking;
   if (args.image) def.filters = { image: true };
   if (args.lambda !== undefined) def.lambda = args.lambda;
+  if (args.features !== undefined) def.features = args.features;
+  if (args.preferOwnProvider) def.preferOwnProvider = true;
   return def;
 }
 

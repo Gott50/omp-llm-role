@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import {
   cardinalMetric,
+  ownProviderRoute,
   providerPinDrops,
   rankRole,
   thinkingPriceFactor,
@@ -133,6 +134,158 @@ test("an unpinned role ignores routes and keeps the blend", () => {
   assert.equal(ranked.length, 1);
   assert.equal(ranked[0].priceEff, 5); // blend, not the route's 2
   assert.equal(ranked[0].parts.throughput, cardinalMetric("throughput", 100)); // blend, not 42
+});
+
+// --- own-provider preference (issue #40) -------------------------------------
+// `preferOwnProvider` is a SOFT preference: a model is priced on its own lab's
+// route where one exists, else on the 1/price² blend. It never changes
+// eligibility (unlike the hard `providerPin`).
+
+test("ownProviderRoute matches a tiered lab slug by orgId prefix", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [route({ providerSlug: "other", price: 9 }), route({ id: "r2", providerSlug: "xiaomi/fp8", price: 2 })];
+  assert.equal(ownProviderRoute(m, "xiaomi", "Xiaomi")?.providerSlug, "xiaomi/fp8");
+});
+
+test("ownProviderRoute matches an exact lab slug", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [route({ providerSlug: "deepseek", price: 2 })];
+  assert.equal(ownProviderRoute(m, "deepseek", "DeepSeek")?.providerSlug, "deepseek");
+});
+
+test("ownProviderRoute falls back to the display org when the orgId prefix finds nothing", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [route({ providerSlug: "meta", price: 2 })];
+  // orgId `meta-llama` matches neither `meta` nor `meta/…`; the display org does.
+  assert.equal(ownProviderRoute(m, "meta-llama", "Meta")?.providerSlug, "meta");
+});
+
+test("ownProviderRoute returns null when the lab slug differs (no alias map)", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [route({ providerSlug: "z-ai", price: 2 })];
+  assert.equal(ownProviderRoute(m, "zai-org", "Z.ai"), null);
+});
+
+test("ownProviderRoute takes the first matching route in the model's order", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [route({ providerSlug: "deepseek", price: 3 }), route({ id: "r2", providerSlug: "deepseek/fp8", price: 1 })];
+  assert.equal(ownProviderRoute(m, "deepseek", "DeepSeek")?.price, 3);
+});
+
+test("preferOwnProvider never changes the eligible count", () => {
+  const withOwn = makeModel("own", 40, 5, 100);
+  withOwn.orgId = "deepseek";
+  withOwn.org = "DeepSeek";
+  withOwn.routes = [route({ providerSlug: "deepseek", price: 2 }), route({ id: "r2", providerSlug: "other", price: 9 })];
+  const noOwn = makeModel("noown", 40, 5, 100);
+  noOwn.orgId = "zai-org";
+  noOwn.org = "Z.ai";
+  noOwn.routes = [route({ providerSlug: "z-ai", price: 3 })];
+  const noRoutes = makeModel("noroutes", 40, 5, 100); // routes undefined
+  const models = [withOwn, noOwn, noRoutes];
+  const base = rankRole(roleWith(), models);
+  const pref = rankRole(roleWith({ preferOwnProvider: true }), models);
+  assert.equal(base.length, 3);
+  assert.equal(pref.length, base.length);
+  assert.deepEqual(
+    pref.map((r) => r.model.id).sort(),
+    base.map((r) => r.model.id).sort(),
+  );
+});
+
+test("a model with no own-lab route keeps the blended price under preferOwnProvider", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.orgId = "zai-org";
+  m.org = "Z.ai";
+  m.routes = [route({ providerSlug: "z-ai", price: 3 })];
+  const ranked = rankRole(roleWith({ preferOwnProvider: true }), [m]);
+  assert.equal(ranked.length, 1);
+  assert.equal(ranked[0].priceEff, 5); // the model's blend price, unchanged
+});
+
+test("preferOwnProvider re-prices a model on its cheaper own-lab route", () => {
+  const own = makeModel("own", 40, 5, 100);
+  own.orgId = "deepseek";
+  own.org = "DeepSeek";
+  own.routes = [route({ providerSlug: "deepseek", price: 2 }), route({ id: "r2", providerSlug: "other", price: 9 })];
+  const other = makeModel("other", 40, 5, 100);
+  other.orgId = "zai-org";
+  other.org = "Z.ai";
+  other.routes = [route({ providerSlug: "z-ai", price: 5 })];
+  const models = [own, other];
+  const base = rankRole(roleWith(), models);
+  const pref = rankRole(roleWith({ preferOwnProvider: true }), models);
+  const baseOwn = base.find((r) => r.model.id === "own");
+  const prefOwn = pref.find((r) => r.model.id === "own");
+  const baseOther = base.find((r) => r.model.id === "other");
+  const prefOther = pref.find((r) => r.model.id === "other");
+  assert.ok(baseOwn);
+  assert.ok(prefOwn);
+  assert.ok(baseOther);
+  assert.ok(prefOther);
+  assert.equal(baseOwn.priceEff, 5);
+  assert.equal(prefOwn.priceEff, 2); // the own-lab route, not the blend
+  assert.ok(prefOwn.value > baseOwn.value); // cheaper price ⇒ higher value
+  assert.equal(prefOwn.q, baseOwn.q); // quality is untouched
+  // The model with no own route is byte-identical; the order flips only on price.
+  assert.equal(prefOther.priceEff, baseOther.priceEff);
+  assert.equal(prefOther.q, baseOther.q);
+  assert.equal(prefOther.value, baseOther.value);
+  assert.equal(pref[0].model.id, "own"); // cheaper own-lab route now leads
+});
+
+test("a hard providerPin wins over preferOwnProvider", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.orgId = "deepseek";
+  m.org = "DeepSeek";
+  m.routes = [route({ providerSlug: "deepseek", price: 2 }), route({ id: "r2", providerSlug: "cerebras", price: 7 })];
+  const ranked = rankRole(roleWith({ providerPin: "cerebras", preferOwnProvider: true }), [m]);
+  assert.equal(ranked.length, 1);
+  assert.equal(ranked[0].priceEff, 7); // the pin's route, not the own-lab route
+});
+
+test("explainModel reports the own-provider basis", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.orgId = "deepseek";
+  m.org = "DeepSeek";
+  m.routes = [route({ providerSlug: "deepseek", price: 2 })];
+  const ex = explainModel(roleWith({ preferOwnProvider: true }), [m], "m");
+  assert.equal(ex.eligible, true);
+  if (ex.eligible) {
+    assert.equal(ex.ownProvider, true);
+    assert.equal(ex.priceEff, 2);
+    assert.equal(ex.cost.billedPrice, 2);
+  }
+  // Without the flag the model is priced on the blend and the basis is false.
+  const blend = explainModel(roleWith(), [m], "m");
+  assert.equal(blend.eligible, true);
+  if (blend.eligible) {
+    assert.equal(blend.ownProvider, false);
+    assert.equal(blend.priceEff, 5);
+  }
+});
+
+test("explainModel reports no own-provider basis when the lab slug differs", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.orgId = "zai-org";
+  m.org = "Z.ai";
+  m.routes = [route({ providerSlug: "z-ai", price: 3 })];
+  const ex = explainModel(roleWith({ preferOwnProvider: true }), [m], "m");
+  assert.equal(ex.eligible, true);
+  if (ex.eligible) {
+    assert.equal(ex.ownProvider, false);
+    assert.equal(ex.priceEff, 5);
+  }
+});
+
+test("explainModel reports a pinned model as not own-provider", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.orgId = "deepseek";
+  m.org = "DeepSeek";
+  m.routes = [route({ providerSlug: "deepseek", price: 2 })];
+  const ex = explainModel(roleWith({ providerPin: "deepseek" }), [m], "m");
+  assert.equal(ex.eligible, true);
+  if (ex.eligible) assert.equal(ex.ownProvider, false);
 });
 
 // --- validation --------------------------------------------------------------

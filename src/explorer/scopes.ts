@@ -84,13 +84,20 @@ export function resolveScope(scopes: Scope[], requestedId: string | null, cwd: s
 }
 
 /** Read one scope's roles and universe. A project scope merges the project lock
- * over the user-level lock — the exact read the updater performs. */
-export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Record<string, RoleDef>; universe: Record<string, UniverseEntry>; errors: string[] } {
+ * over the user-level lock — the exact read the updater performs.
+ *
+ * `roles` is the EFFECTIVE def (the authored def with the enabled capability
+ * flags' recommended knobs filled in); `universe[role].def` is the AUTHORED def
+ * (flags + explicit keys only) — the def the explorer edits and exports.
+ * `features` is the scope's GLOBAL capability flags (`features.<id>`), which the
+ * explorer's rank/explain handlers expand a posted def with so the preview
+ * matches the resolved baseline. */
+export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Record<string, RoleDef>; universe: Record<string, UniverseEntry>; features: Record<string, boolean>; errors: string[] } {
   const raw = scope.kind === "user"
     ? readPluginSettingsMap({ global: scope.lockPath, project: null })
     : readPluginSettingsMap({ global: userLockPath, project: scope.lockPath });
   const { settings, errors } = resolveSettings(raw);
-  return { roles: settings.roles, universe: roleUniverse(raw, settings.roles), errors };
+  return { roles: settings.roles, universe: roleUniverse(raw, settings.roles), features: settings.features, errors };
 }
 
 /** The union of every known scope's resolved roles — the roles map the ranking

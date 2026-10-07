@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, routeEffectivePrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], avai
       org: r.model.org,
       price: r.model.price,
       priceEff: r.priceEff,
-      throughput: roleMetricValue(r.model, "throughput", pinnedRoute(r.model, def.providerPin)),
+      throughput: roleMetricValue(r.model, "throughput", roleRoute(r.model, def)),
       context: r.model.context,
       multimodal: r.model.multimodal,
       value: r.value,
@@ -264,6 +264,10 @@ export type Explanation =
       value: number;
       q: number;
       priceEff: number;
+      /** true when the model was priced on its own lab's route (the soft
+       * `preferOwnProvider` preference, no hard pin) rather than the 1/price²
+       * blend — the panel shows WHY the price is what it is. */
+      ownProvider: boolean;
       role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
       contributions: Contribution[];
       cost: { priceEff: number; billedPrice: number; lambda: number; penalty: number; q: number; value: number };
@@ -283,17 +287,23 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
 
   const reasons: string[] = [];
   // A pinned role prices and gates on the model's matching route (mirrors rankRole).
-  const route = pinnedRoute(model, def.providerPin);
+  const pinRoute = pinnedRoute(model, def.providerPin);
   // A role with endpoint filters is priced on the blend over the routes that survive
   // them, with its cache-hit rate blended into each route's billed price: `em` is the
   // model with that effective price/throughput, or null when no route survives.
   const cacheHitRate = def.cacheHitRate ?? 0;
   const em = endpointFilteredModel(model, def.filters, cacheHitRate);
   const eff = em ?? model;
-  const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, route, cacheHitRate) == null);
+  // Soft own-provider preference (mirrors rankRole): with no hard pin, a role that
+  // prefers the model's own lab endpoint is priced on that route where one exists,
+  // else on the blend. Never a gate — a model with no own-lab route keeps the blend.
+  const route = roleRoute(model, def);
+  // The model is priced on its own lab's route (not a hard pin, not the blend).
+  const ownProvider = pinRoute === null && route !== null;
+  const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, pinRoute, cacheHitRate) == null);
   if (missingRequired.length > 0) reasons.push(`missing required metric(s): ${missingRequired.join(", ")}`);
   if (def.filters?.image && !model.multimodal) reasons.push("role requires image input; model is text-only");
-  if (def.providerPin !== undefined && route === null) reasons.push("no route matches the role's provider pin");
+  if (def.providerPin !== undefined && pinRoute === null) reasons.push("no route matches the role's provider pin");
   if (em === null) reasons.push("no standard-tier route satisfies the role's endpoint filters");
   if (eff.price == null) reasons.push("no billed OpenRouter route");
   if (reasons.length > 0) return { eligible: false, reasons };
@@ -392,6 +402,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     value: self.value,
     q: self.q,
     priceEff: self.priceEff,
+    ownProvider,
     role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking, cacheHitRate },
     contributions,
     cost: { priceEff: self.priceEff, billedPrice: route !== null ? routeEffectivePrice(route, cacheHitRate) ?? eff.price : eff.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },

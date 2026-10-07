@@ -23,6 +23,8 @@ const state = {
   lockPath: "",
   scopes: [],
   activeScope: "",
+  features: {},
+  featureRegistry: [],
   filter: "",
   topn: "25",
   hideBlocked: false,
@@ -152,6 +154,10 @@ const TIPS = {
   focusProvenance: "Provenance: the benchmark's owner (the catalog row's dataset_org_id, falling back to dataset_slug) and the source's own per-entry org mix (the dominant lab and its share). A cross-check on the pool-derived composition axis: agree/disagree records whether the two concur. An annotation, never a gate — a vendor-populated source is warned but never drops a candidate; unknown means there is neither an owner nor a payload org mix.",
   focusCrossSource: "Cross-source: the zeroeval per-entry price/context compared against the plugin's own price/context for the models carrying the metric (the median relative divergence, within a 0.5 tolerance). The speed figure is informational only (rps vs tok/s). An annotation, never a gate — it never feeds the 1/price² blend; unknown means no model joined or the payload carried none of the four fields.",
   imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
+  features: "Opt-in capability presets (issue #40). Each flag applies the plugin's recommended settings for that capability to this role; an explicit knob value always wins. Export writes the flag, not the expanded values, so a future change to the recommendation keeps reaching the role.",
+  featureState: "inherit = use the global flag (features.<id> in the lock file); on/off = a per-role override (roles.<role>.features.<id>) that beats the global in either direction.",
+  featureKnob: "An individual knob the capability's recommended bundle fills. Leave it at inherit to take the recommendation; set a value to override it (an explicit value always wins over the flag).",
+  featureDerived: "derived = this value comes from the enabled capability's recommended bundle, not from an explicit key in the role. Set the knob to make it authored.",
   thinking: "Thinking level appended to the role's selector (`:level`) and used to scale the price axis. The factor (3ρ+1+T)/(3ρ+1) applies only to models that will actually run the level (omp catalog `thinking[]` membership; meta levels off/auto need only a non-empty list). Bare = no suffix — the session's defaultThinkingLevel applies and the price is unadjusted.",
   thinkingBare: "Bare (no suffix). Not restorable once the role's shipped default or the lock file sets a level: the plugin deep-merges roles over DEFAULT_ROLES, so an omitted key keeps the inherited value.",
   normalize: "Rescale every weight so the sum is 1.0 (the parked ε is rescaled too).",
@@ -543,7 +549,8 @@ function renderExplain() {
   panel.append(el("p", { class: "cost", "data-tip": TIPS.lambda, text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = " + LAMBDA_DERIVATION + ")" : " (override)") }));
   const thinkNote = ex.role.thinking === undefined ? "bare" : ":" + ex.role.thinking;
   const cacheNote = ex.role.cacheHitRate > 0 ? " · cache " + ex.role.cacheHitRate : "";
-  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × " + thinkNote + ")" : " (" + thinkNote + ")") + cacheNote + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
+  const ownNote = ex.ownProvider ? " · own lab" : "";
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × " + thinkNote + ")" : " (" + thinkNote + ")") + cacheNote + ownNote + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
 
   panel.append(el("h3", { "data-tip": TIPS.whyNotHigher, text: "Why not higher" }));
   if (ex.gapAbove === null) {
@@ -714,6 +721,162 @@ function renderFocus(panel) {
   panel.append(table);
 }
 
+// ---------------------------------------------------------------------------
+// Capability flags (issue #40)
+// ---------------------------------------------------------------------------
+
+/** The knobs a capability's recommended bundle fills, derived from the registry
+ * so the panel cannot drift from `src/features.ts`. */
+function bundleKnobs(recommended) {
+  const out = [];
+  if (recommended.filters) {
+    for (const [key, value] of Object.entries(recommended.filters)) {
+      out.push({ key: "filters." + key, kind: typeof value === "boolean" ? "boolean" : "number", value });
+    }
+  }
+  if (recommended.cacheHitRate !== undefined) out.push({ key: "cacheHitRate", kind: "number", value: recommended.cacheHitRate });
+  if (recommended.preferOwnProvider !== undefined) out.push({ key: "preferOwnProvider", kind: "boolean", value: recommended.preferOwnProvider });
+  return out;
+}
+
+/** Render a recommended bundle as `key=value` pairs (mirrors formatBundle). */
+function bundleText(recommended) {
+  return bundleKnobs(recommended).map((k) => k.key + "=" + k.value).join(", ");
+}
+
+/** Read one knob from the AUTHORED def by its dotted key. */
+function getKnob(def, key) {
+  if (key === "cacheHitRate") return def.cacheHitRate;
+  if (key === "preferOwnProvider") return def.preferOwnProvider;
+  if (key.startsWith("filters.")) return def.filters ? def.filters[key.slice("filters.".length)] : undefined;
+  return undefined;
+}
+
+/** Write (or clear, with `undefined`) one knob on the AUTHORED def. */
+function setKnob(def, key, value) {
+  if (key === "cacheHitRate" || key === "preferOwnProvider") {
+    if (value === undefined) delete def[key];
+    else def[key] = value;
+    return;
+  }
+  if (key.startsWith("filters.")) {
+    const leaf = key.slice("filters.".length);
+    if (value === undefined) {
+      if (def.filters) {
+        delete def.filters[leaf];
+        if (Object.keys(def.filters).length === 0) delete def.filters;
+      }
+    } else {
+      def.filters = def.filters || {};
+      def.filters[leaf] = value;
+    }
+  }
+}
+
+/** The effective state of one capability for a role: the authored per-role flag
+ * when present (it wins either way), else the scope's global flag. */
+function effectiveFlag(def, id) {
+  const authored = def.features ? def.features[id] : undefined;
+  if (authored !== undefined) return authored;
+  return state.features[id] === true;
+}
+
+/** The effective value of one knob and whether it is DERIVED (filled by an
+ * enabled capability) rather than authored (an explicit key on the def). */
+function effectiveKnob(def, featureId, knob) {
+  const authored = getKnob(def, knob.key);
+  if (authored !== undefined) return { value: authored, derived: false };
+  if (effectiveFlag(def, featureId) && knob.value !== undefined) return { value: knob.value, derived: true };
+  return { value: undefined, derived: false };
+}
+
+/** One knob field: an editable input (number, or inherit/true/false select) plus
+ * a badge marking the value authored or derived from the capability. */
+function knobField(def, featureId, knob) {
+  const authored = getKnob(def, knob.key);
+  const eff = effectiveKnob(def, featureId, knob);
+  const cell = el("span", { class: "knob" + (eff.derived ? " derived" : "") });
+  let input;
+  if (knob.kind === "boolean") {
+    input = el("select", { class: "knob-input", "data-tip": TIPS.featureKnob });
+    input.append(el("option", { value: "inherit", text: "inherit" }));
+    input.append(el("option", { value: "true", text: "true" }));
+    input.append(el("option", { value: "false", text: "false" }));
+    input.value = authored === undefined ? "inherit" : String(authored);
+    input.addEventListener("change", () => {
+      setKnob(def, knob.key, input.value === "inherit" ? undefined : input.value === "true");
+      renderEditor();
+      renderRoles();
+      scheduleRecompute();
+    });
+  } else {
+    input = el("input", { type: "number", class: "knob-input", step: "any", "data-tip": TIPS.featureKnob, placeholder: eff.value === undefined ? "—" : String(eff.value) });
+    if (authored !== undefined) input.value = String(authored);
+    input.addEventListener("input", () => {
+      setKnob(def, knob.key, input.value === "" ? undefined : Number(input.value));
+      scheduleRecompute();
+    });
+    input.addEventListener("change", () => {
+      renderEditor();
+      renderRoles();
+    });
+  }
+  cell.append(input);
+  cell.append(el("span", { class: "knob-name", text: knob.key }));
+  const badge = eff.derived ? "derived " + eff.value : authored !== undefined ? "authored" : "—";
+  cell.append(el("span", { class: "knob-badge " + (eff.derived ? "derived" : authored !== undefined ? "authored" : "none"), "data-tip": TIPS.featureDerived, text: badge }));
+  return cell;
+}
+
+/** The per-role Features panel: one tri-state control per capability (inherit /
+ * on / off) writing `def.features[id]`, the recommended bundle, and the
+ * individual knobs the bundle fills, each marked derived or authored. */
+function renderFeatures(panel) {
+  panel.append(el("h3", { "data-tip": TIPS.features, text: "Capabilities" }));
+  if (state.featureRegistry.length === 0) {
+    panel.append(el("p", { class: "muted", text: "No capability registry in the payload." }));
+    return;
+  }
+  const def = state.defs[state.role];
+  const wrap = el("div", { class: "features" });
+  for (const feature of state.featureRegistry) {
+    const authored = def.features ? def.features[feature.id] : undefined;
+    const on = effectiveFlag(def, feature.id);
+    const row = el("div", { class: "feature" + (on ? " on" : "") });
+    const sel = el("select", { class: "feature-state", "data-tip": TIPS.featureState });
+    sel.append(el("option", { value: "inherit", text: "inherit" }));
+    sel.append(el("option", { value: "on", text: "on" }));
+    sel.append(el("option", { value: "off", text: "off" }));
+    sel.value = authored === undefined ? "inherit" : authored ? "on" : "off";
+    sel.addEventListener("change", () => {
+      def.features = def.features || {};
+      if (sel.value === "inherit") {
+        delete def.features[feature.id];
+        if (Object.keys(def.features).length === 0) delete def.features;
+      } else {
+        def.features[feature.id] = sel.value === "on";
+      }
+      renderEditor();
+      renderRoles();
+      scheduleRecompute();
+    });
+    const origin = authored === undefined ? (state.features[feature.id] === true ? "global on" : "global off") : "role override";
+    row.append(
+      el("div", { class: "feature-head" }, [
+        sel,
+        el("span", { class: "feature-label", "data-tip": feature.description + "\n\n" + feature.buys, text: feature.label }),
+        el("span", { class: "feature-origin muted", text: origin }),
+      ]),
+    );
+    row.append(el("div", { class: "feature-bundle muted", text: "recommended: " + bundleText(feature.recommended) }));
+    const knobs = el("div", { class: "feature-knobs" });
+    for (const knob of bundleKnobs(feature.recommended)) knobs.append(knobField(def, feature.id, knob));
+    row.append(knobs);
+    wrap.append(row);
+  }
+  panel.append(wrap);
+}
+
 function renderEditor() {
   const panel = document.getElementById("editor");
   panel.textContent = "";
@@ -843,6 +1006,8 @@ function renderEditor() {
     scheduleRecompute();
   });
   panel.append(el("label", { class: "check" }, [imgCb, el("span", { "data-tip": TIPS.imageFilter, text: "requires image input (filters.image)" })]));
+
+  renderFeatures(panel);
 
   panel.append(el("h3", { "data-tip": TIPS.thinking, text: "Thinking level" }));
   const bareLocked = state.effective[state.role]?.thinking !== undefined;
@@ -1016,6 +1181,8 @@ function applyBootstrap(data) {
   state.thinkingFactors = data.thinkingFactors;
   state.lockPath = data.lockPath;
   state.availability = data.availability;
+  state.features = data.features || {};
+  state.featureRegistry = data.featureRegistry || [];
   state.rows = [];
   state.selectedId = null;
   state.explain = null;

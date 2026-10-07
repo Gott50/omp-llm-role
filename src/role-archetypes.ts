@@ -16,6 +16,7 @@
  */
 
 import type { SuffixLevel } from "./engine.ts";
+import type { FeatureId } from "./features.ts";
 import { DEFAULT_ROLES } from "./settings.ts";
 
 export type Archetype = {
@@ -33,6 +34,14 @@ export type Archetype = {
   tools: string[];
   /** Require image input (`filters.image`). */
   image?: boolean;
+  /**
+   * Capability flags the archetype proposes for a role fitted to it. **No
+   * shipped archetype sets one**: a plugin-created role starts from nothing
+   * unless the user asks (`--feature`), so creating an agent never silently
+   * changes what the role ranks on. The field exists so a future archetype can
+   * propose a preset without a second mechanism.
+   */
+  features?: FeatureId[];
   /** Bullets for the generated agent body's `<criteria>` section. */
   criteria: string[];
 };

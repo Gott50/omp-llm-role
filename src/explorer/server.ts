@@ -5,8 +5,9 @@
  *   GET  /                 -> web/index.html
  *   GET  /app.js /style.css -> static assets (traversal-guarded)
  *   GET  /api/bootstrap    -> the scope list + the active scope's roles,
- *                             defaults, metric universe, dataset counts, and
- *                             the key-availability summary
+ *                             defaults, metric universe, dataset counts, the
+ *                             key-availability summary, the scope's global
+ *                             capability flags, and the feature registry
  *   POST /api/scope        -> { scope } -> switch the active scope, return the
  *                             new bootstrap payload
  *   POST /api/rank         -> { role, def } -> rows with baseline deltas and a
@@ -26,6 +27,7 @@ import { extname, resolve, sep } from "node:path";
 import type { KeyAvailability } from "../availability.ts";
 import { loadDeclaredSources } from "../benchmark-sources.ts";
 import { SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { expandFeatures, FEATURES } from "../features.ts";
 import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
 import { KNOWN_METRICS, type UniverseEntry } from "../settings.ts";
@@ -54,6 +56,10 @@ export type ExplorerOpts = {
     universe: Record<string, UniverseEntry>;
     defaults: Record<string, RoleDef>;
     availability: KeyAvailability;
+    /** The scope's GLOBAL capability flags (`features.<id>`); a posted def is
+     *  expanded with these before ranking so the preview matches the resolved
+     *  baseline. Defaults to `{}` when a host omits it. */
+    features: Record<string, boolean>;
   };
   /** Re-runs loadRankData({ refresh: true }) and swaps the snapshot. */
   refresh(): Promise<void>;
@@ -170,6 +176,10 @@ function bootstrapPayload(opts: ExplorerOpts, scope: Scope): object {
     roles: state.roles,
     defaults: state.defaults,
     universe: state.universe,
+    // The scope's global capability flags + the registry, so the SPA renders the
+    // Features panel and the recommended bundles without duplicating them.
+    features: state.features ?? {},
+    featureRegistry: FEATURES.map((f) => ({ id: f.id, label: f.label, description: f.description, buys: f.buys, recommended: f.recommended })),
     metrics,
     metricMeta: metricMetaFor(metrics, declared),
     focusAssessments: focus,
@@ -209,8 +219,12 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
     throw new HttpError(400, "expected { role: string, def: object }");
   }
   const role = body.role;
-  const def = body.def as unknown as RoleDef;
+  const authored = body.def as unknown as RoleDef;
   const state = opts.getState(activeScope(opts, session));
+  // The posted def is AUTHORED (flags + explicit keys); expand it with the
+  // scope's global flags so the preview matches the resolved baseline
+  // (`state.roles[role]`) — otherwise every row's Δ would be a lie.
+  const def = expandFeatures(authored, state.features ?? {});
   // Enabled roles baseline against their resolved def; a disabled or lock-file-only
   // role against its effective def (shipped defaults merged with its overrides) so
   // selecting it still shows deltas, not an empty baseline.
@@ -222,7 +236,9 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
     lambda: roleLambda(def),
     derivedLambda: roleLambda({ ...def, lambda: undefined }),
     rows,
-    errors: validateRole(role, def),
+    // Validate the AUTHORED def: an unknown feature id must surface here, and
+    // `expandFeatures` strips `features` (validating the expanded def would hide it).
+    errors: validateRole(role, authored),
   });
 }
 
@@ -231,10 +247,13 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
   if (!isRecord(body) || typeof body.role !== "string" || !isRecord(body.def) || typeof body.modelId !== "string") {
     throw new HttpError(400, "expected { role: string, def: object, modelId: string }");
   }
-  const def = body.def as unknown as RoleDef;
+  const authored = body.def as unknown as RoleDef;
   const state = opts.getState(activeScope(opts, session));
+  // Same expansion as handleRank: the posted def is authored, the baseline is
+  // resolved, so the preview must apply the scope's global flags first.
+  const def = expandFeatures(authored, state.features ?? {});
   const explanation = explainModel(def, state.rank.models, body.modelId, body.role, state.availability);
-  sendJson(res, 200, { ...explanation, errors: validateRole(body.role, def) });
+  sendJson(res, 200, { ...explanation, errors: validateRole(body.role, authored) });
 }
 
 async function handleExport(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {

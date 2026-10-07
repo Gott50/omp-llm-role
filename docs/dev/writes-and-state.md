@@ -58,6 +58,56 @@ Rules the algorithm enforces:
   (below); a lock it cannot acquire returns `"locked"` and the caller aborts
   (or no-ops, for the day-gated sync).
 
+## The settings lock file and the feature flags
+
+The plugin's settings live in `~/.omp/plugins/omp-plugins.lock.json` →
+`settings["omp-llm-role"]` (or the project lock in project mode). The write path
+(`src/role-settings.ts`) stores every role key as a **flat dotted key** because
+omp's `/settings` Plugins tab shallow-merges the settings object and does not
+flatten nested objects. The capability flags join that set:
+
+- `features.<id>` — the global flag for capability `<id>`;
+- `roles.<role>.features.<id>` — the per-role flag (wins over the global in
+  either direction);
+- `roles.<role>.preferOwnProvider` — the `providerPinning` policy field.
+
+`mergeExport` writes these as flat dotted keys alongside the existing role keys
+(`roles.<name>.weights.<metric>`, `.description`, `.enabled`, `.locked`,
+`.required`, `.thinking`, `.providerPin`, `.cacheHitRate`, `.lambda`,
+`.filters.image`). `mergeRemove` needs no change: its existing `roles.<name>.`
+prefix already covers the new keys, so `/remove-agent` deletes them.
+
+**Validation aborts** (notify, no write), in the existing one-error-string-per-
+violation style (`resolveSettings` in `src/settings.ts`):
+
+- `features.<id> is not a known capability` / `role <name>: features.<id> is not
+  a known capability` — an unknown id, global or per-role;
+- `features.<id>: must be a boolean, got <json>` / `role <name>: features.<id>
+  must be a boolean, got <json>` — a non-boolean flag value;
+- `features: must be an object, got <json>` / `role <name>: features must be an
+  object` — a non-record `features`;
+- `role <name>: preferOwnProvider must be a boolean, got <json>` — a non-boolean
+  policy field.
+
+**`mergeRawSettings` does NOT expand.** `resolveSettings` calls
+`expandFeatures` per role, so its `roles` map is the **effective** def (the
+authored def with the enabled flags' recommended knobs filled in, `features`
+stripped). `mergeRawSettings` — and therefore `roleUniverse(...).def` — keeps the
+**authored** def (shipped ⊕ raw overrides, no preset, `features` retained),
+because that is the def the explorer edits and exports. Expanding inside
+`mergeRawSettings` would make a role whose only authored change is a flag read as
+dirty against its own baseline, and `mergeExport` (which writes every key of a
+dirty def) would persist the expanded knobs as explicit values — silently
+converting the flag into hard values and defeating both "adjust by hand" and
+re-applying a changed recommendation. Export writes the **flag**, never the
+expanded values.
+
+**Near-collision warning.** omp's plugin-level `enabledFeatures` (present in the
+lock file, `null` by default) is a **different gate** — omp's own feature
+gating — that this plugin never reads (zero occurrences in `src/`, `web/`,
+`tests/`). The plugin's `features.<id>` keys are plugin settings, not omp
+feature flags; do not merge the two.
+
 ## State, history, lock
 
 All under the agent dir (`agentDir()` in `src/state.ts`), next to the config

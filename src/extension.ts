@@ -22,6 +22,7 @@ import { applyBenchmarkScores, BENCHMARK_ENTRY_CAP, cachedSourceInfo, declaratio
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson, fetchKeyAvailability, type KeyAvailability } from "./availability.ts";
 import { loadRankData, rankRole, type Model } from "./engine.ts";
+import { formatFeatures } from "./features.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { resolveScopes, unionRoles } from "./explorer/scopes.ts";
 import { isRecord } from "./guards.ts";
@@ -458,6 +459,10 @@ export default function (pi: ExtensionAPI) {
         notifyLines(ctx, formatBenchmarks(undefined, externalMetricsInUse()));
         return;
       }
+      if (parsed.listFeatures) {
+        notifyLines(ctx, formatFeatures());
+        return;
+      }
       if (parsed.bodyFile !== undefined) {
         try {
           parsed.request.body = readFileSync(parsed.bodyFile, "utf8");
@@ -740,6 +745,7 @@ export default function (pi: ExtensionAPI) {
         configPath,
         force: parsed.force,
         yes: parsed.yes,
+        features: parsed.features,
         coverage: { total: fieldSize, covered, declared, assessments },
       };
       const plan = setupProject(profile, { ...planOpts, dryRun: true });

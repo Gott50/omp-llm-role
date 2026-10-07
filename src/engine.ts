@@ -1060,6 +1060,41 @@ export function pinnedRoute(model: Model, providerPin: string | undefined): Open
   return (model.routes ?? []).find((r) => r.providerSlug === providerPin) ?? null;
 }
 
+/** The model's own-lab route (the soft `preferOwnProvider` basis): the first route
+ * whose lowercased `providerSlug` equals the lowercased `orgId`, or starts with
+ * `orgId.toLowerCase() + "/"` — route slugs are tiered (`xiaomi/fp8`), so a prefix
+ * match is the lab's own endpoint. When the orgId prefix finds nothing, the
+ * lowercased display `org` is tried the same way (`Meta` vs slug `meta`). First
+ * match in the model's `routes` order; null when nothing matches. There is no
+ * alias map in v1: an org whose lab slug differs (`zai-org` vs `z-ai`) falls back
+ * to the blend rather than mis-pinning. */
+export function ownProviderRoute(model: Model, orgId: string, org: string): OpenRouterEndpointRecord | null {
+  const routes = model.routes ?? [];
+  const match = (key: string): OpenRouterEndpointRecord | null => {
+    const k = key.toLowerCase();
+    if (k.length === 0) return null;
+    return routes.find((r) => {
+      const slug = r.providerSlug.toLowerCase();
+      return slug === k || slug.startsWith(`${k}/`);
+    }) ?? null;
+  };
+  return match(orgId) ?? match(org);
+}
+
+/** The route a role prices a model on: the hard pin's route when the role is
+ * pinned, else the model's own-lab route when the soft `preferOwnProvider`
+ * preference is on and that route carries a usable billed price, else null (the
+ * 1/price² blend). A preference never drops a model — an unmatched own route (or
+ * one with no usable price) falls back to the blend. */
+export function roleRoute(model: Model, def: RoleDef): OpenRouterEndpointRecord | null {
+  const pin = pinnedRoute(model, def.providerPin);
+  if (pin !== null) return pin;
+  if (def.providerPin !== undefined || def.preferOwnProvider !== true) return null;
+  const own = ownProviderRoute(model, model.orgId, model.org);
+  if (own === null) return null;
+  return routeEffectivePrice(own, def.cacheHitRate ?? 0) !== null ? own : null;
+}
+
 /** The metric value a role sees for a model. A pinned role's throughput is its
  * route's p50, falling back to the model's blended throughput when the route has
  * no p50 (a sparse route must not zero the metric), and its price is the route's
@@ -1105,8 +1140,16 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     // Provider pin: a pinned role prices and gates on the model's matching route,
     // not the 1/price² blend. A model with no matching route cannot be routed to
     // the pin and is ineligible (recorded by `providerPinDrops`).
-    const route = pinnedRoute(m, def.providerPin);
-    if (def.providerPin !== undefined && route === null) continue;
+    const pinRoute = pinnedRoute(m, def.providerPin);
+    if (def.providerPin !== undefined && pinRoute === null) continue;
+    // Soft own-provider preference (issue #40): with no hard pin, a role that
+    // prefers the model's own lab endpoint is priced on that route where one
+    // exists (the same route basis a pin uses), else on the 1/price² blend. This
+    // is a preference, never a gate: a model with no own-lab route — or one whose
+    // route carries no usable billed price — keeps the blend, so the eligible
+    // count is unchanged. `providerPinDrops`/`pinUnmatched` key on
+    // `def.providerPin` only, so the preference never drops a model.
+    const route = roleRoute(m, def);
     // Endpoint capability gate: a role that declares endpoint filters is priced on
     // the 1/price² blend over the routes that survive them — the pool the router
     // would actually choose from. A model whose every route fails (or that has no
@@ -1116,7 +1159,10 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     // price blended per route.
     const em = endpointFilteredModel(m, def.filters, cacheHitRate);
     if (em === null) continue;
-    if (def.required.some((k) => roleMetricValue(em, k, route, cacheHitRate) == null)) continue;
+    // The required-metric gate keys on the hard pin only (null when unpinned), so
+    // the soft own-provider preference can never change eligibility — it only
+    // re-prices a model that already passes every gate.
+    if (def.required.some((k) => roleMetricValue(em, k, pinRoute, cacheHitRate) == null)) continue;
     // The billed price the role actually pays: the pinned route's cache-adjusted
     // price, else the role's route-pool blend. Value needs one.
     const basePrice = route !== null ? routeEffectivePrice(route, cacheHitRate) : em.price;

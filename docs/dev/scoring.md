@@ -143,6 +143,66 @@ The pin is a cost-and-throughput posture, not a quality edit: it moves the price
 axis to the route's billed price and the throughput axis to the route's p50,
 while every other weighted metric stays the model's own.
 
+## Capability presets (feature flags)
+
+One named flag per opt-in capability (`features.<id>` global,
+`roles.<role>.features.<id>` per role) applies the plugin's recommended settings
+to a role. The registry (`FEATURES` in `src/features.ts`) is the single source of
+truth; `expandFeatures(authored, globalFlags)` is the single implementation of
+the precedence rule, called by `resolveSettings` (per role) and by the explorer's
+`/api/rank`/`/api/explain` on the posted def. The rule:
+
+```
+effective def = shipped default  ⊕  preset(enabled flags)  ⊕  explicit user keys
+```
+
+A flag is on when `roles.<role>.features.<id>` is present (it wins either way)
+and otherwise when the global `features.<id>` is `true`; the preset fills only
+knobs the authored def does not already set, and an explicit key is merged last,
+so it always wins. Every flag ships **off** and no shipped role sets one, so with
+no flags the resolved roles are byte-identical to `DEFAULT_ROLES`. The effective
+def is what `rankRole`/`explainModel` see; the authored def (flags + explicit
+keys) is what the explorer edits and exports.
+
+What each recommendation does to the ranking math (grounded on the 2026-10-07
+cache, `default` role, 142 eligible):
+
+- **`endpointCeilings`** (`filters.tools: true`, `filters.minOutputTokens:
+  16384`) drops tool-incapable routes and routes whose output ceiling is below
+  16 384 tokens from the priced pool (see *Endpoint filters*): 142 → 132
+  eligible, leader unchanged (`deepseek-v4.1-flash`, 0.579 $/M). 16 384 is the
+  video's own threshold (19 endpoints cap output at or below it).
+- **`cachePricing`** (`cacheHitRate: 0.5`) reprices the role on a cache-heavy
+  loop's invoice (see *Cache-read pricing*): 142 eligible, leader unchanged, its
+  `priceEff` 0.579 → 0.508 (−12 %). 0.5 is the low end of the measured
+  third-party range (51–69 %), so the preset never over-credits a cache.
+- **`providerPinning`** (`preferOwnProvider: true`) prices a model on its own
+  lab's route where one exists, falling back to the default `1/price²` blend
+  otherwise. It is a **per-model policy, not a scalar** — the sensible pin
+  differs per model, so the bundle carries a policy field evaluated against the
+  model's own routes at rank time, not a slug baked into the lock file. The lab
+  match is a **slug prefix on the model's `orgId`** (exact, or `orgId` + `/`),
+  with the display `org` as a second try; there is no alias map in v1. Measured
+  coverage: 50 of the 149 routed models resolve to one of their own lab's routes
+  (33 on an exact slug match), and 11 of 25 orgs match for no model (`zai-org` —
+  its lab route slug is `z-ai` — `google`, `qwen`, `inclusionai`, `nvidia`,
+  `microsoft`, `bytedance`, `thinking-machines`, `inceptionlabs`, `ibm`,
+  `gryphe`). An unmatched model keeps the blend, so the capability
+  **under-delivers rather than mis-pins**, and it **never changes eligibility**
+  (unlike the hard `providerPin`, which drops a model with no matching route).
+- **`costCap`** (`filters.maxPriceUsdPerM: 10`) drops the priciest tail of the
+  eligible pool: 142 → 135 (the top ≈5 %), leader unchanged. The pool's p90 is
+  7.8 and p95 8.9 $/M, and every role leader sits at 0.58–0.85 $/M, so the
+  preset never excludes today's leader.
+
+**Interaction with the switch hysteresis.** `switchMargin`/`priceSwitchFraction`
+compare a challenger against the incumbent on `value` and `priceEff`. A flag that
+reprices the **whole field** (`cachePricing`, `providerPinning`) moves **both
+sides** of that comparison, so it can hold a switch that would otherwise happen
+(or vice versa). Flip such a flag **between runs**, not mid-day: the day gate
+stamps one run per UTC day, and a mid-day flag change would compare a
+half-repriced field against a stale incumbent.
+
 ## Eligibility
 
 A model ranks for a role only when:

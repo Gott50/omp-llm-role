@@ -8,6 +8,35 @@ copying the new numbers here; release prose belongs in
 below are the 2026-10-06 measurement (the input-price blend basis #21 and the
 #17/#18/#19/#20 wave; see the top bullet) and are not re-derived on read.
 
+- Capability presets (2026-10-07, issue #40): one opt-in flag per capability
+  (`features.<id>` global, `roles.<role>.features.<id>` per role) applies the
+  plugin's recommended settings to a role; every flag ships **off** and no
+  shipped role sets one, so the resolved roles are byte-identical to
+  `DEFAULT_ROLES` until a user opts in. The registry (`FEATURES` in
+  `src/features.ts`) is the single source of truth and `expandFeatures` the
+  single precedence implementation (`effective def = shipped default ⊕
+  preset(enabled flags) ⊕ explicit user keys`; a per-role `false` beats a global
+  `true`; an explicit knob always wins). Grounding on the 2026-10-07 cache
+  (`default` role, 142 eligible):
+
+  | Flag | Recommended settings | Measured effect |
+  |---|---|---|
+  | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | 142 → 132 eligible, leader unchanged (`deepseek-v4.1-flash`, 0.579 $/M) |
+  | `cachePricing` | `cacheHitRate: 0.5` | 142 eligible, leader unchanged, its `priceEff` 0.579 → 0.508 (−12 %) |
+  | `providerPinning` | `preferOwnProvider: true` | per-model policy, never changes eligibility; 50 of 149 routed models match under a slug-prefix rule (33 exact), 11 of 25 orgs match for no model |
+  | `costCap` | `filters.maxPriceUsdPerM: 10` | 142 → 135 eligible (the top ≈5 %), leader unchanged; pool p90 7.8, p95 8.9 $/M, every leader 0.58–0.85 $/M |
+
+  `providerPinning`'s recommended setting is a **soft per-model policy**
+  (`preferOwnProvider`), not a hard `providerPin`: a hard pin would make a model
+  with no matching route ineligible and empty ~2/3 of a role's pool, so the
+  policy re-prices a model on its own lab's route where one exists and falls back
+  to the `1/price²` blend otherwise. `minContextTokens` is deliberately not in
+  the `endpointCeilings` bundle (an absolute floor cannot express the video's
+  fraction-of-the-model's-own-window complaint). The flags are settable from
+  `create-role.ts`, `/create-agent`, `/project-roles` (`--feature`/
+  `--list-features`) and the explorer's Features panel; the ranking numbers are
+  unchanged until a flag is turned on.
+
 - Cross-source axis (2026-10-07, issue #38): the focus-metric gate gained the
   cross-source axis — the zeroeval per-benchmark payload's **second, independent**
   set of the price/throughput/context quantities (`input_cost_per_million`/
