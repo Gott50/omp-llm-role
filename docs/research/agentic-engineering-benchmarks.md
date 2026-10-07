@@ -98,7 +98,7 @@ Two selection criteria beyond score:
 - **Provider bias is disqualifying.** *"I immediately just disregard benchmarks
   that are not including specific models on purpose."* Active maintenance (fresh
   model coverage) is part of the trust signal. The five picks fail this test
-  themselves: every sampled zeroeval benchmark is `verified: 0` (all
+  themselves: every zeroeval catalog row is `verified: false` (all
   self-reported), and the five are provider-concentrated — `terminal-bench-4.0`
   is Anthropic 8/20 + OpenAI 4/20 (60%), `deepswe-1.1` is OpenAI 8/20 (40%),
   `apex-agents` is 10/10 self-reported.
@@ -264,8 +264,22 @@ index"* is the per-role weight design.
   (fresh model coverage) and treat provider-biased benchmarks as unusable. The
   registry's "coverage over the field" rule captures the first; it does **not**
   capture trust — the catalog carries no `verified` signal the plugin reads, and
-  every sampled benchmark is `verified: 0` (self-reported). A `self_reported`/
+  every sampled benchmark is `verified: false` (self-reported). A `self_reported`/
   `verified` field is the missing trust input.
+
+  > **Update (2026-10-07):** the signal exists upstream; the plugin ignores it,
+  > and it is **inert today**. Verified live against the source —
+  > `GET api.zeroeval.com/leaderboard/benchmarks` carries a boolean `verified`
+  > on all 745 rows, but `parseBenchmarkCatalog` (`src/benchmark-sources.ts`)
+  > drops it: `BenchmarkCatalogEntry` reads only
+  > id/name/description/categories/`model_count`. So the trust input is a
+  > one-line mapping away — *except* that **all 745 rows are `verified: false`**,
+  > so the flag has zero variance and reading it would rank nothing (no
+  > distinction between "self-reported" and "verified"; every candidate is
+  > equally unverified). It becomes actionable only if the source starts marking
+  > some benchmarks verified, at which point a `verified` gate (or a
+  > trust-weighted selection) could separate them. Until then, adding it is dead
+  > weight — the same fill-dominated-variance objection §1 raises.
 - **Missing benchmark categories (video's wishlist, none exist at all):**
   delegation, small agent teams (SATs), agent handoffs, agent swarms, failure
   recovery / self-healing, and agent-to-agent communication. Verified against the
