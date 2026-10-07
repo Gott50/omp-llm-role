@@ -213,12 +213,14 @@ agent is ranked on WritingBench, Creative Writing v3, COLLIE and the other
 writing benchmarks, not just the one you named. Discovery is non-fatal and
 skippable with `--no-discover`; an explicit `--benchmarks` list wins over it.
 
-Discovery is **quality-gated**: each candidate is assessed on four axes —
+Discovery is **quality-gated**: each candidate is assessed on five axes —
 coverage (share of the field carrying the metric), dispersion (does it separate
-models), provider composition and freshness — and a discovered benchmark that
+models), provider composition, freshness and trust (the share of the payload's
+entries that are self-reported, so a mostly vendor-submitted source is flagged) —
+and a discovered benchmark that
 fails any axis is dropped rather than folded in (a benchmark you name yourself is
 never dropped, only warned). The focus set is capped at three benchmarks so one
-keeps a decisive share. The report prints the four signals and warns per below-bar
+keeps a decisive share. The report prints the five signals and warns per below-bar
 axis, and warns when the new role's top pick is the same as the `default` role's
 (the role adds nothing). The agent file is written before the role, so a partial
 failure never leaves a dangling role.

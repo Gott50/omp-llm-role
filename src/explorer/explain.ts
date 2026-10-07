@@ -14,7 +14,7 @@
 
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
-import { sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
+import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
 import { BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, routeEffectivePrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
@@ -114,15 +114,15 @@ export function focusMetricsOf(def: RoleDef, declared: readonly SourceDeclaratio
   });
 }
 
-/** Four-axis assessment of each of a role's focus metrics, over the loaded pool
- * (the same dataset the updater ranks on). */
+/** Five-axis assessment of each of a role's focus metrics, over the loaded pool
+ * (the same dataset the updater ranks on), with the cached trust inputs. */
 export function focusAssessments(
   models: readonly Model[],
   def: RoleDef,
   declared: readonly SourceDeclaration[] = [],
 ): Record<string, FocusMetricAssessment> {
   const out: Record<string, FocusMetricAssessment> = {};
-  for (const metric of focusMetricsOf(def, declared)) out[metric] = assessFocusMetric(models, metric, declared);
+  for (const metric of focusMetricsOf(def, declared)) out[metric] = assessFocusMetric(models, metric, declared, cachedSourceInfo(metric, declared));
   return out;
 }
 

@@ -161,7 +161,7 @@ function bootstrapPayload(opts: ExplorerOpts, scope: Scope): object {
   }
   const metrics = weightableMetrics([...external]);
   const declared = loadDeclaredSources();
-  // Four-axis assessment of each role's focus metrics, over the same resolved
+  // Five-axis assessment of each role's focus metrics, over the same resolved
   // dataset the updater ranks on (so the explorer and the updater agree).
   const focus = Object.fromEntries(
     Object.entries(state.roles).map(([role, def]) => [role, focusAssessments(state.rank.models, def, declared)]),

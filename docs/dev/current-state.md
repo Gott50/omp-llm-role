@@ -8,6 +8,17 @@ copying the new numbers here; release prose belongs in
 below are the 2026-10-06 measurement (the input-price blend basis #21 and the
 #17/#18/#19/#20 wave; see the top bullet) and are not re-derived on read.
 
+- Trust axis (2026-10-07, issue #34): the focus-metric gate gained a fifth axis —
+  the per-entry `self_reported` share of a benchmark payload, below-bar above
+  `FOCUS_SELF_REPORTED_MAX_SHARE` (0.5). Measured live: `verified` is uniformly
+  `false`; `self_reported` varies (gpqa 19/20, deepswe-1.1 14/20,
+  terminal-bench-4.0 10/20, aa-omniscience-index 2/3, automationbench-aa 0/1, the
+  general benchmarks ~20/20), so a strict-majority bar flags the mostly
+  vendor-submitted sources while passing an independently measured one. The
+  catalog row's `is_community` (20/745 true) rides `BenchmarkCatalogEntry` behind
+  a cache shape guard. The ranking numbers are unchanged — the axis is a
+  create-agent discovery gate, not a weight.
+
 - Explorer scope switcher (2026-10-06, issue #28): the explorer is no longer
   user-level only. A **scope** is a role-config source — the user-level lock
   file, or one project where `/project-roles` was used. `startExplorer` resolves

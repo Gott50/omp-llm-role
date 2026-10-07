@@ -19,7 +19,7 @@ import { metricMeta } from "./explorer/explain.ts";
 import { ARCHETYPES, archetypeById, fitArchetype, type Archetype } from "./role-archetypes.ts";
 import { writeRoleSettings, type RoleWriteResult } from "./role-settings.ts";
 import { isKnownMetric, KNOWN_METRICS, PLUGIN_SETTINGS_PATH } from "./settings.ts";
-import { catalogBenchmarkDeclaration, catalogMetric, sourceForMetric, type BenchmarkCatalogEntry, type SourceDeclaration } from "./benchmark-sources.ts";
+import { catalogBenchmarkDeclaration, catalogMetric, sourceForMetric, type BenchmarkCatalogEntry, type FocusSourceInfo, type SourceDeclaration } from "./benchmark-sources.ts";
 
 /** The architect's output (omp's `/agents` hub contract): the routing rule and
  * the system prompt, plus the identifier omp would use for the file name. */
@@ -192,7 +192,7 @@ export type BenchmarkApplication = {
   unknown: string[];
   /** Focus metrics dropped by the top-K cap (priority order preserved). */
   dropped: string[];
-  /** Four-axis assessment per focus metric, for the report annotation. */
+  /** Five-axis assessment per focus metric, for the report annotation. */
   assessments: Record<string, FocusMetricAssessment>;
 };
 
@@ -224,6 +224,16 @@ export const FOCUS_STALENESS_MONTHS = 1;
  * (a smaller provider's absence is not a false positive). */
 export const FOCUS_ORG_MIN_SHARE = 0.1;
 
+/** The self-reported share above which a source is flagged as vendor-submitted.
+ * The per-entry `self_reported` flag is the varying trust signal (measured
+ * 2026-10-07: gpqa 19/20, deepswe-1.1 14/20, terminal-bench-4.0 10/20,
+ * aa-omniscience-index 2/3, automationbench-aa 0/1, the general benchmarks
+ * ~20/20). A strict majority (0.5) flags the mostly-self-reported general/gpqa
+ * sources while passing an independently measured one (automationbench 0/1) and
+ * a half-and-half source (terminal-bench 10/20). `verified` is uniformly `false`
+ * today, so it is carried but not gated. */
+export const FOCUS_SELF_REPORTED_MAX_SHARE = 0.5;
+
 /** The status vocabulary shared by every focus-metric axis. */
 export type FocusSignal = "ok" | "below-bar" | "unknown";
 
@@ -236,13 +246,18 @@ export type FocusCoverageEntry = {
   status: FocusSignal;
 };
 
-/** The four-axis assessment of one focus metric: coverage, dispersion, provider
- * composition and freshness. The single object the gate and every report share. */
+/** The five-axis assessment of one focus metric: coverage, dispersion, provider
+ * composition, freshness and source trust. The single object the gate and every
+ * report share. */
 export type FocusMetricAssessment = {
   coverage: FocusCoverageEntry;
   dispersion: { value: number | null; status: FocusSignal };
   composition: { omittedOrgs: string[]; status: FocusSignal };
   freshness: { newestCovered: string | null; newestPool: string | null; monthsBehind: number | null; status: FocusSignal };
+  /** The source's per-entry trust: the self-reported share of the covered
+   * entries. Zeros + `unknown` when the payload carried no entry flags (a
+   * declared/writing source) or the metric's scores were not loaded. */
+  trust: { selfReported: number; covered: number; status: FocusSignal };
 };
 
 /** Per-metric coverage of the ranking field, for the focus-coverage gate. */
@@ -253,8 +268,8 @@ export type FocusCoverage = {
   covered: Record<string, number>;
   /** Declared sources, so a declared metric's fill resolves. */
   declared?: readonly SourceDeclaration[];
-  /** Four-axis assessment per metric, when the caller assessed the loaded pool.
-   * Absent → the three new axes are `unknown` (the metric's scores were not
+  /** Five-axis assessment per metric, when the caller assessed the loaded pool.
+   * Absent → the four new axes are `unknown` (the metric's scores were not
    * loaded), never a silent `ok`. */
   assessments?: Record<string, FocusMetricAssessment>;
 };
@@ -376,6 +391,19 @@ function freshnessAxis(models: readonly Model[], metric: string, fill: number): 
   return { newestCovered, newestPool, monthsBehind, status: monthsBehind > FOCUS_STALENESS_MONTHS ? "below-bar" : "ok" };
 }
 
+/** The trust axis: the self-reported share of the covered entries against
+ * `FOCUS_SELF_REPORTED_MAX_SHARE`. A payload with no entry flags (a declared or
+ * writing source) or no covered entries is `unknown` — never a silent `ok`. */
+function trustAxis(source?: FocusSourceInfo): FocusMetricAssessment["trust"] {
+  const trust = source?.payload?.trust ?? null;
+  if (trust === null || trust.covered === 0) return { selfReported: 0, covered: 0, status: "unknown" };
+  return {
+    selfReported: trust.selfReported,
+    covered: trust.covered,
+    status: trust.selfReported / trust.covered > FOCUS_SELF_REPORTED_MAX_SHARE ? "below-bar" : "ok",
+  };
+}
+
 /** The all-unknown assessment: the field size is unknown, or the metric's scores
  * were not loaded. Annotated, never warned. */
 function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment {
@@ -384,14 +412,16 @@ function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment 
     dispersion: { value: null, status: "unknown" },
     composition: { omittedOrgs: [], status: "unknown" },
     freshness: { newestCovered: null, newestPool: null, monthsBehind: null, status: "unknown" },
+    trust: { selfReported: 0, covered: 0, status: "unknown" },
   };
 }
 
 /**
  * The one assessment rule, shared by the discovery gate, the report and the
- * explorer: coverage, dispersion, provider composition and freshness of one focus
- * metric over the loaded pool. `focusCoverageOk`/`countMetricCoverage` are its
- * coverage branch.
+ * explorer: coverage, dispersion, provider composition, freshness and source
+ * trust of one focus metric over the loaded pool. `focusCoverageOk`/
+ * `countMetricCoverage` are its coverage branch; `source` (the cached trust
+ * inputs) is its trust branch.
  *
  * An empty pool (unknown field size) or a metric with no covered values (its
  * scores were not loaded) reports every axis `unknown` — never a silent `ok`.
@@ -400,6 +430,7 @@ export function assessFocusMetric(
   models: readonly Model[],
   metric: string,
   declared: readonly SourceDeclaration[] = [],
+  source?: FocusSourceInfo,
 ): FocusMetricAssessment {
   const total = models.length;
   const covered = countMetricCoverage(models, metric, declared);
@@ -417,13 +448,14 @@ export function assessFocusMetric(
     dispersion: dispersionAxis(models, metric, fill),
     composition: compositionAxis(models, metric, fill),
     freshness: freshnessAxis(models, metric, fill),
+    trust: trustAxis(source),
   };
 }
 
 /** The one-line reason a below-bar assessment is dropped/warned, naming the
  * failed axis; null when every axis is ok or unknown. */
 export function belowBarReason(assessment: FocusMetricAssessment): string | null {
-  const { coverage, dispersion, composition, freshness } = assessment;
+  const { coverage, dispersion, composition, freshness, trust } = assessment;
   if (coverage.status === "below-bar") {
     return `coverage ${coverage.covered}/${coverage.total} is below the ${Math.round(FOCUS_COVERAGE_FLOOR * 100)}% bar`;
   }
@@ -435,6 +467,9 @@ export function belowBarReason(assessment: FocusMetricAssessment): string | null
   }
   if (freshness.status === "below-bar") {
     return `freshness ${freshness.monthsBehind?.toFixed(1)} months behind the pool`;
+  }
+  if (trust.status === "below-bar") {
+    return `trust ${trust.selfReported}/${trust.covered} self-reported is above the ${FOCUS_SELF_REPORTED_MAX_SHARE} bar`;
   }
   return null;
 }
@@ -460,8 +495,8 @@ export function belowBarReason(assessment: FocusMetricAssessment): string | null
  * The focus set is capped at `FOCUS_METRIC_CAP` in priority order (named/linked
  * first, then discovery order), so the caller's explicit choices survive and one
  * benchmark keeps a decisive share; the metrics beyond the cap are reported as
- * `dropped`. `coverage.assessments` (the four-axis assessment the caller computed
- * over the loaded pool) drives the per-metric annotation; without it the three
+ * `dropped`. `coverage.assessments` (the five-axis assessment the caller computed
+ * over the loaded pool) drives the per-metric annotation; without it the four
  * new axes are `unknown` (the metric's scores were not loaded).
  */
 export function applyFocusBenchmarks(
@@ -1096,7 +1131,7 @@ export function formatArchetypes(): string {
   }).join("\n\n");
 }
 
-/** One focus-metric line: coverage plus the three new signals. */
+/** One focus-metric line: coverage plus the four new signals. */
 function assessmentLine(metric: string, a: FocusMetricAssessment): string {
   const c = a.coverage;
   const head =
@@ -1107,7 +1142,8 @@ function assessmentLine(metric: string, a: FocusMetricAssessment): string {
   const composition =
     a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : `omits ${a.composition.omittedOrgs.join(", ")}`;
   const freshness = a.freshness.status === "unknown" ? "unknown" : `${a.freshness.monthsBehind?.toFixed(1)}mo ${a.freshness.status}`;
-  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}`;
+  const trust = a.trust.status === "unknown" ? "unknown" : `${a.trust.selfReported}/${a.trust.covered} ${a.trust.status}`;
+  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}`;
 }
 
 /** The human-readable report for a completed (or dry-run) create. */
@@ -1145,6 +1181,11 @@ export function formatCreateAgentReport(
     }
     if (a.freshness.status === "below-bar") {
       lines.push(`  warning:   ${metric} trails the pool by ${a.freshness.monthsBehind?.toFixed(1)} months — the source is stale`);
+    }
+    if (a.trust.status === "below-bar") {
+      lines.push(
+        `  warning:   ${metric} trust ${a.trust.selfReported}/${a.trust.covered} self-reported is above the ${FOCUS_SELF_REPORTED_MAX_SHARE} bar — the source is mostly vendor-submitted`,
+      );
     }
   }
   if (opts.differentiation) lines.push(`  warning:   ${opts.differentiation}`);

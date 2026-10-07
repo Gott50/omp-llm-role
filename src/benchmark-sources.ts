@@ -44,6 +44,8 @@ const UA =
 const WRITING_URL = "https://llm-stats.com/research/best-ai-for-writing/evidence.json";
 /** The llm-stats backend that serves one benchmark's leaderboard as JSON. */
 const LLM_STATS_BENCHMARK_URL = "https://api.zeroeval.com/leaderboard/benchmarks";
+/** The catalog cache file under `CACHE_DIR` (shared by the loader and `cachedSourceInfo`). */
+const CATALOG_CACHE_FILE = "benchmark-catalog-fetched-data.json";
 
 /** How a source's ids map to the llm-stats bare id. */
 export type JoinRule = "direct" | "slug-suffix" | "normalized";
@@ -174,6 +176,41 @@ export function parseLlmStatsBenchmark(v: unknown): Record<string, number> | nul
   return out;
 }
 
+/**
+ * The per-entry trust summary of an llm-stats benchmark payload: how many of the
+ * `entries[]` carry a boolean `self_reported` (the share denominator) and how
+ * many of those are `true`, plus the `verified` count over the same rows.
+ *
+ * `trust` is `null` when no parsed entry carried a boolean `self_reported` — a
+ * declared or writing-evidence payload has no entry flags, so the axis degrades
+ * to `unknown` rather than a silent `ok`. `verified` is uniformly `false` today
+ * (the source never sets it); it is kept for when the source starts to.
+ */
+export type BenchmarkPayloadMeta = {
+  trust: { selfReported: number; verified: number; covered: number } | null;
+};
+
+/**
+ * Pure: the per-entry trust summary of a raw llm-stats benchmark payload, or
+ * `null` when the payload has no llm-stats entries shape. Junk rows are skipped
+ * exactly like `parseLlmStatsBenchmark`; `verified` counts the covered rows
+ * (those carrying a boolean `self_reported`), so `verified <= covered` holds.
+ */
+export function parseBenchmarkPayloadMeta(v: unknown): BenchmarkPayloadMeta | null {
+  if (!isRecord(v) || !Array.isArray(v.entries)) return null;
+  let selfReported = 0;
+  let verified = 0;
+  let covered = 0;
+  for (const row of v.entries) {
+    if (!isRecord(row)) continue;
+    if (typeof row.self_reported !== "boolean") continue;
+    covered++;
+    if (row.self_reported) selfReported++;
+    if (row.verified === true) verified++;
+  }
+  return { trust: covered === 0 ? null : { selfReported, verified, covered } };
+}
+
 /** One row of the llm-stats benchmark catalog (`GET /leaderboard/benchmarks`). */
 export type BenchmarkCatalogEntry = {
   id: string;
@@ -181,6 +218,9 @@ export type BenchmarkCatalogEntry = {
   description: string;
   categories: string[];
   modelCount: number;
+  /** The catalog row's `is_community` flag (a community-submitted benchmark);
+   * `false` when absent or non-boolean. The only catalog-level trust signal. */
+  isCommunity: boolean;
 };
 
 /** Pure: the catalog payload (a top-level array) -> entries; null when unusable. */
@@ -198,6 +238,7 @@ export function parseBenchmarkCatalog(v: unknown): BenchmarkCatalogEntry[] | nul
       description: typeof row.description === "string" ? row.description : "",
       categories: Array.isArray(row.categories) ? row.categories.filter((c): c is string => typeof c === "string") : [],
       modelCount: typeof row.model_count === "number" && Number.isFinite(row.model_count) ? row.model_count : 0,
+      isCommunity: row.is_community === true,
     });
   }
   return out;
@@ -212,23 +253,30 @@ export const BENCHMARK_ENTRY_CAP = 20;
 
 /** A parsed benchmark payload: the joined scores plus the loadable entry count
  * and the payload's declared total (`total_models`), so the caller can annotate
- * a capped load. */
+ * a capped load. `meta` carries the payload's per-entry trust summary; it is
+ * `null` when the payload has no llm-stats entries shape (a declared or
+ * writing-evidence payload carries no entry flags). */
 export type BenchmarkPayload = {
   scores: Record<string, number>;
   /** Entries actually read from the payload — the loadable count. */
   loaded: number;
   /** The payload's declared total model count, when it carries one. */
   total: number | null;
+  /** The payload's per-entry trust summary; `null` when the payload has no
+   * llm-stats entries shape. */
+  meta: BenchmarkPayloadMeta | null;
 };
 
 /** Pure: run a source's parser over a payload, carrying the loadable count (the
  * post-fetch coverage count) and the payload's declared total so the caller can
- * annotate `loaded < total` — never the catalog's `model_count`. */
+ * annotate `loaded < total` — never the catalog's `model_count`. The trust meta
+ * is read independently of `source.parse`, so a declared/writing source (whose
+ * parser reads no entry flags) still reports `meta: null`. */
 export function parseBenchmarkPayload(source: BenchmarkSource, payload: unknown): BenchmarkPayload | null {
   const scores = source.parse(payload);
   if (scores === null) return null;
   const total = isRecord(payload) && typeof payload.total_models === "number" && Number.isFinite(payload.total_models) ? payload.total_models : null;
-  return { scores, loaded: Object.keys(scores).length, total };
+  return { scores, loaded: Object.keys(scores).length, total, meta: parseBenchmarkPayloadMeta(payload) };
 }
 
 // ---------------------------------------------------------------------------
@@ -620,7 +668,7 @@ export function applyBenchmarkScores(models: Model[], source: BenchmarkSource, s
 // Cache chain
 // ---------------------------------------------------------------------------
 
-type ScoresCacheFile = { fetchedAt: string; source: string; scores: Record<string, number>; total?: number | null };
+type ScoresCacheFile = { fetchedAt: string; source: string; scores: Record<string, number>; total?: number | null; meta?: BenchmarkPayloadMeta | null };
 
 /** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
 function readScoresCache(path: string, requireFresh: boolean): ScoresCacheFile | null {
@@ -636,8 +684,8 @@ function readScoresCache(path: string, requireFresh: boolean): ScoresCacheFile |
 }
 
 /** Pretty-printed with sorted keys for scannable diffs, mirroring the other caches. */
-function writeScoresCache(path: string, fetchedAt: string, source: string, scores: Record<string, number>, total: number | null): void {
-  const cache: ScoresCacheFile = { fetchedAt, source, scores, total };
+function writeScoresCache(path: string, fetchedAt: string, source: string, scores: Record<string, number>, total: number | null, meta: BenchmarkPayloadMeta | null): void {
+  const cache: ScoresCacheFile = { fetchedAt, source, scores, total, meta };
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(cache, null, 2));
   console.error(`wrote ${path}`);
@@ -661,6 +709,9 @@ export type BenchmarkScores = {
   loaded: number;
   /** The payload's declared total model count, when known. */
   total: number | null;
+  /** The payload's per-entry trust summary; `null` when the payload carried no
+   * entry flags (a declared/writing source) or the cache predates the field. */
+  meta: BenchmarkPayloadMeta | null;
 };
 
 /** Fetch a URL as JSON (the cache chain and the authoring dry-run). Throws on a
@@ -700,7 +751,7 @@ export async function loadBenchmarkScores(source: BenchmarkSource, refresh: bool
       const loaded = Object.keys(cached.scores).length;
       const total = cached.total ?? null;
       annotateCappedLoad(source, loaded, total);
-      return { scores: cached.scores, label: source.label, loaded, total };
+      return { scores: cached.scores, label: source.label, loaded, total, meta: cached.meta ?? null };
     }
   }
   if (source.fetch) {
@@ -708,9 +759,9 @@ export async function loadBenchmarkScores(source: BenchmarkSource, refresh: bool
       const payload = await fetchJson(source.fetch.url, source.fetch.method, source.fetch.body);
       const parsed = parseBenchmarkPayload(source, payload);
       if (parsed && parsed.loaded > 0) {
-        writeScoresCache(path, new Date().toISOString(), source.fetch.url, parsed.scores, parsed.total);
+        writeScoresCache(path, new Date().toISOString(), source.fetch.url, parsed.scores, parsed.total, parsed.meta);
         annotateCappedLoad(source, parsed.loaded, parsed.total);
-        return { scores: parsed.scores, label: source.labelFromPayload?.(payload) ?? source.label, loaded: parsed.loaded, total: parsed.total };
+        return { scores: parsed.scores, label: source.labelFromPayload?.(payload) ?? source.label, loaded: parsed.loaded, total: parsed.total, meta: parsed.meta };
       }
       console.error(`${source.id}: unexpected payload shape; skipping`);
     } catch (err) {
@@ -723,15 +774,16 @@ export async function loadBenchmarkScores(source: BenchmarkSource, refresh: bool
     const loaded = Object.keys(stale.scores).length;
     const total = stale.total ?? null;
     annotateCappedLoad(source, loaded, total);
-    return { scores: stale.scores, label: source.label, loaded, total };
+    return { scores: stale.scores, label: source.label, loaded, total, meta: stale.meta ?? null };
   }
   return null;
 }
 
 type CatalogCacheFile = { fetchedAt: string; source: string; entries: BenchmarkCatalogEntry[] };
 
-/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
-function readCatalogCache(path: string, requireFresh: boolean): CatalogCacheFile | null {
+/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale.
+ * Exported for the shape-guard test (a cache predating `isCommunity` must be rejected). */
+export function readCatalogCache(path: string, requireFresh: boolean): CatalogCacheFile | null {
   let parsed: CatalogCacheFile;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8")) as CatalogCacheFile;
@@ -739,6 +791,11 @@ function readCatalogCache(path: string, requireFresh: boolean): CatalogCacheFile
     return null;
   }
   if (!Array.isArray(parsed?.entries)) return null;
+  // A cache written before `isCommunity` landed lacks the field; refetch rather
+  // than silently reporting `is_community: undefined` (mirrors `readEndpointsCache`).
+  // An empty catalog is still `null` (nothing to sample, nothing to discover).
+  const sample = parsed.entries[0];
+  if (typeof sample !== "object" || sample === null || !("isCommunity" in sample)) return null;
   if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
   return parsed;
 }
@@ -758,7 +815,7 @@ function writeCatalogCache(path: string, fetchedAt: string, source: string, entr
  * payload is never cached, so the next run retries.
  */
 export async function loadBenchmarkCatalog(refresh: boolean, cacheDir = CACHE_DIR): Promise<BenchmarkCatalogEntry[] | null> {
-  const path = join(cacheDir, "benchmark-catalog-fetched-data.json");
+  const path = join(cacheDir, CATALOG_CACHE_FILE);
   if (!refresh) {
     const cached = readCatalogCache(path, true);
     if (cached) {
@@ -783,6 +840,30 @@ export async function loadBenchmarkCatalog(refresh: boolean, cacheDir = CACHE_DI
     return stale.entries;
   }
   return null;
+}
+
+/** The cached trust inputs for one focus metric: the payload's per-entry trust
+ * summary (from the source's scores cache) and the catalog row (from the catalog
+ * cache). Either half is `null` when its cache is absent or predates the field. */
+export type FocusSourceInfo = {
+  payload?: BenchmarkPayloadMeta | null;
+  catalog?: BenchmarkCatalogEntry | null;
+};
+
+/**
+ * The cached trust inputs for a focus metric, with no network: the source's
+ * scores cache (if any) for the payload meta, and the catalog cache (if any) for
+ * the matching row. The metric is reverse-mapped to a catalog id through
+ * `catalogMetric` (a shipped key via `SHIPPED_CATALOG_METRICS`, else the
+ * `bench:<local>` form), so a shipped metric and a generic `bench:<id>` both
+ * resolve. `null` for either half when the cache is absent or the metric is
+ * unknown to the catalog.
+ */
+export function cachedSourceInfo(metric: string, declared: readonly SourceDeclaration[] = [], cacheDir = CACHE_DIR): FocusSourceInfo {
+  const source = sourceForMetric(metric, declared);
+  const payload = source === null ? null : readScoresCache(join(cacheDir, source.cacheFile), false)?.meta ?? null;
+  const catalog = readCatalogCache(join(cacheDir, CATALOG_CACHE_FILE), false);
+  return { payload, catalog: catalog?.entries.find((entry) => catalogMetric(entry.id) === metric) ?? null };
 }
 
 // ---------------------------------------------------------------------------

@@ -18,7 +18,9 @@ import {
   normalizeMetricKey,
   parseBenchmarkCatalog,
   parseBenchmarkPayload,
+  parseBenchmarkPayloadMeta,
   parseSourceDeclaration,
+  readCatalogCache,
   resolveBenchmarkSource,
   sourceForMetric,
   validateDeclaration,
@@ -57,10 +59,31 @@ test("parseBenchmarkPayload reads the llm-stats entries shape and rejects junk",
         "junk",
       ],
     }),
-    { scores: { a: 0.5 }, loaded: 1, total: null },
+    { scores: { a: 0.5 }, loaded: 1, total: null, meta: { trust: null } },
   );
   assert.equal(parseBenchmarkPayload(source, {}), null);
   assert.equal(parseBenchmarkPayload(source, null), null);
+});
+
+test("parseBenchmarkPayloadMeta reads the per-entry self_reported/verified flags", () => {
+  // 19 self-reported of 20 covered entries (the 20th carries the flag as false).
+  const entries = Array.from({ length: 20 }, (_, i) => ({ model_id: `m${i}`, normalized_score: 0.5, self_reported: i < 19, verified: false }));
+  const payload = { benchmark_id: "alpacaeval-2.0", total_models: 20, entries };
+  assert.deepEqual(parseBenchmarkPayloadMeta(payload), { trust: { selfReported: 19, verified: 0, covered: 20 } });
+  // The same summary rides `parseBenchmarkPayload`'s `meta`.
+  const source = resolveBenchmarkSource("alpacaeval-2.0");
+  assert.ok(source);
+  assert.deepEqual(parseBenchmarkPayload(source, payload)?.meta, { trust: { selfReported: 19, verified: 0, covered: 20 } });
+  // An independently measured source: no entry is self-reported.
+  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5, self_reported: false }] }), {
+    trust: { selfReported: 0, verified: 0, covered: 1 },
+  });
+  // A payload whose entries carry no boolean self_reported: trust is null, not a silent ok.
+  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), { trust: null });
+  // A payload with no llm-stats entries shape (a writing/declared payload): the whole meta is null.
+  assert.equal(parseBenchmarkPayloadMeta({ records: [{ modelId: "q", writingBenchScore: 0.9 }] }), null);
+  assert.equal(parseBenchmarkPayloadMeta(null), null);
+  assert.equal(parseBenchmarkPayloadMeta({ entries: "nope" }), null);
 });
 
 test("parseBenchmarkPayload reads the writing evidence shape", () => {
@@ -70,6 +93,7 @@ test("parseBenchmarkPayload reads the writing evidence shape", () => {
     scores: { q: 0.883 },
     loaded: 1,
     total: null,
+    meta: null,
   });
   assert.equal(parseBenchmarkPayload(source, { records: "nope" }), null);
 });
@@ -174,14 +198,14 @@ test("loadBenchmarkScores: fresh cache wins, a live fetch writes the cache, a st
 
 test("parseBenchmarkCatalog keeps valid rows and rejects a non-array payload", () => {
   const payload = [
-    { benchmark_id: "writingbench", name: "WritingBench", description: "d", categories: ["writing"], model_count: 12 },
+    { benchmark_id: "writingbench", name: "WritingBench", description: "d", categories: ["writing"], model_count: 12, is_community: true },
     { name: "no id" },
     "not an object",
     { benchmark_id: "gpqa", name: "GPQA", categories: "nope" },
   ];
   assert.deepEqual(parseBenchmarkCatalog(payload), [
-    { id: "writingbench", name: "WritingBench", description: "d", categories: ["writing"], modelCount: 12 },
-    { id: "gpqa", name: "GPQA", description: "", categories: [], modelCount: 0 },
+    { id: "writingbench", name: "WritingBench", description: "d", categories: ["writing"], modelCount: 12, isCommunity: true },
+    { id: "gpqa", name: "GPQA", description: "", categories: [], modelCount: 0, isCommunity: false },
   ]);
   assert.equal(parseBenchmarkCatalog({ benchmarks: [] }), null);
 });
@@ -193,7 +217,7 @@ test("loadBenchmarkCatalog: fresh cache wins, a live fetch writes the cache, a s
   let calls = 0;
   try {
     // Fresh cache wins: no fetch.
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", entries: [{ id: "a", name: "A", description: "", categories: [], modelCount: 1 }] }));
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", entries: [{ id: "a", name: "A", description: "", categories: [], modelCount: 1, isCommunity: false }] }));
     globalThis.fetch = (async () => {
       calls++;
       return new Response(JSON.stringify([{ benchmark_id: "b", name: "B" }]));
@@ -209,7 +233,7 @@ test("loadBenchmarkCatalog: fresh cache wins, a live fetch writes the cache, a s
     assert.deepEqual(JSON.parse(readFileSync(cachePath, "utf8")).entries.map((e: { id: string }) => e.id), ["b"]);
 
     // A stale cache is the last resort when the fetch fails.
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", entries: [{ id: "c", name: "C", description: "", categories: [], modelCount: 0 }] }));
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", entries: [{ id: "c", name: "C", description: "", categories: [], modelCount: 0, isCommunity: false }] }));
     globalThis.fetch = (async () => {
       throw new Error("offline");
     }) as typeof fetch;
@@ -230,6 +254,24 @@ test("catalogMetric maps shipped ids and falls back to a dot-free bench key", ()
   assert.equal(catalogMetric("writingbench"), "writing");
   assert.equal(catalogMetric("creative-writing-v3"), "bench:creative-writing-v3");
   assert.equal(catalogMetric("alpacaeval-2.0"), "bench:alpacaeval-2_0");
+});
+
+test("the catalog cache is rejected when its entries predate isCommunity", () => {
+  const dir = mkdtempSync(join(tmpdir(), "catalog-guard-"));
+  const path = join(dir, "benchmark-catalog-fetched-data.json");
+  // A row in the pre-#34 shape: every field the guard checks except isCommunity.
+  const legacy = { id: "a", name: "A", description: "", categories: [], modelCount: 1 };
+  const write = (entries: object[]) => writeFileSync(path, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "t", entries }));
+
+  write([legacy]);
+  assert.equal(readCatalogCache(path, true), null, "a cache without isCommunity must be rejected");
+
+  write([{ ...legacy, isCommunity: false }]);
+  assert.ok(readCatalogCache(path, true), "a cache with isCommunity must be accepted");
+
+  // An empty catalog is still null (nothing to sample, nothing to discover).
+  write([]);
+  assert.equal(readCatalogCache(path, true), null);
 });
 
 test("executeDeclaration walks the payload path, normalizes scoreMax and joins", () => {

@@ -72,7 +72,11 @@ passing.
     maps an llm-stats benchmark page, a bare id, the writing leaderboard and a
     Design Arena link, `null` for an unknown host; `normalizeMetricKey` is
     dot-free; `parseBenchmarkPayload` reads the llm-stats `entries[]` and writing
-    evidence shapes and rejects junk; `applyBenchmarkScores` fills uncovered
+    evidence shapes and rejects junk; `parseBenchmarkPayloadMeta` reads the
+    per-entry `self_reported`/`verified` flags (19/20 → `trust`, no flag → `null`,
+    no entries shape → `null`); `parseBenchmarkCatalog` carries `isCommunity`; the
+    catalog cache rejects a pre-`isCommunity` cache (and an empty one);
+    `applyBenchmarkScores` fills uncovered
     models; `loadBenchmarkScores` follows fresh → live → stale with a temp cache
     dir and an injected fetch; a declaration executes (payload path, id/score
     fields, `scoreMax`, join) and a metric colliding with a shipped key is
@@ -84,7 +88,7 @@ passing.
     `--dry-run` writes neither file; an architect `spec` replaces the
     description/body; `applyFocusBenchmarks` gives a named benchmark a decisive
     share, is a no-op for the archetype's own specialist set, and keeps both
-    invariants; the four-axis gate.
+    invariants; the five-axis gate.
 18. **Agent removal** (`remove-agent.test.ts`) — the role's lock-file keys and the
     agent file are deleted (backup written); a shipped default role, a reserved
     name and an invalid name are refused; nothing-to-remove errors; `--dry-run`

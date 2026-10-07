@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { applyFocusBenchmarks, assessFocusMetric, belowBarReason, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_DISPERSION_FLOOR, FOCUS_METRIC_CAP, FOCUS_ORG_MIN_SHARE, FOCUS_STALENESS_MONTHS, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, type CreateAgentRequest, type FocusMetricAssessment } from "../src/agent-create.ts";
+import { applyFocusBenchmarks, assessFocusMetric, belowBarReason, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_DISPERSION_FLOOR, FOCUS_METRIC_CAP, FOCUS_ORG_MIN_SHARE, FOCUS_SELF_REPORTED_MAX_SHARE, FOCUS_STALENESS_MONTHS, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, type CreateAgentRequest, type FocusMetricAssessment } from "../src/agent-create.ts";
 import type { BenchmarkCatalogEntry } from "../src/benchmark-sources.ts";
 import { buildModels, rankRole, type Model, type RoleDef } from "../src/engine.ts";
 import { isRecord } from "../src/guards.ts";
@@ -315,10 +315,10 @@ test("fitArchetype scores by matched keyword length and falls back on no match",
 test("discoverBenchmarks filters by coverage, ranks lexically, and maps metrics", async () => {
   // Alphabetical order, so a blind cap would drop the writing benchmarks.
   const catalog: BenchmarkCatalogEntry[] = [
-    { id: "aaa-generic", name: "AAA Generic", description: "unrelated", categories: ["misc"], modelCount: 10 },
-    { id: "creative-writing-v3", name: "Creative Writing v3", description: "prose", categories: ["misc"], modelCount: 15 },
-    { id: "tiny-writing", name: "Tiny Writing", description: "writing", categories: ["writing"], modelCount: 1 },
-    { id: "writingbench", name: "WritingBench", description: "", categories: ["writing"], modelCount: 16 },
+    { id: "aaa-generic", name: "AAA Generic", description: "unrelated", categories: ["misc"], modelCount: 10, isCommunity: false },
+    { id: "creative-writing-v3", name: "Creative Writing v3", description: "prose", categories: ["misc"], modelCount: 15, isCommunity: false },
+    { id: "tiny-writing", name: "Tiny Writing", description: "writing", categories: ["writing"], modelCount: 1, isCommunity: false },
+    { id: "writingbench", name: "WritingBench", description: "", categories: ["writing"], modelCount: 16, isCommunity: false },
   ];
   let seen: readonly BenchmarkCatalogEntry[] = [];
   const decide = async (_purpose: string, candidates: readonly BenchmarkCatalogEntry[]) => {
@@ -357,7 +357,7 @@ test("discoverBenchmarks filters by coverage, ranks lexically, and maps metrics"
 
 test("discoverBenchmarks carries the declaration a dotted catalog id needs", async () => {
   const catalog: BenchmarkCatalogEntry[] = [
-    { id: "deepswe-1.1", name: "DeepSWE v1.1", description: "coding agentic", categories: ["coding"], modelCount: 40 },
+    { id: "deepswe-1.1", name: "DeepSWE v1.1", description: "coding agentic", categories: ["coding"], modelCount: 40, isCommunity: false },
   ];
   const result = await discoverBenchmarks("agentic coding", catalog, async () => ["deepswe-1.1"], [], null);
   assert.deepEqual(result.discovered.map((d) => d.metric), ["bench:deepswe-1_1"]);
@@ -371,9 +371,9 @@ test("discoverBenchmarks drops a fill-0 benchmark whose coverage is below the sh
   // `swe-bench-verified` maps to the fill-0 `swe_bench` metric; 20/400 = 5% is
   // far below the 35% bar, so it must not become a decisive focus weight.
   const catalog: BenchmarkCatalogEntry[] = [
-    { id: "swe-bench-verified", name: "SWE-bench Verified", description: "coding", categories: ["coding"], modelCount: 20 },
-    { id: "gpqa", name: "GPQA", description: "coding", categories: ["coding"], modelCount: 300 },
-    { id: "writingbench", name: "WritingBench", description: "coding", categories: ["coding"], modelCount: 4 },
+    { id: "swe-bench-verified", name: "SWE-bench Verified", description: "coding", categories: ["coding"], modelCount: 20, isCommunity: false },
+    { id: "gpqa", name: "GPQA", description: "coding", categories: ["coding"], modelCount: 300, isCommunity: false },
+    { id: "writingbench", name: "WritingBench", description: "coding", categories: ["coding"], modelCount: 4, isCommunity: false },
   ];
   const decide = async () => ["swe-bench-verified", "gpqa", "writingbench"];
 
@@ -442,10 +442,11 @@ test("applyFocusBenchmarks annotates coverage and warns below the bar", () => {
   assert.deepEqual(applied.assessments.gpqa.coverage, { covered: 20, total: 400, share: 0.05, fill: 0, status: "below-bar" });
   assert.equal(applied.assessments.writing.coverage.status, "ok");
   assert.equal(applied.assessments.writing.coverage.fill, 0.195);
-  // Without a loaded pool the three new axes are unknown, never a silent ok.
+  // Without a loaded pool the four new axes are unknown, never a silent ok.
   assert.equal(applied.assessments.gpqa.dispersion.status, "unknown");
   assert.equal(applied.assessments.gpqa.composition.status, "unknown");
   assert.equal(applied.assessments.gpqa.freshness.status, "unknown");
+  assert.equal(applied.assessments.gpqa.trust.status, "unknown");
 
   // Unknown field size: annotated, not warned.
   const unknown = applyFocusBenchmarks(base, ["gpqa"], { total: null, covered: {} });
@@ -556,7 +557,7 @@ test("parseCreateAgentInput carries the discovery flags", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The four-axis focus-metric assessment (issue #17)
+// The five-axis focus-metric assessment (issue #17, trust axis #34)
 // ---------------------------------------------------------------------------
 
 /** A pool with distinct orgs and release dates, for the assessment axes. */
@@ -678,15 +679,82 @@ test("belowBarReason names the failed axis", () => {
   assert.equal(belowBarReason(assessFocusMetric([], "aime")), null);
 });
 
+test("assessFocusMetric: the trust axis reads the payload's self-reported share", () => {
+  const models = assessmentPool();
+  for (const m of models) m.metrics.gpqa = 0.5;
+  const withTrust = (selfReported: number, covered: number) =>
+    assessFocusMetric(models, "gpqa", [], { payload: { trust: { selfReported, verified: 0, covered } } });
+
+  // 19/20 self-reported is above the bar; an independently measured source passes.
+  const flagged = withTrust(19, 20);
+  assert.equal(flagged.trust.status, "below-bar");
+  assert.equal(flagged.trust.selfReported, 19);
+  assert.equal(flagged.trust.covered, 20);
+  assert.equal(withTrust(0, 20).trust.status, "ok");
+
+  // The bar is a strict majority: exactly half passes, more than half fails.
+  assert.equal(FOCUS_SELF_REPORTED_MAX_SHARE, 0.5);
+  assert.equal(withTrust(10, 20).trust.status, "ok");
+  assert.equal(withTrust(11, 20).trust.status, "below-bar");
+
+  // A payload with no entry flags (a declared/writing source) is unknown, never ok.
+  assert.equal(assessFocusMetric(models, "gpqa", [], { payload: { trust: null } }).trust.status, "unknown");
+  // No source info at all: unknown.
+  assert.equal(assessFocusMetric(models, "gpqa").trust.status, "unknown");
+  // An empty pool: every axis unknown, trust included.
+  assert.equal(assessFocusMetric([], "gpqa", [], { payload: { trust: { selfReported: 19, verified: 0, covered: 20 } } }).trust.status, "unknown");
+});
+
+test("belowBarReason names the trust axis, and the drop/warn split holds for it", async () => {
+  // Distinct gpqa values so dispersion/composition/freshness are all ok and the
+  // trust axis is the only below-bar one.
+  const models = assessmentPool();
+  models[0].metrics.gpqa = 0.2;
+  models[1].metrics.gpqa = 0.5;
+  models[2].metrics.gpqa = 0.8;
+  models[3].metrics.gpqa = 0.9;
+  const flagged = assessFocusMetric(models, "gpqa", [], { payload: { trust: { selfReported: 19, verified: 0, covered: 20 } } });
+  assert.equal(flagged.dispersion.status, "ok");
+  assert.match(belowBarReason(flagged) ?? "", /trust 19\/20 self-reported is above the 0\.5 bar/);
+
+  // A discovered candidate below-bar on trust alone is dropped with that reason.
+  const catalog: BenchmarkCatalogEntry[] = [
+    { id: "vendor", name: "Vendor Board", description: "coding", categories: ["coding"], modelCount: 300, isCommunity: false },
+  ];
+  const trustBelowBar: FocusMetricAssessment = {
+    coverage: { covered: 300, total: 400, share: 0.75, fill: 0, status: "ok" },
+    dispersion: { value: 0.2, status: "ok" },
+    composition: { omittedOrgs: [], status: "ok" },
+    freshness: { newestCovered: "2025-06-01", newestPool: "2025-06-01", monthsBehind: 0, status: "ok" },
+    trust: { selfReported: 19, covered: 20, status: "below-bar" },
+  };
+  const discovered = await discoverBenchmarks("coding", catalog, async () => ["vendor"], [], 400, async () => trustBelowBar);
+  assert.deepEqual(discovered.discovered, []);
+  assert.equal(discovered.dropped.length, 1);
+  assert.match(discovered.dropped[0].reason, /trust 19\/20 self-reported is above the 0\.5 bar/);
+
+  // The same metric named by the user is kept and annotated, never dropped.
+  const base = { general: 0.4, code: 0.2, price: 0.2, throughput: 0.2 };
+  const applied = applyFocusBenchmarks(base, ["bench:vendor"], {
+    total: 400,
+    covered: { "bench:vendor": 300 },
+    assessments: { "bench:vendor": trustBelowBar },
+  });
+  assert.deepEqual(applied.added, ["bench:vendor"]);
+  assert.equal(applied.assessments["bench:vendor"].trust.status, "below-bar");
+  assert.ok(applied.weights["bench:vendor"] !== undefined);
+});
+
 test("discoverBenchmarks drops a below-bar candidate with the failed axis in the reason", async () => {
   const catalog: BenchmarkCatalogEntry[] = [
-    { id: "saturated", name: "Saturated", description: "coding", categories: ["coding"], modelCount: 300 },
+    { id: "saturated", name: "Saturated", description: "coding", categories: ["coding"], modelCount: 300, isCommunity: false },
   ];
   const belowBar: FocusMetricAssessment = {
     coverage: { covered: 300, total: 400, share: 0.75, fill: 0, status: "ok" },
     dispersion: { value: 0.03, status: "below-bar" },
     composition: { omittedOrgs: [], status: "ok" },
     freshness: { newestCovered: "2025-06-01", newestPool: "2025-06-01", monthsBehind: 0, status: "ok" },
+    trust: { selfReported: 0, covered: 20, status: "ok" },
   };
   const result = await discoverBenchmarks("coding", catalog, async () => ["saturated"], [], 400, async () => belowBar);
   assert.deepEqual(result.discovered, []);
@@ -696,13 +764,14 @@ test("discoverBenchmarks drops a below-bar candidate with the failed axis in the
 
 test("the drop/warn split: a discovered below-bar candidate is dropped, a named one kept and warned", async () => {
   const catalog: BenchmarkCatalogEntry[] = [
-    { id: "saturated", name: "Saturated", description: "coding", categories: ["coding"], modelCount: 300 },
+    { id: "saturated", name: "Saturated", description: "coding", categories: ["coding"], modelCount: 300, isCommunity: false },
   ];
   const belowBar: FocusMetricAssessment = {
     coverage: { covered: 300, total: 400, share: 0.75, fill: 0, status: "ok" },
     dispersion: { value: 0.03, status: "below-bar" },
     composition: { omittedOrgs: [], status: "ok" },
     freshness: { newestCovered: "2025-06-01", newestPool: "2025-06-01", monthsBehind: 0, status: "ok" },
+    trust: { selfReported: 0, covered: 20, status: "ok" },
   };
   const discovered = await discoverBenchmarks("coding", catalog, async () => ["saturated"], [], 400, async () => belowBar);
   assert.deepEqual(discovered.discovered, []);
@@ -720,13 +789,14 @@ test("the drop/warn split: a discovered below-bar candidate is dropped, a named 
   assert.ok(applied.weights["bench:saturated"] !== undefined);
 });
 
-test("formatCreateAgentReport prints the four signals and warns per below-bar axis", () => {
+test("formatCreateAgentReport prints the five signals and warns per below-bar axis", () => {
   const { lockPath } = workspace();
   const belowBar: FocusMetricAssessment = {
     coverage: { covered: 300, total: 400, share: 0.75, fill: 0, status: "ok" },
     dispersion: { value: 0.03, status: "below-bar" },
     composition: { omittedOrgs: ["Beta"], status: "below-bar" },
     freshness: { newestCovered: "2025-01-01", newestPool: "2025-06-01", monthsBehind: 5, status: "below-bar" },
+    trust: { selfReported: 19, covered: 20, status: "below-bar" },
   };
   const result = createAgent(request(lockPath, {
     dryRun: true,
@@ -735,10 +805,11 @@ test("formatCreateAgentReport prints the four signals and warns per below-bar ax
   }));
   assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
   const report = formatCreateAgentReport(result, "ranking…");
-  assert.match(report, /coverage:\s+gpqa 300\/400 \(75\.0%\) ok\s+dispersion 0\.030 below-bar\s+composition omits Beta\s+freshness 5\.0mo below-bar/);
+  assert.match(report, /coverage:\s+gpqa 300\/400 \(75\.0%\) ok\s+dispersion 0\.030 below-bar\s+composition omits Beta\s+freshness 5\.0mo below-bar\s+trust 19\/20 below-bar/);
   assert.match(report, /warning:\s+gpqa dispersion 0\.030 is below the 0\.05 bar/);
   assert.match(report, /warning:\s+gpqa omits Beta/);
   assert.match(report, /warning:\s+gpqa trails the pool by 5\.0 months/);
+  assert.match(report, /warning:\s+gpqa trust 19\/20 self-reported is above the 0\.5 bar/);
 });
 
 test("buildModels carries the row's release_date onto the model record", () => {

@@ -18,7 +18,7 @@ import { assessFocusMetric, countMetricCoverage, createAgent, CREATE_AGENT_USAGE
 import { formatRemoveAgentReport, parseRemoveAgentArgs, removeAgent, REMOVE_AGENT_USAGE } from "./agent-remove.ts";
 import { generateAgentSpec, generateProjectProfile } from "./agent-architect.ts";
 import { authorBenchmarkSource } from "./benchmark-author.ts";
-import { applyBenchmarkScores, BENCHMARK_ENTRY_CAP, declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, sourceForMetric, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
+import { applyBenchmarkScores, BENCHMARK_ENTRY_CAP, cachedSourceInfo, declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, sourceForMetric, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkPayloadMeta, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson, fetchKeyAvailability, type KeyAvailability } from "./availability.ts";
 import { loadRankData, rankRole, type Model } from "./engine.ts";
@@ -501,11 +501,15 @@ export default function (pi: ExtensionAPI) {
       const focusPool: Model[] = rankModels === null ? [] : rankModels.map((m) => ({ ...m, metrics: { ...m.metrics } }));
       const assess: FocusAssessor = async (metric) => {
         const source = sourceForMetric(metric, declared);
+        let payload: BenchmarkPayloadMeta | null = null;
         if (source !== null) {
           const loaded = await loadBenchmarkScores(source, false);
-          if (loaded !== null) applyBenchmarkScores(focusPool, source, loaded.scores);
+          if (loaded !== null) {
+            applyBenchmarkScores(focusPool, source, loaded.scores);
+            payload = loaded.meta;
+          }
         }
-        return assessFocusMetric(focusPool, metric, declared);
+        return assessFocusMetric(focusPool, metric, declared, { payload, catalog: cachedSourceInfo(metric, declared).catalog });
       };
 
       // 1b. Discover the catalog benchmarks relevant to the purpose (unless
@@ -586,7 +590,7 @@ export default function (pi: ExtensionAPI) {
 
       // 3b. Assess the focus metrics: a discovered metric's coverage is the
       //     catalog's model count; a named metric's is the loaded models that
-      //     carry it. The four-axis assessment is computed over the joined pool
+      //     carry it. The five-axis assessment is computed over the joined pool
       //     (the same object the gate and the report consume).
       const covered: Record<string, number> = {};
       const assessments: Record<string, FocusMetricAssessment> = {};
@@ -678,11 +682,15 @@ export default function (pi: ExtensionAPI) {
       const focusPool: Model[] = rankModels === null ? [] : rankModels.map((m) => ({ ...m, metrics: { ...m.metrics } }));
       const assess: FocusAssessor = async (metric) => {
         const source = sourceForMetric(metric, declared);
+        let payload: BenchmarkPayloadMeta | null = null;
         if (source !== null) {
           const loaded = await loadBenchmarkScores(source, false);
-          if (loaded !== null) applyBenchmarkScores(focusPool, source, loaded.scores);
+          if (loaded !== null) {
+            applyBenchmarkScores(focusPool, source, loaded.scores);
+            payload = loaded.meta;
+          }
         }
-        return assessFocusMetric(focusPool, metric, declared);
+        return assessFocusMetric(focusPool, metric, declared, { payload, catalog: cachedSourceInfo(metric, declared).catalog });
       };
 
       // 3. Per new role: discover benchmarks (judge-backed) and author the agent.

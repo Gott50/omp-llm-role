@@ -10,6 +10,20 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Trust axis on the focus-metric gate** — the fifth focus-metric axis reads the
+  benchmark payload's per-entry `self_reported` flag: a source whose covered
+  entries are mostly self-reported (above `FOCUS_SELF_REPORTED_MAX_SHARE`, 0.5) is
+  flagged, so a role author does not rank on vendor-submitted scores. The
+  per-entry `verified` flag is carried but not gated (uniformly `false` upstream
+  today). `parseBenchmarkPayloadMeta` reads the flags independently of the
+  source's parser, `BenchmarkPayload`/`BenchmarkScores` carry the summary as
+  `meta`, and the scores cache persists it. The catalog row's `is_community` now
+  rides `BenchmarkCatalogEntry`, guarded by a catalog-cache shape check (a cache
+  written before the field is refetched). A discovered candidate below-bar on
+  trust is dropped non-fatally with a reason; a user-named metric is warned, never
+  dropped; a payload with no entry flags (a declared/writing source) or an
+  unloaded metric reports `trust: unknown`, never a silent `ok`. The create
+  report, the explorer focus table and the CLI report print the axis. (issue #34)
 - **Cache-read pricing in the cost axis** — a role may now declare an assumed
   cache-hit rate (`roles.<role>.cacheHitRate`, 0–1; `0`/absent = off) and its
   effective input price blends the endpoint's cache-read price with its full

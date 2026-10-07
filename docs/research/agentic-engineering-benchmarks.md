@@ -262,39 +262,11 @@ index"* is the per-role weight design.
   available, they would sharpen the price axis beyond $/M.
 - **Selection criteria worth borrowing:** prefer actively-maintained sources
   (fresh model coverage) and treat provider-biased benchmarks as unusable. The
-  registry's "coverage over the field" rule captures the first; it does **not**
-  capture trust — the catalog carries no `verified` signal the plugin reads, and
-  every sampled benchmark is `verified: false` (self-reported). A `self_reported`/
-  `verified` field is the missing trust input.
-
-  > **Update (2026-10-07):** the trust signal exists upstream, and it is **not
-  > uniformly inert** — but the catalog `verified` is the wrong place to look.
-  > Verified live against the source:
-  >
-  > - **Catalog** (`GET …/leaderboard/benchmarks`; 18 fields/row): `verified` is
-  >   **uniformly `false`** (745/745) — inert at this level. `parseBenchmarkCatalog`
-  >   drops it and 12 other fields (`modality`, `max_score`, `is_community`,
-  >   `updated_at`, `version_count`, `star_count`, `dataset_id`/`dataset_org_id`/
-  >   `dataset_slug`, `latest_version_row_count`, `size_bytes`, `subset_count`),
-  >   reading only id/name/description/categories/`model_count`.
-  > - **Per-entry** (`GET …/benchmarks/<id>`; the payload's `entries`, ~19
-  >   fields/row): carries `verified` (**also uniformly `false`**) *and*
-  >   **`self_reported`, which varies** — `gpqa` 19/20, `deepswe-1.1` 14/20,
-  >   `terminal-bench-4.0` 10/20, `aa-omniscience-index` 2/3, `automationbench-aa`
-  >   0/1; the general benchmarks ~20/20. `parseLlmStatsBenchmark` drops both (it
-  >   reads only `model_id` + `normalized_score`), plus
-  >   `organization_id`/`provider_id` (provider provenance — the video's bias
-  >   signal), `input_cost_per_million`/`output_cost_per_million` (a second,
-  >   independent price source), `speed_rps`/`context_window`, `release_date`
-  >   (freshness), `multimodal`, `benchmark_score` (raw), `param_count`, `is_new`.
-  >
-  > So the "missing trust input" is not missing — it rides the per-benchmark
-  > payload at *entry* granularity and a 2-field parser discards it. It is not
-  > yet a usable *gate*, though: `verified` is never true and `self_reported` is
-  > true for the large majority of ranking-pool entries, so a `verified` (or an
-  > inverted `self_reported`) gate would drop ~nothing (or ~everything) — the
-  > same fill-dominated-variance objection §1 raises. It becomes discriminating
-  > only if the source starts marking entries verified.
+  registry's "coverage over the field" rule captures the first; the focus-metric
+  **trust** axis (issue #34) captures the second — it reads the per-entry
+  `self_reported` share and flags a mostly vendor-submitted source (the catalog's
+  `verified` is uniformly `false` upstream, so `self_reported` is the varying
+  signal).
 - **Missing benchmark categories (video's wishlist, none exist at all):**
   delegation, small agent teams (SATs), agent handoffs, agent swarms, failure
   recovery / self-healing, and agent-to-agent communication. Verified against the
