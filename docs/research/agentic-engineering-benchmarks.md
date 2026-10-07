@@ -267,6 +267,21 @@ index"* is the per-role weight design.
   `self_reported` share and flags a mostly vendor-submitted source (the catalog's
   `verified` is uniformly `false` upstream, so `self_reported` is the varying
   signal).
+
+  > **Update (2026-10-07, issues #34–#38):** the dropped-field inventory this
+  > bullet's earlier annotation carried is **superseded** — the gate now reads
+  > the zeroeval fields the parsers used to discard. `parseBenchmarkPayloadMeta`
+  > reads the per-entry `self_reported`/`verified` (trust, #34), `multimodal`
+  > (modality, #35), `organization_id`/`provider_id` (provenance, #37) and
+  > `input_cost_per_million`/`output_cost_per_million`/`speed_rps`/
+  > `context_window` (cross-source, #38); `BenchmarkCatalogEntry` carries the
+  > catalog row's `is_community` (#34), `modality` (#35), `updated_at`/
+  > `version_count`/`latest_version_row_count`/`star_count` (maintenance, #36)
+  > and `dataset_id`/`dataset_org_id`/`dataset_slug` (provenance, #37), each
+  > behind the catalog-cache shape guard. The create-agent gate now assesses nine
+  > focus-metric axes: the five gating ones (coverage, dispersion, composition,
+  > freshness, trust) plus the modality, maintenance, provenance and cross-source
+  > annotations; the base analysis above still records the pre-landing state.
 - **Missing benchmark categories (video's wishlist, none exist at all):**
   delegation, small agent teams (SATs), agent handoffs, agent swarms, failure
   recovery / self-healing, and agent-to-agent communication. Verified against the
