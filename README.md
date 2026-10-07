@@ -126,6 +126,7 @@ Per-role knobs (`roles.<name>.*`):
 | `filters.maxPriceUsdPerM` | `0` (off) | Drop a model whose thinking-adjusted blend exceeds this ($/M) |
 | `thinking` | shipped level | Thinking level appended to the selector (`off`…`max`, `auto`) |
 | `providerPin` | `""` (unset) | Pin the role's requests to one OpenRouter provider route (`@<slug>`, may be tiered like `deepinfra/fp8`). The role is then priced and gated by that route — its billed price and p50 throughput, not the `1/price²` blend — and a model with no matching route is ineligible |
+| `cacheHitRate` | `0` (off) | Assumed cache-hit rate (0–1) for the role's input tokens; each route's effective input price becomes `h·cacheRead + (1−h)·input` before the 3:1 billed blend and the thinking factor. The `1/price²` weight basis stays the **listed** input price (the router's sort key), so a cheap cache on a lightly-weighted route cannot dominate; a route with no cache-read price keeps its full input price. `0`/absent = off (byte-identical ranking) |
 | `lambda` | derived | Explicit λ ($ per quality point) override |
 | `locked` | `false` | Leave the role alone: rank it but never rewrite its selector or chain (explorer toggle) |
 
@@ -133,7 +134,8 @@ Per-role knobs (`roles.<name>.*`):
 weights not summing to 1.0 ± 0.01; a `required` entry or a weighted metric
 outside the known-metric set; a `thinking` level outside
 `off|minimal|low|medium|high|xhigh|max|auto`; `switchMargin`/`priceSwitchFraction`
-outside `[0, 1]`; a non-boolean `enabled`; a `providerPin` that is empty or
+outside `[0, 1]`; a non-boolean `enabled`; a `cacheHitRate` outside `[0, 1]`; a
+`providerPin` that is empty or
 contains `@`/`:` (the selector's own delimiters). `weights: null` opts a role out;
 the legacy `suffixes.*` keys are rejected with a migration hint (moved into
 `roles.<role>.thinking`).
