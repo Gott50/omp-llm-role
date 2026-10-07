@@ -8,6 +8,17 @@ copying the new numbers here; release prose belongs in
 below are the 2026-10-06 measurement (the input-price blend basis #21 and the
 #17/#18/#19/#20 wave; see the top bullet) and are not re-derived on read.
 
+- Modality axis (2026-10-07, issue #35): the focus-metric gate gained a sixth
+  axis — the catalog row's `modality` (text 514, multimodal 194, image 19,
+  audio 9, video 2, null 7 of 745) and the payload's per-entry `multimodal`
+  share. It is an **annotation, never a gate**: there is no role modality field,
+  so the axis is never `below-bar` and never a drop reason; it is `unknown` only
+  when neither the catalog row nor the payload carries a modality signal. The
+  catalog row's `modality` rides `BenchmarkCatalogEntry` behind the cache shape
+  guard (a pre-#35 cache is refetched); the per-entry `multimodal` rides
+  `BenchmarkPayloadMeta.modality`. The ranking numbers are unchanged — the axis
+  is a create-agent/explorer annotation, not a weight.
+
 - Trust axis (2026-10-07, issue #34): the focus-metric gate gained a fifth axis —
   the per-entry `self_reported` share of a benchmark payload, below-bar above
   `FOCUS_SELF_REPORTED_MAX_SHARE` (0.5). Measured live: `verified` is uniformly

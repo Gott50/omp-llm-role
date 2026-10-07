@@ -68,7 +68,7 @@ function metricAbbr(metric: string): string {
   return local.slice(0, 10);
 }
 
-/** One focus-metric annotation line: the five signals, same rule as the report. */
+/** One focus-metric annotation line: the six signals, same rule as the report. */
 function focusLine(metric: string, a: FocusMetricAssessment): string {
   const c = a.coverage;
   const coverage =
@@ -78,7 +78,11 @@ function focusLine(metric: string, a: FocusMetricAssessment): string {
     a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : `omits ${a.composition.omittedOrgs.join(", ")}`;
   const freshness = a.freshness.status === "unknown" ? "unknown" : `${a.freshness.monthsBehind?.toFixed(1)}mo ${a.freshness.status}`;
   const trust = a.trust.status === "unknown" ? "unknown" : `${a.trust.selfReported}/${a.trust.covered} ${a.trust.status}`;
-  return `focus: ${metric} — coverage ${coverage}; dispersion ${dispersion}; composition ${composition}; freshness ${freshness}; trust ${trust}`;
+  const modality =
+    a.modality.status === "unknown"
+      ? "unknown"
+      : `${a.modality.value ?? "?"}${a.modality.multimodalShare === null ? "" : ` ${(a.modality.multimodalShare * 100).toFixed(0)}% multimodal`}`;
+  return `focus: ${metric} — coverage ${coverage}; dispersion ${dispersion}; composition ${composition}; freshness ${freshness}; trust ${trust}; modality ${modality}`;
 }
 
 function formatRankings(
@@ -207,7 +211,7 @@ function formatRankings(
     );
     for (let ri = 1; ri < padded.length; ri++) lines.push(`| ${padded[ri].join(" | ")} |`);
     // A role's focus metrics (the benchmarks it was ranked on) carry the same
-    // five-axis annotation as the create-agent report. Shipped roles weight index
+    // six-axis annotation as the create-agent report. Shipped roles weight index
     // metrics, so this is empty for them.
     for (const metric of focusMetricsOf(def, declared)) lines.push(focusLine(metric, assessFocusMetric(models, metric, declared, cachedSourceInfo(metric, declared))));
     lines.push("");

@@ -51,7 +51,7 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 |---|---|
 | `src/explorer/boot.ts` | Shared explorer launcher: bind/port fallback, lock-file roles, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, and the `ExplorerHandle`/`ExplorerBootOpts` types. Used by `/explore-roles`. |
 | `src/explorer/server.ts` | Zero-dependency HTTP surface (static SPA + JSON API). Exports `createExplorerServer` and the `ExplorerOpts` type. Endpoints: `GET /api/bootstrap` (carries `focusAssessments`), `POST /api/rank`, `POST /api/explain`, `POST /api/export`, `POST /api/refresh`. |
-| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, and the five-axis focus assessment. Exports `rankRows`, `explainModel`, `inverseCardinal`, `focusMetricsOf`, `focusAssessments`, `METRIC_META`, `metricMeta`, `metricMetaFor`, `weightableMetrics`, and the `RankRow`/`Explanation`/`Contribution`/`Closing`/`MetricMeta` types. |
+| `src/explorer/explain.ts` | Pure explanation layer: rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, and the six-axis focus assessment. Exports `rankRows`, `explainModel`, `inverseCardinal`, `focusMetricsOf`, `focusAssessments`, `METRIC_META`, `metricMeta`, `metricMetaFor`, `weightableMetrics`, and the `RankRow`/`Explanation`/`Contribution`/`Closing`/`MetricMeta` types. |
 
 ### Assets and non-code
 

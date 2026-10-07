@@ -299,11 +299,11 @@ Naming the archetype's own specialist set is a no-op (the focus share equals its
 archetype share). A named metric already in the weights is reported as a
 duplicate; a name outside the known-metric set is unknown.
 
-**The five-axis focus-metric gate.** A focus metric that is fill-0 and covers too
+**The six-axis focus-metric gate.** A focus metric that is fill-0 and covers too
 little of the field turns `q` into a coverage score (a missing weighted metric
 contributes 0 while occupying its denominator share). `assessFocusMetric(models,
 metric, declared, source?)` (`src/agent-create.ts`) is the one rule, returning a
-`FocusMetricAssessment` with five axes, each `{ …, status: "ok" | "below-bar" |
+`FocusMetricAssessment` with six axes, each `{ …, status: "ok" | "below-bar" |
 "unknown" }`:
 
 - **coverage** (`FocusCoverageEntry`) — the share of the pool carrying the metric
@@ -328,9 +328,16 @@ metric, declared, source?)` (`src/agent-create.ts`) is the one rule, returning a
   catalog cache for the row); a payload with no entry flags (a declared or
   writing source) or no covered entries is `unknown` — never a silent `ok`.
   `verified` is uniformly `false` upstream today, so it is carried but not gated.
+- **modality** — the catalog row's `modality` (e.g. `text`/`image`/`audio`/
+  `video`/`multimodal`) and the payload's per-entry `multimodal` share, read by
+  `parseBenchmarkPayloadMeta` and carried on `BenchmarkCatalogEntry`. This axis
+  is an **annotation, never a gate**: there is no role modality field, so it is
+  never `below-bar` and never a drop reason (`belowBarReason` has no modality
+  branch). It is `unknown` only when neither the catalog row nor the payload
+  carries a modality signal.
 
 An empty pool (unknown field size) or `covered === 0` (the metric's scores were
-not loaded) reports **all five axes `unknown`**, coverage included — never a
+not loaded) reports **all six axes `unknown`**, coverage included — never a
 silent `ok`. `belowBarReason(assessment)` names the failed axis.
 
 **Enforcement.** The pre-fetch catalog gate is count-only (`modelCount >= 3`); the
@@ -338,7 +345,7 @@ create-agent gate then probe-fetches each selected candidate's source
 (`loadBenchmarkScores`), joins it onto the ranking universe, and assesses the
 joined pool. A **discovered** candidate below-bar on any axis is dropped
 non-fatally with a reason naming the axis; a **user-named** metric is never
-dropped — it is annotated and warned. The report prints the five signals and
+dropped — it is annotated and warned. The report prints the six signals and
 warns per below-bar axis; the explorer's `/api/bootstrap` carries
 `focusAssessments` and the SPA renders a `table.focus` (below-bar warned,
 `unknown` muted, never green); the CLI report annotates a role's focus metrics
@@ -392,9 +399,10 @@ The shipped weights (`DEFAULT_ROLES`) and the archetype sets
    100%-coverage backbone plus the partial-coverage trio at reduced share;
    `mrcr`/`search` are unweighted and `long_context` is capped at 0.14.
    `website`/`long_context`/`writing` are capability-filled rather than
-   0-filled. The five-axis focus-metric gate (above) is the automated check for
+   0-filled. The six-axis focus-metric gate (above) is the automated check for
    this rule: it drops a discovered candidate that is below-bar on coverage,
-   dispersion, composition, freshness or trust.
+   dispersion, composition, freshness or trust (modality is an annotation, never
+   a drop).
 5. **Non-collinear differentiation.** The capability indices are one latent
    factor (Pearson r over the pool: general↔reasoning 0.984, code↔agents 0.95,
    general↔code 0.94), so re-weighting them barely separates roles.
@@ -843,7 +851,7 @@ generic llm-stats source, joined direct on `model_id`):
 | `acebench` | 2 | 2 | 2/400 (0.5%) | 0.000 | below-bar | 12.8 mo | — | — | reject (below 3-model floor) |
 | `mcp-universe` | 1 | 1 | 1/400 (0.3%) | — | below-bar | 9.9 mo | — | — | reject (below 3-model floor) |
 
-`automationbench` is the only candidate that clears the implemented five-axis
+`automationbench` is the only candidate that clears the implemented six-axis
 gate (dispersion 0.62, composition ok, freshness ok, r(general) 0.24,
 r(agents) 0.30) — but it measures **single-agent tool orchestration**, not
 delegation / teams / handoffs / swarms / recovery / a2a, and it covers 5% of the

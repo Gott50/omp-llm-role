@@ -88,7 +88,7 @@ passing.
     `--dry-run` writes neither file; an architect `spec` replaces the
     description/body; `applyFocusBenchmarks` gives a named benchmark a decisive
     share, is a no-op for the archetype's own specialist set, and keeps both
-    invariants; the five-axis gate.
+    invariants; the six-axis gate.
 18. **Agent removal** (`remove-agent.test.ts`) — the role's lock-file keys and the
     agent file are deleted (backup written); a shipped default role, a reserved
     name and an invalid name are refused; nothing-to-remove errors; `--dry-run`

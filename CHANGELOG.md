@@ -10,6 +10,18 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Modality axis on the focus-metric gate** — the sixth focus-metric axis
+  carries the benchmark's modality: the catalog row's `modality` (text/image/
+  audio/video/multimodal) and the payload's per-entry `multimodal` share.
+  `parseBenchmarkCatalog` reads the row's `modality` onto `BenchmarkCatalogEntry`
+  (an open string, so an unknown value survives), `parseBenchmarkPayloadMeta`
+  reads the per-entry `multimodal` flag onto `BenchmarkPayloadMeta.modality`, and
+  the catalog-cache shape guard now also requires the field (a pre-#35 cache is
+  refetched). The axis is an **annotation, never a gate**: there is no role
+  modality field, so it is never `below-bar` and never a drop reason; it is
+  `unknown` only when neither the catalog row nor the payload carries a modality
+  signal. The create report, the explorer focus table and the CLI report print
+  the axis. (issue #35)
 - **Trust axis on the focus-metric gate** — the fifth focus-metric axis reads the
   benchmark payload's per-entry `self_reported` flag: a source whose covered
   entries are mostly self-reported (above `FOCUS_SELF_REPORTED_MAX_SHARE`, 0.5) is

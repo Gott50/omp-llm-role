@@ -177,38 +177,55 @@ export function parseLlmStatsBenchmark(v: unknown): Record<string, number> | nul
 }
 
 /**
- * The per-entry trust summary of an llm-stats benchmark payload: how many of the
- * `entries[]` carry a boolean `self_reported` (the share denominator) and how
- * many of those are `true`, plus the `verified` count over the same rows.
+ * The per-entry summary of an llm-stats benchmark payload, read in one pass:
+ * the trust flags (`self_reported`/`verified`) and the `multimodal` flag.
  *
  * `trust` is `null` when no parsed entry carried a boolean `self_reported` — a
  * declared or writing-evidence payload has no entry flags, so the axis degrades
  * to `unknown` rather than a silent `ok`. `verified` is uniformly `false` today
  * (the source never sets it); it is kept for when the source starts to.
+ *
+ * `modality` is the per-entry `multimodal` summary: how many of the `entries[]`
+ * carry a boolean `multimodal` (the share denominator) and how many of those are
+ * `true`. It is `null` when no parsed entry carried the flag, so the axis
+ * degrades to `unknown` rather than a silent `ok`.
  */
 export type BenchmarkPayloadMeta = {
   trust: { selfReported: number; verified: number; covered: number } | null;
+  modality: { multimodal: number; covered: number } | null;
 };
 
 /**
- * Pure: the per-entry trust summary of a raw llm-stats benchmark payload, or
- * `null` when the payload has no llm-stats entries shape. Junk rows are skipped
- * exactly like `parseLlmStatsBenchmark`; `verified` counts the covered rows
- * (those carrying a boolean `self_reported`), so `verified <= covered` holds.
+ * Pure: the per-entry summary of a raw llm-stats benchmark payload, or `null`
+ * when the payload has no llm-stats entries shape. Junk rows are skipped exactly
+ * like `parseLlmStatsBenchmark`; `verified` counts the covered rows (those
+ * carrying a boolean `self_reported`), so `verified <= covered` holds. The two
+ * summaries have independent denominators (a row may carry one flag and not the
+ * other).
  */
 export function parseBenchmarkPayloadMeta(v: unknown): BenchmarkPayloadMeta | null {
   if (!isRecord(v) || !Array.isArray(v.entries)) return null;
   let selfReported = 0;
   let verified = 0;
   let covered = 0;
+  let multimodal = 0;
+  let modalityCovered = 0;
   for (const row of v.entries) {
     if (!isRecord(row)) continue;
-    if (typeof row.self_reported !== "boolean") continue;
-    covered++;
-    if (row.self_reported) selfReported++;
-    if (row.verified === true) verified++;
+    if (typeof row.self_reported === "boolean") {
+      covered++;
+      if (row.self_reported) selfReported++;
+      if (row.verified === true) verified++;
+    }
+    if (typeof row.multimodal === "boolean") {
+      modalityCovered++;
+      if (row.multimodal) multimodal++;
+    }
   }
-  return { trust: covered === 0 ? null : { selfReported, verified, covered } };
+  return {
+    trust: covered === 0 ? null : { selfReported, verified, covered },
+    modality: modalityCovered === 0 ? null : { multimodal, covered: modalityCovered },
+  };
 }
 
 /** One row of the llm-stats benchmark catalog (`GET /leaderboard/benchmarks`). */
@@ -221,6 +238,10 @@ export type BenchmarkCatalogEntry = {
   /** The catalog row's `is_community` flag (a community-submitted benchmark);
    * `false` when absent or non-boolean. The only catalog-level trust signal. */
   isCommunity: boolean;
+  /** The catalog row's `modality` (e.g. `"text"`, `"image"`, `"audio"`,
+   * `"video"`, `"multimodal"`); `null` when absent or non-string. Kept as an
+   * open string (not a closed enum) so a future value survives. */
+  modality: string | null;
 };
 
 /** Pure: the catalog payload (a top-level array) -> entries; null when unusable. */
@@ -239,6 +260,7 @@ export function parseBenchmarkCatalog(v: unknown): BenchmarkCatalogEntry[] | nul
       categories: Array.isArray(row.categories) ? row.categories.filter((c): c is string => typeof c === "string") : [],
       modelCount: typeof row.model_count === "number" && Number.isFinite(row.model_count) ? row.model_count : 0,
       isCommunity: row.is_community === true,
+      modality: typeof row.modality === "string" && row.modality !== "" ? row.modality : null,
     });
   }
   return out;
@@ -791,11 +813,12 @@ export function readCatalogCache(path: string, requireFresh: boolean): CatalogCa
     return null;
   }
   if (!Array.isArray(parsed?.entries)) return null;
-  // A cache written before `isCommunity` landed lacks the field; refetch rather
-  // than silently reporting `is_community: undefined` (mirrors `readEndpointsCache`).
-  // An empty catalog is still `null` (nothing to sample, nothing to discover).
+  // A cache written before `isCommunity`/`modality` landed lacks the field;
+  // refetch rather than silently reporting `undefined` (mirrors
+  // `readEndpointsCache`). An empty catalog is still `null` (nothing to sample,
+  // nothing to discover).
   const sample = parsed.entries[0];
-  if (typeof sample !== "object" || sample === null || !("isCommunity" in sample)) return null;
+  if (typeof sample !== "object" || sample === null || !("isCommunity" in sample) || !("modality" in sample)) return null;
   if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
   return parsed;
 }

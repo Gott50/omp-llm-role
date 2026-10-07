@@ -192,7 +192,7 @@ export type BenchmarkApplication = {
   unknown: string[];
   /** Focus metrics dropped by the top-K cap (priority order preserved). */
   dropped: string[];
-  /** Five-axis assessment per focus metric, for the report annotation. */
+  /** Six-axis assessment per focus metric, for the report annotation. */
   assessments: Record<string, FocusMetricAssessment>;
 };
 
@@ -246,9 +246,9 @@ export type FocusCoverageEntry = {
   status: FocusSignal;
 };
 
-/** The five-axis assessment of one focus metric: coverage, dispersion, provider
- * composition, freshness and source trust. The single object the gate and every
- * report share. */
+/** The six-axis assessment of one focus metric: coverage, dispersion, provider
+ * composition, freshness, source trust and modality. The single object the gate
+ * and every report share. */
 export type FocusMetricAssessment = {
   coverage: FocusCoverageEntry;
   dispersion: { value: number | null; status: FocusSignal };
@@ -258,6 +258,11 @@ export type FocusMetricAssessment = {
    * entries. Zeros + `unknown` when the payload carried no entry flags (a
    * declared/writing source) or the metric's scores were not loaded. */
   trust: { selfReported: number; covered: number; status: FocusSignal };
+  /** The benchmark's modality: the catalog row's `modality` and the payload's
+   * multimodal share. Informational only — there is no role modality field, so
+   * this axis is never `below-bar` and never a drop reason; it is `unknown` only
+   * when neither the catalog row nor the payload carries a modality signal. */
+  modality: { value: string | null; multimodalShare: number | null; status: FocusSignal };
 };
 
 /** Per-metric coverage of the ranking field, for the focus-coverage gate. */
@@ -268,8 +273,8 @@ export type FocusCoverage = {
   covered: Record<string, number>;
   /** Declared sources, so a declared metric's fill resolves. */
   declared?: readonly SourceDeclaration[];
-  /** Five-axis assessment per metric, when the caller assessed the loaded pool.
-   * Absent → the four new axes are `unknown` (the metric's scores were not
+  /** Six-axis assessment per metric, when the caller assessed the loaded pool.
+   * Absent → the five new axes are `unknown` (the metric's scores were not
    * loaded), never a silent `ok`. */
   assessments?: Record<string, FocusMetricAssessment>;
 };
@@ -404,6 +409,17 @@ function trustAxis(source?: FocusSourceInfo): FocusMetricAssessment["trust"] {
   };
 }
 
+/** The modality axis: the catalog row's `modality` and the payload's multimodal
+ * share. Informational only — there is no role modality field, so this axis is
+ * never `below-bar` and never a drop reason; it is `unknown` only when neither
+ * the catalog row nor the payload carries a modality signal. */
+function modalityAxis(source?: FocusSourceInfo): FocusMetricAssessment["modality"] {
+  const value = source?.catalog?.modality ?? null;
+  const summary = source?.payload?.modality ?? null;
+  const multimodalShare = summary !== null && summary.covered > 0 ? summary.multimodal / summary.covered : null;
+  return { value, multimodalShare, status: value === null && multimodalShare === null ? "unknown" : "ok" };
+}
+
 /** The all-unknown assessment: the field size is unknown, or the metric's scores
  * were not loaded. Annotated, never warned. */
 function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment {
@@ -413,15 +429,16 @@ function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment 
     composition: { omittedOrgs: [], status: "unknown" },
     freshness: { newestCovered: null, newestPool: null, monthsBehind: null, status: "unknown" },
     trust: { selfReported: 0, covered: 0, status: "unknown" },
+    modality: { value: null, multimodalShare: null, status: "unknown" },
   };
 }
 
 /**
  * The one assessment rule, shared by the discovery gate, the report and the
- * explorer: coverage, dispersion, provider composition, freshness and source
- * trust of one focus metric over the loaded pool. `focusCoverageOk`/
- * `countMetricCoverage` are its coverage branch; `source` (the cached trust
- * inputs) is its trust branch.
+ * explorer: coverage, dispersion, provider composition, freshness, source trust
+ * and modality of one focus metric over the loaded pool. `focusCoverageOk`/
+ * `countMetricCoverage` are its coverage branch; `source` (the cached trust and
+ * modality inputs) is its trust/modality branch.
  *
  * An empty pool (unknown field size) or a metric with no covered values (its
  * scores were not loaded) reports every axis `unknown` — never a silent `ok`.
@@ -449,6 +466,7 @@ export function assessFocusMetric(
     composition: compositionAxis(models, metric, fill),
     freshness: freshnessAxis(models, metric, fill),
     trust: trustAxis(source),
+    modality: modalityAxis(source),
   };
 }
 
@@ -495,8 +513,8 @@ export function belowBarReason(assessment: FocusMetricAssessment): string | null
  * The focus set is capped at `FOCUS_METRIC_CAP` in priority order (named/linked
  * first, then discovery order), so the caller's explicit choices survive and one
  * benchmark keeps a decisive share; the metrics beyond the cap are reported as
- * `dropped`. `coverage.assessments` (the five-axis assessment the caller computed
- * over the loaded pool) drives the per-metric annotation; without it the four
+ * `dropped`. `coverage.assessments` (the six-axis assessment the caller computed
+ * over the loaded pool) drives the per-metric annotation; without it the five
  * new axes are `unknown` (the metric's scores were not loaded).
  */
 export function applyFocusBenchmarks(
@@ -1131,7 +1149,7 @@ export function formatArchetypes(): string {
   }).join("\n\n");
 }
 
-/** One focus-metric line: coverage plus the four new signals. */
+/** One focus-metric line: coverage plus the five new signals. */
 function assessmentLine(metric: string, a: FocusMetricAssessment): string {
   const c = a.coverage;
   const head =
@@ -1143,7 +1161,11 @@ function assessmentLine(metric: string, a: FocusMetricAssessment): string {
     a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : `omits ${a.composition.omittedOrgs.join(", ")}`;
   const freshness = a.freshness.status === "unknown" ? "unknown" : `${a.freshness.monthsBehind?.toFixed(1)}mo ${a.freshness.status}`;
   const trust = a.trust.status === "unknown" ? "unknown" : `${a.trust.selfReported}/${a.trust.covered} ${a.trust.status}`;
-  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}`;
+  const modality =
+    a.modality.status === "unknown"
+      ? "unknown"
+      : `${a.modality.value ?? "?"}${a.modality.multimodalShare === null ? "" : ` ${(a.modality.multimodalShare * 100).toFixed(0)}% multimodal`}`;
+  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}  modality ${modality}`;
 }
 
 /** The human-readable report for a completed (or dry-run) create. */

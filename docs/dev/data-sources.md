@@ -41,7 +41,7 @@ payload; there is no public JSON API.
   the index/benchmark values, with `price`/`throughput`/`website`/`writing`
   left `null` for later enrichment. The row's `release_date` is carried onto
   `Model.releaseDate` (null when absent) and used by the focus-metric freshness
-  axis (scoring.md, the five-axis gate).
+  axis (scoring.md, the six-axis gate).
 - **Cache**: `cache/llm-stats-fetched-rankings.json` —
   `{ fetchedAt, source, modelCount, rankings[] }` (pretty-printed; each row
   gains a `rank` = array position). Fresh while `fetchedAt` is the current UTC
@@ -304,19 +304,23 @@ the raw id. `catalogBenchmarkDeclaration` builds that declaration for a dotted
 catalog id at discovery/authoring time, carrying the raw id in `fetch.url`.
 
 Each entry also carries the trust flags `self_reported` and `verified` (both
-booleans). `parseBenchmarkPayloadMeta(payload)` reads them independently of
-`source.parse` (a declared/writing source reads no entry flags) and returns
-`{ trust: { selfReported, verified, covered } }` — `covered` is the count of
-entries carrying a boolean `self_reported` (the share denominator), `selfReported`
-the count of those whose `self_reported` is `true`, and `verified` the count of
-those whose `verified` is `true`
+booleans) and the `multimodal` flag. `parseBenchmarkPayloadMeta(payload)` reads
+them independently of `source.parse` (a declared/writing source reads no entry
+flags) and returns `{ trust: { selfReported, verified, covered }, modality:
+{ multimodal, covered } }` — the trust `covered` is the count of entries carrying
+a boolean `self_reported` (the share denominator), `selfReported` the count of
+those whose `self_reported` is `true`, and `verified` the count of those whose
+`verified` is `true`; the modality `covered` is the count of entries carrying a
+boolean `multimodal` and `multimodal` the count of those that are `true` (the two
+summaries have independent denominators)
 (measured 2026-10-07: `verified` is uniformly `false`; `self_reported` varies —
 gpqa 19/20, deepswe-1.1 14/20, terminal-bench-4.0 10/20, automationbench-aa 0/1).
-`trust` is `null` when no entry carried the flag, and the whole meta is `null`
-when the payload has no llm-stats entries shape. `BenchmarkPayload` carries it as
-`meta`, `BenchmarkScores` as `meta`, and the scores cache persists it (an old
-cache without the field reads back `null`). The focus-metric trust axis
-(scoring.md) consumes it via `cachedSourceInfo`.
+`trust`/`modality` are each `null` when no entry carried the respective flag, and
+the whole meta is `null` when the payload has no llm-stats entries shape.
+`BenchmarkPayload` carries it as `meta`, `BenchmarkScores` as `meta`, and the
+scores cache persists it (an old cache without the field reads back `null`). The
+focus-metric trust and modality axes (scoring.md) consume it via
+`cachedSourceInfo`.
 
 The endpoint caps `entries` at `BENCHMARK_ENTRY_CAP` (20) regardless of
 `limit`/`offset`/`page`/`per_page`, so a generic metric can never load more and
@@ -332,13 +336,15 @@ post-fetch coverage count is the loadable `loaded`, never the catalog's
 `/<id>`) returns the full catalog as a top-level JSON array of ~745 rows:
 `{ benchmark_id, name, description, categories[], modality, max_score, verified,
 model_count, is_community }`. `parseBenchmarkCatalog` narrows it to
-`{ id, name, description, categories, modelCount, isCommunity }` (the row's
-`is_community`, defaulting `false` when absent/non-boolean — the only
-catalog-level trust signal, 20/745 true); `loadBenchmarkCatalog` follows the same
+`{ id, name, description, categories, modelCount, isCommunity, modality }` (the
+row's `is_community`, defaulting `false` when absent/non-boolean — the only
+catalog-level trust signal, 20/745 true — and the row's `modality` as an open
+string, `null` when absent/non-string, so an unknown value survives);
+`loadBenchmarkCatalog` follows the same
 daily cache chain (cache file `benchmark-catalog-fetched-data.json`). The catalog
 cache reader carries a shape guard mirroring `readEndpointsCache`: a cache whose
-sampled entry lacks `isCommunity` (written before the field landed) is rejected
-and refetched, so a stale cache never reports `is_community: undefined`; an empty
+sampled entry lacks `isCommunity` or `modality` (written before the field landed)
+is rejected and refetched, so a stale cache never reports `undefined`; an empty
 catalog is still `null`. `/create-agent` uses it to discover the
 benchmarks relevant to a purpose: `discoverBenchmarks` filters by coverage
 (`modelCount >= 3`), ranks the survivors by IDF-weighted lexical overlap with the
@@ -414,7 +420,7 @@ fresh checkout needs no setup.
 | `cache/designarena-fetched-data.json` | `{ fetchedAt, source, categories }` | non-fatal (OR mirror alone) |
 | `cache/writing-fetched-data.json` | `{ fetchedAt, source, scores, total, meta }` | non-fatal (`writing` unfilled) |
 | `cache/bench-<id>-fetched-data.json` | `{ fetchedAt, source, scores, total, meta }` | non-fatal (the external metric is unfilled) |
-| `cache/benchmark-catalog-fetched-data.json` | `{ fetchedAt, source, entries }` (each entry carries `isCommunity`) | non-fatal (discovery skipped) |
+| `cache/benchmark-catalog-fetched-data.json` | `{ fetchedAt, source, entries }` (each entry carries `isCommunity` and `modality`) | non-fatal (discovery skipped) |
 | `cache/<declared-id>-fetched-data.json` | `{ fetchedAt, source, scores, total, meta }` | non-fatal (the external metric is unfilled) |
 
 The last two are the registry's generic scores cache (`loadBenchmarkScores`),
