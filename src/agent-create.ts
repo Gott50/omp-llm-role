@@ -192,7 +192,7 @@ export type BenchmarkApplication = {
   unknown: string[];
   /** Focus metrics dropped by the top-K cap (priority order preserved). */
   dropped: string[];
-  /** Eight-axis assessment per focus metric, for the report annotation. */
+  /** Nine-axis assessment per focus metric, for the report annotation. */
   assessments: Record<string, FocusMetricAssessment>;
 };
 
@@ -253,6 +253,13 @@ export const FOCUS_SELF_REPORTED_MAX_SHARE = 0.5;
  * never drops a discovered candidate. */
 export const FOCUS_PROVENANCE_DOMINANT_SHARE = 0.5;
 
+/** The relative divergence above which the zeroeval per-entry price/context is
+ * flagged as disagreeing with the plugin's own value. A **chosen, tunable
+ * heuristic** (a factor-of-two band), not a measured value — the two sources are
+ * independent and a small divergence is expected (rounding, a different route
+ * mix). The axis is an annotation, never a gate. */
+export const PRICE_AGREEMENT_TOLERANCE = 0.5;
+
 /** The status vocabulary shared by every focus-metric axis. */
 export type FocusSignal = "ok" | "below-bar" | "unknown";
 
@@ -265,9 +272,10 @@ export type FocusCoverageEntry = {
   status: FocusSignal;
 };
 
-/** The eight-axis assessment of one focus metric: coverage, dispersion, provider
- * composition, freshness, source trust, modality, benchmark maintenance and
- * provenance. The single object the gate and every report share. */
+/** The nine-axis assessment of one focus metric: coverage, dispersion, provider
+ * composition, freshness, source trust, modality, benchmark maintenance,
+ * provenance and cross-source agreement. The single object the gate and every
+ * report share. */
 export type FocusMetricAssessment = {
   coverage: FocusCoverageEntry;
   dispersion: { value: number | null; status: FocusSignal };
@@ -309,6 +317,33 @@ export type FocusMetricAssessment = {
     compositionAgreement: "agree" | "disagree" | "unknown";
     status: FocusSignal;
   };
+  /** The cross-source agreement: the zeroeval per-entry price/throughput/context
+   * (`BenchmarkPayloadMeta.crossSource`) compared against the plugin's own
+   * `price`/`throughput`/`context` for the models that carry the metric. The join
+   * is **direct on the bare `model_id`** (the generic llm-stats benchmark's
+   * `entries[].model_id` is the llm-stats id, the same space as `Model.id`).
+   * `compared` counts the models present in the map AND carrying the metric;
+   * `priceDivergence`/`contextDivergence` are the median relative divergence
+   * (`|a − b| / max(a, b, 1e-9)`) over the models compared on that axis, `null`
+   * when none. `priceAgreement`/`contextAgreement` are `unknown` when nothing was
+   * compared on the axis, else `ok` within `PRICE_AGREEMENT_TOLERANCE`, else
+   * `below-bar`. `speedAgreement` is **informational only** and excluded from
+   * `status`: the units differ (zeroeval `speed_rps` is requests/s, the plugin's
+   * `throughput` is output tok/s) and re-deriving throughput from `speed_rps` is
+   * explicitly out of scope. `status` is `unknown` when `compared === 0`, else
+   * `below-bar` when `priceAgreement` or `contextAgreement` is `below-bar`, else
+   * `ok`. It is an **annotation, never a gate** — `belowBarReason` has no
+   * cross-source branch, and the axis never feeds `price`/`weightPrice` or any
+   * ranking input. */
+  crossSource: {
+    compared: number;
+    priceAgreement: FocusSignal;
+    contextAgreement: FocusSignal;
+    speedAgreement: FocusSignal;
+    priceDivergence: number | null;
+    contextDivergence: number | null;
+    status: FocusSignal;
+  };
 };
 
 /** Per-metric coverage of the ranking field, for the focus-coverage gate. */
@@ -319,8 +354,8 @@ export type FocusCoverage = {
   covered: Record<string, number>;
   /** Declared sources, so a declared metric's fill resolves. */
   declared?: readonly SourceDeclaration[];
-  /** Eight-axis assessment per metric, when the caller assessed the loaded pool.
-   * Absent → the seven new axes are `unknown` (the metric's scores were not
+  /** Nine-axis assessment per metric, when the caller assessed the loaded pool.
+   * Absent → the eight new axes are `unknown` (the metric's scores were not
    * loaded), never a silent `ok`. */
   assessments?: Record<string, FocusMetricAssessment>;
 };
@@ -508,6 +543,65 @@ function provenanceAxis(source: FocusSourceInfo | undefined, compositionStatus: 
   return { owner, dominantOrg, dominantShare, compositionAgreement, status };
 }
 
+/** The cross-source axis: the zeroeval per-entry price/throughput/context
+ * (`BenchmarkPayloadMeta.crossSource`, keyed by the entry's `model_id`) compared
+ * against the plugin's own `price`/`throughput`/`context`. The join is **direct
+ * on the bare id**: the generic llm-stats benchmark's `entries[].model_id` is the
+ * llm-stats id, the same space as `Model.id` (the same assumption
+ * `parseLlmStatsBenchmark`'s direct join makes). Only models that are BOTH
+ * present in the map AND carry the metric (`m.metrics[metric] != null` and not
+ * the fill) count toward `compared`.
+ *
+ * price compares zeroeval's 3:1 blend `(3·input + output)/4` against `m.price`
+ * ($/M); context compares `row.context` against `m.context`; speed compares
+ * `row.speed` (requests/s) against `m.throughput` (output tok/s). The relative
+ * divergence is `|a − b| / max(a, b, 1e-9)`; `priceDivergence`/
+ * `contextDivergence` are the median over the models compared on that axis
+ * (`null` when none). An axis is `unknown` when nothing was compared on it, else
+ * `ok` within `PRICE_AGREEMENT_TOLERANCE`, else `below-bar`.
+ *
+ * `speedAgreement` is **informational only** and excluded from `status`: the
+ * units differ (rps vs tok/s) and re-deriving throughput from `speed_rps` is
+ * explicitly out of scope. `status` is `unknown` when `compared === 0`, else
+ * `below-bar` when `priceAgreement` or `contextAgreement` is `below-bar`, else
+ * `ok`. It is an **annotation, never a gate** — `belowBarReason` has no
+ * cross-source branch, and the axis never feeds `price`/`weightPrice` or any
+ * ranking input. (A future option, recorded in the docs only: use zeroeval's
+ * list price as a fallback fill for a model with no OpenRouter route.) */
+function crossSourceAxis(models: readonly Model[], metric: string, fill: number, source?: FocusSourceInfo): FocusMetricAssessment["crossSource"] {
+  const map = source?.payload?.crossSource ?? null;
+  const priceDivergences: number[] = [];
+  const contextDivergences: number[] = [];
+  const speedDivergences: number[] = [];
+  let compared = 0;
+  for (const model of models) {
+    const value = model.metrics[metric];
+    if (value == null) continue;
+    if (fill > 0 && value === fill) continue;
+    const row = map?.[model.id];
+    if (row === undefined) continue;
+    compared++;
+    if (row.input !== null && row.output !== null && model.price !== null) {
+      const zeroPrice = (3 * row.input + row.output) / 4;
+      priceDivergences.push(Math.abs(zeroPrice - model.price) / Math.max(zeroPrice, model.price, 1e-9));
+    }
+    if (row.context !== null && model.context !== null) {
+      contextDivergences.push(Math.abs(row.context - model.context) / Math.max(row.context, model.context, 1e-9));
+    }
+    if (row.speed !== null && model.throughput !== null) {
+      speedDivergences.push(Math.abs(row.speed - model.throughput) / Math.max(row.speed, model.throughput, 1e-9));
+    }
+  }
+  const priceDivergence = priceDivergences.length === 0 ? null : quantile(priceDivergences, 0.5);
+  const contextDivergence = contextDivergences.length === 0 ? null : quantile(contextDivergences, 0.5);
+  const speedDivergence = speedDivergences.length === 0 ? null : quantile(speedDivergences, 0.5);
+  const priceAgreement: FocusSignal = priceDivergence === null ? "unknown" : priceDivergence <= PRICE_AGREEMENT_TOLERANCE ? "ok" : "below-bar";
+  const contextAgreement: FocusSignal = contextDivergence === null ? "unknown" : contextDivergence <= PRICE_AGREEMENT_TOLERANCE ? "ok" : "below-bar";
+  const speedAgreement: FocusSignal = speedDivergence === null ? "unknown" : speedDivergence <= PRICE_AGREEMENT_TOLERANCE ? "ok" : "below-bar";
+  const status: FocusSignal = compared === 0 ? "unknown" : priceAgreement === "below-bar" || contextAgreement === "below-bar" ? "below-bar" : "ok";
+  return { compared, priceAgreement, contextAgreement, speedAgreement, priceDivergence, contextDivergence, status };
+}
+
 /** The all-unknown assessment: the field size is unknown, or the metric's scores
  * were not loaded. Annotated, never warned. */
 function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment {
@@ -520,16 +614,18 @@ function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment 
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: null, monthsOld: null, versionCount: null, starCount: null, status: "unknown" },
     provenance: { owner: null, dominantOrg: null, dominantShare: null, compositionAgreement: "unknown", status: "unknown" },
+    crossSource: { compared: 0, priceAgreement: "unknown", contextAgreement: "unknown", speedAgreement: "unknown", priceDivergence: null, contextDivergence: null, status: "unknown" },
   };
 }
 
 /**
  * The one assessment rule, shared by the discovery gate, the report and the
  * explorer: coverage, dispersion, provider composition, freshness, source trust,
- * modality, benchmark maintenance and provenance of one focus metric over the
- * loaded pool. `focusCoverageOk`/`countMetricCoverage` are its coverage branch;
- * `source` (the cached trust, modality, catalog and provenance inputs) is its
- * trust/modality/maintenance/provenance branch.
+ * modality, benchmark maintenance, provenance and cross-source agreement of one
+ * focus metric over the loaded pool. `focusCoverageOk`/`countMetricCoverage` are
+ * its coverage branch; `source` (the cached trust, modality, catalog, provenance
+ * and cross-source inputs) is its trust/modality/maintenance/provenance/
+ * cross-source branch.
  *
  * An empty pool (unknown field size) or a metric with no covered values (its
  * scores were not loaded) reports every axis `unknown` — never a silent `ok`.
@@ -561,14 +657,15 @@ export function assessFocusMetric(
     modality: modalityAxis(source),
     maintenance: maintenanceAxis(source),
     provenance: provenanceAxis(source, composition.status),
+    crossSource: crossSourceAxis(models, metric, fill, source),
   };
 }
 
 /** The one-line reason a below-bar assessment is dropped/warned, naming the
  * failed axis; null when every axis is ok or unknown. Deliberately has **no
- * maintenance or provenance branch**: both axes are annotations, never drop
- * reasons, so a stale dataset or a vendor-populated source cannot remove a
- * discovered candidate. */
+ * maintenance, provenance or cross-source branch**: those axes are annotations,
+ * never drop reasons, so a stale dataset, a vendor-populated source or a
+ * price/context divergence cannot remove a discovered candidate. */
 export function belowBarReason(assessment: FocusMetricAssessment): string | null {
   const { coverage, dispersion, composition, freshness, trust } = assessment;
   if (coverage.status === "below-bar") {
@@ -610,8 +707,8 @@ export function belowBarReason(assessment: FocusMetricAssessment): string | null
  * The focus set is capped at `FOCUS_METRIC_CAP` in priority order (named/linked
  * first, then discovery order), so the caller's explicit choices survive and one
  * benchmark keeps a decisive share; the metrics beyond the cap are reported as
- * `dropped`. `coverage.assessments` (the eight-axis assessment the caller computed
- * over the loaded pool) drives the per-metric annotation; without it the seven
+ * `dropped`. `coverage.assessments` (the nine-axis assessment the caller computed
+ * over the loaded pool) drives the per-metric annotation; without it the eight
  * new axes are `unknown` (the metric's scores were not loaded).
  */
 export function applyFocusBenchmarks(
@@ -1246,7 +1343,7 @@ export function formatArchetypes(): string {
   }).join("\n\n");
 }
 
-/** One focus-metric line: coverage plus the seven new signals. */
+/** One focus-metric line: coverage plus the eight new signals. */
 function assessmentLine(metric: string, a: FocusMetricAssessment): string {
   const c = a.coverage;
   const head =
@@ -1267,7 +1364,11 @@ function assessmentLine(metric: string, a: FocusMetricAssessment): string {
     a.provenance.status === "unknown"
       ? "unknown"
       : `${a.provenance.owner ?? "?"}${a.provenance.dominantShare === null ? "" : ` ${(a.provenance.dominantShare * 100).toFixed(0)}% ${a.provenance.dominantOrg ?? "?"}`} ${a.provenance.compositionAgreement}`;
-  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}  modality ${modality}  maintenance ${maintenance}  provenance ${provenance}`;
+  const crossSource =
+    a.crossSource.status === "unknown"
+      ? "unknown"
+      : `${a.crossSource.compared} priceΔ${a.crossSource.priceDivergence === null ? "?" : `${(a.crossSource.priceDivergence * 100).toFixed(0)}%`} ctxΔ${a.crossSource.contextDivergence === null ? "?" : `${(a.crossSource.contextDivergence * 100).toFixed(0)}%`} ${a.crossSource.status}`;
+  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}  modality ${modality}  maintenance ${maintenance}  provenance ${provenance}  cross-source ${crossSource}`;
 }
 
 /** The human-readable report for a completed (or dry-run) create. */
@@ -1325,6 +1426,11 @@ export function formatCreateAgentReport(
     if (a.provenance.compositionAgreement === "disagree") {
       lines.push(
         `  warning:   ${metric} provenance disagrees with the composition axis — the source's own org mix and the pool-derived check do not concur`,
+      );
+    }
+    if (a.crossSource.status === "below-bar") {
+      lines.push(
+        `  warning:   ${metric} cross-source price/context diverges from the source's own per-entry values — the price basis may be stale or mis-joined`,
       );
     }
   }

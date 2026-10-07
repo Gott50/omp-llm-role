@@ -197,18 +197,26 @@ export function parseLlmStatsBenchmark(v: unknown): Record<string, number> | nul
  * `dominantOrg`/`dominantShare` the most frequent org and its count / `covered`.
  * It is `null` when no entry carried an org, so the axis degrades to `unknown`
  * rather than a silent `ok`.
+ *
+ * `crossSource` is the per-entry **second source** of the price/throughput/
+ * context quantities, keyed by the entry's `model_id`: each row's
+ * `input_cost_per_million`/`output_cost_per_million`/`speed_rps`/`context_window`
+ * (each a finite number, else `null`). It is `null` when no entry carried any of
+ * the four. The focus-metric cross-source axis (scoring.md) compares it against
+ * the plugin's own `price`/`throughput`/`context`; it never feeds a weight.
  */
 export type BenchmarkPayloadMeta = {
   trust: { selfReported: number; verified: number; covered: number } | null;
   modality: { multimodal: number; covered: number } | null;
   provenance: { dominantOrg: string | null; dominantShare: number; orgs: number; covered: number } | null;
+  crossSource: Record<string, { input: number | null; output: number | null; speed: number | null; context: number | null }> | null;
 };
 
 /**
  * Pure: the per-entry summary of a raw llm-stats benchmark payload, or `null`
  * when the payload has no llm-stats entries shape. Junk rows are skipped exactly
  * like `parseLlmStatsBenchmark`; `verified` counts the covered rows (those
- * carrying a boolean `self_reported`), so `verified <= covered` holds. The three
+ * carrying a boolean `self_reported`), so `verified <= covered` holds. The four
  * summaries have independent denominators (a row may carry one flag and not the
  * others).
  */
@@ -221,6 +229,8 @@ export function parseBenchmarkPayloadMeta(v: unknown): BenchmarkPayloadMeta | nu
   let modalityCovered = 0;
   const orgCounts = new Map<string, number>();
   let orgCovered = 0;
+  const crossSource: Record<string, { input: number | null; output: number | null; speed: number | null; context: number | null }> = {};
+  let crossSourceCovered = 0;
   for (const row of v.entries) {
     if (!isRecord(row)) continue;
     if (typeof row.self_reported === "boolean") {
@@ -237,6 +247,16 @@ export function parseBenchmarkPayloadMeta(v: unknown): BenchmarkPayloadMeta | nu
       orgCovered++;
       orgCounts.set(org, (orgCounts.get(org) ?? 0) + 1);
     }
+    if (typeof row.model_id === "string") {
+      const input = typeof row.input_cost_per_million === "number" && Number.isFinite(row.input_cost_per_million) ? row.input_cost_per_million : null;
+      const output = typeof row.output_cost_per_million === "number" && Number.isFinite(row.output_cost_per_million) ? row.output_cost_per_million : null;
+      const speed = typeof row.speed_rps === "number" && Number.isFinite(row.speed_rps) ? row.speed_rps : null;
+      const context = typeof row.context_window === "number" && Number.isFinite(row.context_window) ? row.context_window : null;
+      if (input !== null || output !== null || speed !== null || context !== null) {
+        crossSource[row.model_id] = { input, output, speed, context };
+        crossSourceCovered++;
+      }
+    }
   }
   let dominantOrg: string | null = null;
   let dominantCount = 0;
@@ -250,6 +270,7 @@ export function parseBenchmarkPayloadMeta(v: unknown): BenchmarkPayloadMeta | nu
     trust: covered === 0 ? null : { selfReported, verified, covered },
     modality: modalityCovered === 0 ? null : { multimodal, covered: modalityCovered },
     provenance: orgCovered === 0 ? null : { dominantOrg, dominantShare: dominantCount / orgCovered, orgs: orgCounts.size, covered: orgCovered },
+    crossSource: crossSourceCovered === 0 ? null : crossSource,
   };
 }
 
@@ -941,16 +962,16 @@ export async function loadBenchmarkCatalog(refresh: boolean, cacheDir = CACHE_DI
 }
 
 /** The cached source inputs for one focus metric: the payload's per-entry
- * summary (trust/modality/provenance, from the source's scores cache) and the
- * catalog row (from the catalog cache). Either half is `null` when its cache is
- * absent or predates the field. */
+ * summary (trust/modality/provenance/cross-source, from the source's scores
+ * cache) and the catalog row (from the catalog cache). Either half is `null`
+ * when its cache is absent or predates the field. */
 export type FocusSourceInfo = {
   payload?: BenchmarkPayloadMeta | null;
   catalog?: BenchmarkCatalogEntry | null;
 };
 
 /**
- * The cached trust inputs for a focus metric, with no network: the source's
+ * The cached source inputs for a focus metric, with no network: the source's
  * scores cache (if any) for the payload meta, and the catalog cache (if any) for
  * the matching row. The metric is reverse-mapped to a catalog id through
  * `catalogMetric` (a shipped key via `SHIPPED_CATALOG_METRICS`, else the

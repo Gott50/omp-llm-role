@@ -10,6 +10,26 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Cross-source axis on the focus-metric gate** — the ninth focus-metric axis
+  cross-checks the plugin's own price/context against the zeroeval per-benchmark
+  payload's **second, independent** set of the same quantities.
+  `parseBenchmarkPayloadMeta` now reads each entry's `input_cost_per_million`/
+  `output_cost_per_million`/`speed_rps`/`context_window` (each a finite number,
+  else `null`) onto `BenchmarkPayloadMeta.crossSource`, keyed by the entry's
+  `model_id` (`null` when no entry carried any of the four). The axis joins a
+  pool model to its row **directly on the bare id** (the generic llm-stats
+  benchmark's `entries[].model_id` is the llm-stats id, the same space as
+  `Model.id`), compares zeroeval's 3:1 blend `(3·input + output)/4` against
+  `m.price` and `row.context` against `m.context`, and reports the median
+  relative divergence per axis against `PRICE_AGREEMENT_TOLERANCE` (0.5 — a
+  **chosen, tunable heuristic**). `speedAgreement` is **informational only** and
+  excluded from `status`: the units differ (zeroeval `speed_rps` is requests/s,
+  the plugin's `throughput` is output tok/s) and re-deriving throughput from
+  `speed_rps` is explicitly out of scope. The axis is an **annotation, never a
+  gate** — `belowBarReason` has no cross-source branch, and it never feeds
+  `price`/`weightPrice` or any ranking input (the `1/price²` blend is unchanged;
+  a test pins `rankRole` byte-identical with the annotation on). The create
+  report, the explorer focus table and the CLI report print the axis. (issue #38)
 - **Provenance axis on the focus-metric gate** — the eighth focus-metric axis
   carries the benchmark's provenance: the owner (the catalog row's
   `dataset_org_id`, falling back to `dataset_slug`) and the source's own

@@ -114,7 +114,7 @@ export function focusMetricsOf(def: RoleDef, declared: readonly SourceDeclaratio
   });
 }
 
-/** Eight-axis assessment of each of a role's focus metrics, over the loaded pool
+/** Nine-axis assessment of each of a role's focus metrics, over the loaded pool
  * (the same dataset the updater ranks on), with the cached source inputs. */
 export function focusAssessments(
   models: readonly Model[],

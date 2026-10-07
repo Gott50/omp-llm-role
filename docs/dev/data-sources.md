@@ -41,7 +41,7 @@ payload; there is no public JSON API.
   the index/benchmark values, with `price`/`throughput`/`website`/`writing`
   left `null` for later enrichment. The row's `release_date` is carried onto
   `Model.releaseDate` (null when absent) and used by the focus-metric freshness
-  axis (scoring.md, the eight-axis gate).
+  axis (scoring.md, the nine-axis gate).
 - **Cache**: `cache/llm-stats-fetched-rankings.json` —
   `{ fetchedAt, source, modelCount, rankings[] }` (pretty-printed; each row
   gains a `rank` = array position). Fresh while `fetchedAt` is the current UTC
@@ -304,11 +304,15 @@ the raw id. `catalogBenchmarkDeclaration` builds that declaration for a dotted
 catalog id at discovery/authoring time, carrying the raw id in `fetch.url`.
 
 Each entry also carries the trust flags `self_reported` and `verified` (both
-booleans), the `multimodal` flag, and the org fields `organization_id`/
-`provider_id`. `parseBenchmarkPayloadMeta(payload)` reads them independently of
-`source.parse` (a declared/writing source reads no entry flags) and returns
+booleans), the `multimodal` flag, the org fields `organization_id`/
+`provider_id`, and a **second, independent** set of the price/throughput/context
+quantities: `input_cost_per_million`, `output_cost_per_million`, `speed_rps`
+(requests/s) and `context_window` (tokens). `parseBenchmarkPayloadMeta(payload)`
+reads them independently of `source.parse` (a declared/writing source reads no
+entry flags) and returns
 `{ trust: { selfReported, verified, covered }, modality: { multimodal, covered },
-provenance: { dominantOrg, dominantShare, orgs, covered } }` — the trust
+provenance: { dominantOrg, dominantShare, orgs, covered }, crossSource }` — the
+trust
 `covered` is the count of entries carrying a boolean `self_reported` (the share
 denominator), `selfReported` the count of those whose `self_reported` is `true`,
 and `verified` the count of those whose `verified` is `true`; the modality
@@ -316,17 +320,19 @@ and `verified` the count of those whose `verified` is `true`; the modality
 the count of those that are `true`; the provenance `covered` is the count of
 entries carrying a non-empty org string (each row's `organization_id`, falling
 back to `provider_id`), `orgs` the distinct org count, and `dominantOrg`/
-`dominantShare` the most frequent org and its count / `covered` (the three
-summaries have independent denominators)
+`dominantShare` the most frequent org and its count / `covered`; `crossSource` is
+a map keyed by the entry's `model_id` of `{ input, output, speed, context }`
+(each a finite number, else `null`), `null` when no entry carried any of the four
+(the four summaries have independent denominators)
 (measured 2026-10-07: `verified` is uniformly `false`; `self_reported` varies —
 gpqa 19/20, deepswe-1.1 14/20, terminal-bench-4.0 10/20, automationbench-aa 0/1).
-`trust`/`modality`/`provenance` are each `null` when no entry carried the
-respective field, and the whole meta is `null` when the payload has no llm-stats
-entries shape.
+`trust`/`modality`/`provenance`/`crossSource` are each `null` when no entry
+carried the respective field, and the whole meta is `null` when the payload has
+no llm-stats entries shape.
 `BenchmarkPayload` carries it as `meta`, `BenchmarkScores` as `meta`, and the
 scores cache persists it (an old cache without the field reads back `null`). The
-focus-metric trust, modality and provenance axes (scoring.md) consume it via
-`cachedSourceInfo`.
+focus-metric trust, modality, provenance and cross-source axes (scoring.md)
+consume it via `cachedSourceInfo`.
 
 The endpoint caps `entries` at `BENCHMARK_ENTRY_CAP` (20) regardless of
 `limit`/`offset`/`page`/`per_page`, so a generic metric can never load more and

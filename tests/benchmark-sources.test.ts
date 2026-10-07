@@ -59,7 +59,7 @@ test("parseBenchmarkPayload reads the llm-stats entries shape and rejects junk",
         "junk",
       ],
     }),
-    { scores: { a: 0.5 }, loaded: 1, total: null, meta: { trust: null, modality: null, provenance: null } },
+    { scores: { a: 0.5 }, loaded: 1, total: null, meta: { trust: null, modality: null, provenance: null, crossSource: null } },
   );
   assert.equal(parseBenchmarkPayload(source, {}), null);
   assert.equal(parseBenchmarkPayload(source, null), null);
@@ -69,19 +69,20 @@ test("parseBenchmarkPayloadMeta reads the per-entry self_reported/verified flags
   // 19 self-reported of 20 covered entries (the 20th carries the flag as false).
   const entries = Array.from({ length: 20 }, (_, i) => ({ model_id: `m${i}`, normalized_score: 0.5, self_reported: i < 19, verified: false }));
   const payload = { benchmark_id: "alpacaeval-2.0", total_models: 20, entries };
-  assert.deepEqual(parseBenchmarkPayloadMeta(payload), { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null, provenance: null });
+  assert.deepEqual(parseBenchmarkPayloadMeta(payload), { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null, provenance: null, crossSource: null });
   // The same summary rides `parseBenchmarkPayload`'s `meta`.
   const source = resolveBenchmarkSource("alpacaeval-2.0");
   assert.ok(source);
-  assert.deepEqual(parseBenchmarkPayload(source, payload)?.meta, { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null, provenance: null });
+  assert.deepEqual(parseBenchmarkPayload(source, payload)?.meta, { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null, provenance: null, crossSource: null });
   // An independently measured source: no entry is self-reported.
   assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5, self_reported: false }] }), {
     trust: { selfReported: 0, verified: 0, covered: 1 },
     modality: null,
     provenance: null,
+    crossSource: null,
   });
   // A payload whose entries carry no boolean self_reported: trust is null, not a silent ok.
-  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), { trust: null, modality: null, provenance: null });
+  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), { trust: null, modality: null, provenance: null, crossSource: null });
   // A payload with no llm-stats entries shape (a writing/declared payload): the whole meta is null.
   assert.equal(parseBenchmarkPayloadMeta({ records: [{ modelId: "q", writingBenchScore: 0.9 }] }), null);
   assert.equal(parseBenchmarkPayloadMeta(null), null);
@@ -97,7 +98,7 @@ test("parseBenchmarkPayloadMeta reads the per-entry multimodal flag", () => {
         { model_id: "b", normalized_score: 0.4, multimodal: false },
       ],
     }),
-    { trust: null, modality: { multimodal: 1, covered: 2 }, provenance: null },
+    { trust: null, modality: { multimodal: 1, covered: 2 }, provenance: null, crossSource: null },
   );
   // The three summaries have independent denominators: a row may carry one flag and not the others.
   assert.deepEqual(
@@ -107,13 +108,14 @@ test("parseBenchmarkPayloadMeta reads the per-entry multimodal flag", () => {
         { model_id: "b", normalized_score: 0.4, self_reported: false },
       ],
     }),
-    { trust: { selfReported: 1, verified: 0, covered: 2 }, modality: { multimodal: 1, covered: 1 }, provenance: null },
+    { trust: { selfReported: 1, verified: 0, covered: 2 }, modality: { multimodal: 1, covered: 1 }, provenance: null, crossSource: null },
   );
   // No entry carries a boolean multimodal: modality is null, not a silent ok.
   assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5, multimodal: "yes" }] }), {
     trust: null,
     modality: null,
     provenance: null,
+    crossSource: null,
   });
 });
 
@@ -127,7 +129,7 @@ test("parseBenchmarkPayloadMeta reads the per-entry org distribution", () => {
         { model_id: "c", normalized_score: 0.3, provider_id: "google" },
       ],
     }),
-    { trust: null, modality: null, provenance: { dominantOrg: "openai", dominantShare: 2 / 3, orgs: 2, covered: 3 } },
+    { trust: null, modality: null, provenance: { dominantOrg: "openai", dominantShare: 2 / 3, orgs: 2, covered: 3 }, crossSource: null },
   );
   // `organization_id` wins over `provider_id`; an empty string falls back.
   assert.deepEqual(
@@ -137,15 +139,16 @@ test("parseBenchmarkPayloadMeta reads the per-entry org distribution", () => {
         { model_id: "b", normalized_score: 0.4, organization_id: "", provider_id: "google" },
       ],
     }),
-    { trust: null, modality: null, provenance: { dominantOrg: "openai", dominantShare: 0.5, orgs: 2, covered: 2 } },
+    { trust: null, modality: null, provenance: { dominantOrg: "openai", dominantShare: 0.5, orgs: 2, covered: 2 }, crossSource: null },
   );
   // A payload with no org fields: provenance is null, not a silent ok.
-  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), { trust: null, modality: null, provenance: null });
+  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), { trust: null, modality: null, provenance: null, crossSource: null });
   // A non-string org is ignored; a payload with only junk orgs is null.
   assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5, organization_id: 3, provider_id: null }] }), {
     trust: null,
     modality: null,
     provenance: null,
+    crossSource: null,
   });
   // The three summaries keep independent denominators: a row may carry an org and no flag.
   assert.deepEqual(
@@ -155,7 +158,50 @@ test("parseBenchmarkPayloadMeta reads the per-entry org distribution", () => {
         { model_id: "b", normalized_score: 0.4, organization_id: "openai" },
       ],
     }),
-    { trust: { selfReported: 1, verified: 0, covered: 1 }, modality: null, provenance: { dominantOrg: "openai", dominantShare: 1, orgs: 1, covered: 2 } },
+    { trust: { selfReported: 1, verified: 0, covered: 1 }, modality: null, provenance: { dominantOrg: "openai", dominantShare: 1, orgs: 1, covered: 2 }, crossSource: null },
+  );
+});
+
+test("parseBenchmarkPayloadMeta reads the per-entry cross-source price/throughput/context", () => {
+  // The four fields are read in the same pass, keyed by the entry's model_id.
+  assert.deepEqual(
+    parseBenchmarkPayloadMeta({
+      entries: [{ model_id: "a", normalized_score: 0.5, input_cost_per_million: 1, output_cost_per_million: 3, speed_rps: 2, context_window: 1000 }],
+    }),
+    { trust: null, modality: null, provenance: null, crossSource: { a: { input: 1, output: 3, speed: 2, context: 1000 } } },
+  );
+  // A non-finite or non-number field is null; a row with none of the four is skipped.
+  assert.deepEqual(
+    parseBenchmarkPayloadMeta({
+      entries: [
+        { model_id: "a", normalized_score: 0.5, input_cost_per_million: 1, output_cost_per_million: "x", speed_rps: Number.NaN, context_window: null },
+        { model_id: "b", normalized_score: 0.4 },
+        { model_id: 3, normalized_score: 0.2, input_cost_per_million: 5 },
+      ],
+    }),
+    { trust: null, modality: null, provenance: null, crossSource: { a: { input: 1, output: null, speed: null, context: null } } },
+  );
+  // No entry carries any of the four: the whole map is null, not an empty object.
+  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), {
+    trust: null,
+    modality: null,
+    provenance: null,
+    crossSource: null,
+  });
+  // The four summaries keep independent denominators: a row may carry a price and no flag.
+  assert.deepEqual(
+    parseBenchmarkPayloadMeta({
+      entries: [
+        { model_id: "a", normalized_score: 0.5, self_reported: true, input_cost_per_million: 2 },
+        { model_id: "b", normalized_score: 0.4, organization_id: "openai" },
+      ],
+    }),
+    {
+      trust: { selfReported: 1, verified: 0, covered: 1 },
+      modality: null,
+      provenance: { dominantOrg: "openai", dominantShare: 1, orgs: 1, covered: 1 },
+      crossSource: { a: { input: 2, output: null, speed: null, context: null } },
+    },
   );
 });
 

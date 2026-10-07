@@ -130,14 +130,14 @@ effect on the next session.
   body's `<criteria>`), so the agent's rubric names the benchmark its model was
   chosen on. Discovery is **quality-gated**: the pre-fetch catalog gate is
   count-only, and the handler then probe-fetches each selected candidate's source
-  and assesses the joined pool on eight axes (`assessFocusMetric`: coverage,
-  dispersion, composition, freshness, trust, modality, maintenance, provenance —
-  see scoring.md). A
+  and assesses the joined pool on nine axes (`assessFocusMetric`: coverage,
+  dispersion, composition, freshness, trust, modality, maintenance, provenance,
+  cross-source — see scoring.md). A
   **discovered** candidate below-bar on any gating axis is dropped non-fatally
   with a reason naming the axis; a **user-named** metric is never dropped — it is
   annotated and warned. The
   focus set is capped at `FOCUS_METRIC_CAP` (3) so one benchmark keeps a decisive
-  share. The report prints the eight signals and warns per below-bar axis;
+  share. The report prints the nine signals and warns per below-bar axis;
   `--dry-run` and `--json` carry the same signal. The agent file is written **before** the role,
   so a partial failure leaves a harmless agent (its `@<name>, @default` chain
   falls back to `@default`) rather than a dangling role; a failed role write

@@ -68,7 +68,7 @@ function metricAbbr(metric: string): string {
   return local.slice(0, 10);
 }
 
-/** One focus-metric annotation line: the eight signals, same rule as the report. */
+/** One focus-metric annotation line: the nine signals, same rule as the report. */
 function focusLine(metric: string, a: FocusMetricAssessment): string {
   const c = a.coverage;
   const coverage =
@@ -87,7 +87,11 @@ function focusLine(metric: string, a: FocusMetricAssessment): string {
     a.provenance.status === "unknown"
       ? "unknown"
       : `${a.provenance.owner ?? "?"}${a.provenance.dominantShare === null ? "" : ` ${(a.provenance.dominantShare * 100).toFixed(0)}% ${a.provenance.dominantOrg ?? "?"}`} ${a.provenance.compositionAgreement}`;
-  return `focus: ${metric} — coverage ${coverage}; dispersion ${dispersion}; composition ${composition}; freshness ${freshness}; trust ${trust}; modality ${modality}; maintenance ${maintenance}; provenance ${provenance}`;
+  const crossSource =
+    a.crossSource.status === "unknown"
+      ? "unknown"
+      : `${a.crossSource.compared} priceΔ${a.crossSource.priceDivergence === null ? "?" : `${(a.crossSource.priceDivergence * 100).toFixed(0)}%`} ctxΔ${a.crossSource.contextDivergence === null ? "?" : `${(a.crossSource.contextDivergence * 100).toFixed(0)}%`} ${a.crossSource.status}`;
+  return `focus: ${metric} — coverage ${coverage}; dispersion ${dispersion}; composition ${composition}; freshness ${freshness}; trust ${trust}; modality ${modality}; maintenance ${maintenance}; provenance ${provenance}; cross-source ${crossSource}`;
 }
 
 function formatRankings(
@@ -216,7 +220,7 @@ function formatRankings(
     );
     for (let ri = 1; ri < padded.length; ri++) lines.push(`| ${padded[ri].join(" | ")} |`);
     // A role's focus metrics (the benchmarks it was ranked on) carry the same
-    // eight-axis annotation as the create-agent report. Shipped roles weight index
+    // nine-axis annotation as the create-agent report. Shipped roles weight index
     // metrics, so this is empty for them.
     for (const metric of focusMetricsOf(def, declared)) lines.push(focusLine(metric, assessFocusMetric(models, metric, declared, cachedSourceInfo(metric, declared))));
     lines.push("");

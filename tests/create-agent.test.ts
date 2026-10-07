@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { applyFocusBenchmarks, assessFocusMetric, belowBarReason, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_DATASET_STALENESS_MONTHS, FOCUS_DISPERSION_FLOOR, FOCUS_METRIC_CAP, FOCUS_ORG_MIN_SHARE, FOCUS_PROVENANCE_DOMINANT_SHARE, FOCUS_SELF_REPORTED_MAX_SHARE, FOCUS_STALENESS_MONTHS, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, resolveRole, type CreateAgentRequest, type FocusMetricAssessment } from "../src/agent-create.ts";
+import { applyFocusBenchmarks, assessFocusMetric, belowBarReason, countMetricCoverage, createAgent, differentiationWarning, discoverBenchmarks, extractBenchmarkLinks, extractBenchmarks, FOCUS_COVERAGE_FLOOR, FOCUS_DATASET_STALENESS_MONTHS, FOCUS_DISPERSION_FLOOR, FOCUS_METRIC_CAP, FOCUS_ORG_MIN_SHARE, FOCUS_PROVENANCE_DOMINANT_SHARE, FOCUS_SELF_REPORTED_MAX_SHARE, FOCUS_STALENESS_MONTHS, focusCoverageOk, formatBenchmarks, formatCreateAgentReport, parseCreateAgentInput, PRICE_AGREEMENT_TOLERANCE, resolveRole, type CreateAgentRequest, type FocusMetricAssessment } from "../src/agent-create.ts";
 import type { BenchmarkCatalogEntry } from "../src/benchmark-sources.ts";
 import { buildModels, rankRole, type Model, type RoleDef } from "../src/engine.ts";
 import { isRecord } from "../src/guards.ts";
@@ -442,7 +442,7 @@ test("applyFocusBenchmarks annotates coverage and warns below the bar", () => {
   assert.deepEqual(applied.assessments.gpqa.coverage, { covered: 20, total: 400, share: 0.05, fill: 0, status: "below-bar" });
   assert.equal(applied.assessments.writing.coverage.status, "ok");
   assert.equal(applied.assessments.writing.coverage.fill, 0.195);
-  // Without a loaded pool the seven new axes are unknown, never a silent ok.
+  // Without a loaded pool the eight new axes are unknown, never a silent ok.
   assert.equal(applied.assessments.gpqa.dispersion.status, "unknown");
   assert.equal(applied.assessments.gpqa.composition.status, "unknown");
   assert.equal(applied.assessments.gpqa.freshness.status, "unknown");
@@ -450,6 +450,7 @@ test("applyFocusBenchmarks annotates coverage and warns below the bar", () => {
   assert.equal(applied.assessments.gpqa.modality.status, "unknown");
   assert.equal(applied.assessments.gpqa.maintenance.status, "unknown");
   assert.equal(applied.assessments.gpqa.provenance.status, "unknown");
+  assert.equal(applied.assessments.gpqa.crossSource.status, "unknown");
 
   // Unknown field size: annotated, not warned.
   const unknown = applyFocusBenchmarks(base, ["gpqa"], { total: null, covered: {} });
@@ -560,7 +561,7 @@ test("parseCreateAgentInput carries the discovery flags", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The eight-axis focus-metric assessment (issue #17, trust axis #34, modality axis #35, maintenance axis #36, provenance axis #37)
+// The nine-axis focus-metric assessment (issue #17, trust axis #34, modality axis #35, maintenance axis #36, provenance axis #37, cross-source axis #38)
 // ---------------------------------------------------------------------------
 
 /** A pool with distinct orgs and release dates, for the assessment axes. */
@@ -820,6 +821,7 @@ test("the maintenance axis never drops a discovered candidate (annotation, not a
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: "2015-01-01T00:00:00Z", monthsOld: 130, versionCount: 1, starCount: 0, status: "below-bar" },
     provenance: { owner: null, dominantOrg: null, dominantShare: null, compositionAgreement: "unknown", status: "unknown" },
+    crossSource: { compared: 0, priceAgreement: "unknown", contextAgreement: "unknown", speedAgreement: "unknown", priceDivergence: null, contextDivergence: null, status: "unknown" },
   };
   assert.equal(belowBarReason(staleOnly), null);
   const discovered = await discoverBenchmarks("coding", catalog, async () => ["old"], [], 400, async () => staleOnly);
@@ -952,6 +954,7 @@ test("the provenance axis never drops a discovered candidate (annotation, not a 
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: null, monthsOld: null, versionCount: null, starCount: null, status: "unknown" },
     provenance: { owner: "openai", dominantOrg: "openai", dominantShare: 0.9, compositionAgreement: "disagree", status: "below-bar" },
+    crossSource: { compared: 0, priceAgreement: "unknown", contextAgreement: "unknown", speedAgreement: "unknown", priceDivergence: null, contextDivergence: null, status: "unknown" },
   };
   assert.equal(vendorOnly.provenance.status, "below-bar");
   assert.equal(belowBarReason(vendorOnly), null);
@@ -960,6 +963,81 @@ test("the provenance axis never drops a discovered candidate (annotation, not a 
   assert.deepEqual(discovered.dropped, []);
   assert.equal(discovered.discovered.length, 1);
   assert.equal(discovered.discovered[0].metric, "bench:vendor");
+});
+
+test("assessFocusMetric: the cross-source axis compares the zeroeval per-entry values", () => {
+  const models = assessmentPool(); // price 1, context 200000, throughput 50
+  for (const m of models) m.metrics.gpqa = 0.5;
+  const withCross = (crossSource: Record<string, { input: number | null; output: number | null; speed: number | null; context: number | null }> | null) =>
+    assessFocusMetric(models, "gpqa", [], { payload: { trust: null, modality: null, provenance: null, crossSource } });
+
+  // A matching price (the 3:1 blend of 1/1 is 1) and context: both ok.
+  const match = withCross({ a: { input: 1, output: 1, speed: 50, context: 200000 } });
+  assert.equal(match.crossSource.compared, 1);
+  assert.equal(match.crossSource.priceAgreement, "ok");
+  assert.equal(match.crossSource.contextAgreement, "ok");
+  assert.equal(match.crossSource.speedAgreement, "ok");
+  assert.equal(match.crossSource.status, "ok");
+  assert.equal(match.crossSource.priceDivergence, 0);
+  assert.equal(match.crossSource.contextDivergence, 0);
+
+  // A price past the tolerance (blend 4 vs 1 → 0.75) is below-bar; context still ok.
+  const priceDiverged = withCross({ a: { input: 4, output: 4, speed: 50, context: 200000 } });
+  assert.equal(priceDiverged.crossSource.priceAgreement, "below-bar");
+  assert.equal(priceDiverged.crossSource.contextAgreement, "ok");
+  assert.equal(priceDiverged.crossSource.status, "below-bar");
+  assert.ok(priceDiverged.crossSource.priceDivergence !== null && Math.abs(priceDiverged.crossSource.priceDivergence - 0.75) < 1e-9);
+
+  // A context past the tolerance (100000 vs 200000 → 0.75) is below-bar on its own.
+  const ctxDiverged = withCross({ a: { input: 1, output: 1, speed: 50, context: 50000 } });
+  assert.equal(ctxDiverged.crossSource.contextAgreement, "below-bar");
+  assert.equal(ctxDiverged.crossSource.status, "below-bar");
+
+  // The tolerance boundary: exactly at the tolerance is ok, just past is below-bar.
+  // price 1 vs blend 2 → divergence 0.5 (exactly the tolerance).
+  assert.equal(withCross({ a: { input: 2, output: 2, speed: null, context: null } }).crossSource.priceAgreement, "ok");
+  // price 1 vs blend 2.02 → divergence 0.5049… > 0.5.
+  assert.equal(withCross({ a: { input: 2.02, output: 2.02, speed: null, context: null } }).crossSource.priceAgreement, "below-bar");
+  assert.equal(PRICE_AGREEMENT_TOLERANCE, 0.5);
+
+  // A model not in the map, or not carrying the metric, does not count.
+  const noJoin = withCross({ zzz: { input: 1, output: 1, speed: 50, context: 200000 } });
+  assert.equal(noJoin.crossSource.compared, 0);
+  assert.equal(noJoin.crossSource.status, "unknown");
+  assert.equal(noJoin.crossSource.priceAgreement, "unknown");
+  assert.equal(noJoin.crossSource.contextAgreement, "unknown");
+  assert.equal(noJoin.crossSource.speedAgreement, "unknown");
+  assert.equal(noJoin.crossSource.priceDivergence, null);
+  assert.equal(noJoin.crossSource.contextDivergence, null);
+  // No cross-source map at all: the whole axis is unknown.
+  assert.equal(withCross(null).crossSource.status, "unknown");
+  assert.equal(withCross(null).crossSource.compared, 0);
+
+  // speed is informational only: a speed divergence alone never sets below-bar.
+  const speedOnly = withCross({ a: { input: 1, output: 1, speed: 500, context: 200000 } });
+  assert.equal(speedOnly.crossSource.speedAgreement, "below-bar");
+  assert.equal(speedOnly.crossSource.status, "ok");
+});
+
+test("the cross-source axis never drops a candidate and never moves a ranking", () => {
+  const models = assessmentPool();
+  // Distinct values so dispersion/composition/freshness are all ok and the
+  // cross-source axis is the only below-bar one.
+  models[0].metrics.gpqa = 0.2;
+  models[1].metrics.gpqa = 0.5;
+  models[2].metrics.gpqa = 0.8;
+  models[3].metrics.gpqa = 0.9;
+  const def: RoleDef = { description: "d", weights: { general: 0.5, gpqa: 0.3, price: 0.2 }, required: ["general", "price"] };
+  const before = rankRole(def, models);
+  // A diverging price/context/speed: the axis flags it, yet the ranking is untouched.
+  const a = assessFocusMetric(models, "gpqa", [], {
+    payload: { trust: null, modality: null, provenance: null, crossSource: { a: { input: 4, output: 4, speed: 500, context: 1000 } } },
+  });
+  assert.equal(a.crossSource.status, "below-bar");
+  assert.equal(belowBarReason(a), null);
+  assert.doesNotMatch(belowBarReason(a) ?? "", /cross-source/);
+  const after = rankRole(def, models);
+  assert.deepEqual(after, before);
 });
 
 test("belowBarReason names the trust axis, and the drop/warn split holds for it", async () => {
@@ -987,6 +1065,7 @@ test("belowBarReason names the trust axis, and the drop/warn split holds for it"
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: null, monthsOld: null, versionCount: null, starCount: null, status: "unknown" },
     provenance: { owner: null, dominantOrg: null, dominantShare: null, compositionAgreement: "unknown", status: "unknown" },
+    crossSource: { compared: 0, priceAgreement: "unknown", contextAgreement: "unknown", speedAgreement: "unknown", priceDivergence: null, contextDivergence: null, status: "unknown" },
   };
   const discovered = await discoverBenchmarks("coding", catalog, async () => ["vendor"], [], 400, async () => trustBelowBar);
   assert.deepEqual(discovered.discovered, []);
@@ -1018,6 +1097,7 @@ test("discoverBenchmarks drops a below-bar candidate with the failed axis in the
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: null, monthsOld: null, versionCount: null, starCount: null, status: "unknown" },
     provenance: { owner: null, dominantOrg: null, dominantShare: null, compositionAgreement: "unknown", status: "unknown" },
+    crossSource: { compared: 0, priceAgreement: "unknown", contextAgreement: "unknown", speedAgreement: "unknown", priceDivergence: null, contextDivergence: null, status: "unknown" },
   };
   const result = await discoverBenchmarks("coding", catalog, async () => ["saturated"], [], 400, async () => belowBar);
   assert.deepEqual(result.discovered, []);
@@ -1038,6 +1118,7 @@ test("the drop/warn split: a discovered below-bar candidate is dropped, a named 
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: null, monthsOld: null, versionCount: null, starCount: null, status: "unknown" },
     provenance: { owner: null, dominantOrg: null, dominantShare: null, compositionAgreement: "unknown", status: "unknown" },
+    crossSource: { compared: 0, priceAgreement: "unknown", contextAgreement: "unknown", speedAgreement: "unknown", priceDivergence: null, contextDivergence: null, status: "unknown" },
   };
   const discovered = await discoverBenchmarks("coding", catalog, async () => ["saturated"], [], 400, async () => belowBar);
   assert.deepEqual(discovered.discovered, []);
@@ -1055,7 +1136,7 @@ test("the drop/warn split: a discovered below-bar candidate is dropped, a named 
   assert.ok(applied.weights["bench:saturated"] !== undefined);
 });
 
-test("formatCreateAgentReport prints the eight signals and warns per below-bar axis", () => {
+test("formatCreateAgentReport prints the nine signals and warns per below-bar axis", () => {
   const { lockPath } = workspace();
   const belowBar: FocusMetricAssessment = {
     coverage: { covered: 300, total: 400, share: 0.75, fill: 0, status: "ok" },
@@ -1066,6 +1147,7 @@ test("formatCreateAgentReport prints the eight signals and warns per below-bar a
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: "2023-01-15T00:00:00Z", monthsOld: 30, versionCount: 4, starCount: 7, status: "below-bar" },
     provenance: { owner: "metr", dominantOrg: "openai", dominantShare: 0.9, compositionAgreement: "agree", status: "below-bar" },
+    crossSource: { compared: 3, priceAgreement: "below-bar", contextAgreement: "ok", speedAgreement: "unknown", priceDivergence: 0.8, contextDivergence: 0.1, status: "below-bar" },
   };
   const result = createAgent(request(lockPath, {
     dryRun: true,
@@ -1074,13 +1156,14 @@ test("formatCreateAgentReport prints the eight signals and warns per below-bar a
   }));
   assert.ok(result.ok, result.ok ? "" : result.errors.join("; "));
   const report = formatCreateAgentReport(result, "ranking…");
-  assert.match(report, /coverage:\s+gpqa 300\/400 \(75\.0%\) ok\s+dispersion 0\.030 below-bar\s+composition omits Beta\s+freshness 5\.0mo below-bar\s+trust 19\/20 below-bar\s+modality unknown\s+maintenance 30\.0mo below-bar\s+provenance metr 90% openai agree/);
+  assert.match(report, /coverage:\s+gpqa 300\/400 \(75\.0%\) ok\s+dispersion 0\.030 below-bar\s+composition omits Beta\s+freshness 5\.0mo below-bar\s+trust 19\/20 below-bar\s+modality unknown\s+maintenance 30\.0mo below-bar\s+provenance metr 90% openai agree\s+cross-source 3 priceΔ80% ctxΔ10% below-bar/);
   assert.match(report, /warning:\s+gpqa dispersion 0\.030 is below the 0\.05 bar/);
   assert.match(report, /warning:\s+gpqa omits Beta/);
   assert.match(report, /warning:\s+gpqa trails the pool by 5\.0 months/);
   assert.match(report, /warning:\s+gpqa trust 19\/20 self-reported is above the 0\.5 bar/);
   assert.match(report, /warning:\s+gpqa dataset last updated 30\.0 months ago/);
   assert.match(report, /warning:\s+gpqa provenance openai dominates 90% of the source's entries/);
+  assert.match(report, /warning:\s+gpqa cross-source price\/context diverges from the source's own per-entry values/);
 });
 
 test("buildModels carries the row's release_date onto the model record", () => {

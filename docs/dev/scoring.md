@@ -299,11 +299,11 @@ Naming the archetype's own specialist set is a no-op (the focus share equals its
 archetype share). A named metric already in the weights is reported as a
 duplicate; a name outside the known-metric set is unknown.
 
-**The eight-axis focus-metric gate.** A focus metric that is fill-0 and covers too
+**The nine-axis focus-metric gate.** A focus metric that is fill-0 and covers too
 little of the field turns `q` into a coverage score (a missing weighted metric
 contributes 0 while occupying its denominator share). `assessFocusMetric(models,
 metric, declared, source?)` (`src/agent-create.ts`) is the one rule, returning a
-`FocusMetricAssessment` with eight axes, each `{ …, status: "ok" | "below-bar" |
+`FocusMetricAssessment` with nine axes, each `{ …, status: "ok" | "below-bar" |
 "unknown" }`:
 
 - **coverage** (`FocusCoverageEntry`) — the share of the pool carrying the metric
@@ -361,9 +361,31 @@ metric, declared, source?)` (`src/agent-create.ts`) is the one rule, returning a
   provenance branch, so a vendor-populated source is warned but never drops a
   discovered candidate. It is `unknown` when there is neither an owner nor a
   payload org mix.
+- **cross-source** — the zeroeval per-entry price/throughput/context
+  (`BenchmarkPayloadMeta.crossSource`, keyed by the entry's `model_id`) compared
+  against the plugin's own `price`/`throughput`/`context`. The join is **direct
+  on the bare id** (the generic llm-stats benchmark's `entries[].model_id` is the
+  llm-stats id, the same space as `Model.id`); only models present in the map AND
+  carrying the metric count toward `compared`. price compares zeroeval's 3:1
+  blend `(3·input + output)/4` against `m.price` ($/M), context compares
+  `row.context` against `m.context`, and the relative divergence is
+  `|a − b| / max(a, b, 1e-9)`; `priceDivergence`/`contextDivergence` are the
+  median over the models compared on that axis (`null` when none). An axis is
+  `unknown` when nothing was compared on it, else `ok` within
+  `PRICE_AGREEMENT_TOLERANCE` (0.5 — a **chosen, tunable heuristic**), else
+  `below-bar`. `speedAgreement` is **informational only** and excluded from
+  `status`: the units differ (zeroeval `speed_rps` is requests/s, the plugin's
+  `throughput` is output tok/s) and re-deriving throughput from `speed_rps` is
+  explicitly out of scope. `status` is `unknown` when `compared === 0`, else
+  `below-bar` when `priceAgreement` or `contextAgreement` is `below-bar`, else
+  `ok`. Like modality, maintenance and provenance it is an **annotation, never a
+  gate**: `belowBarReason` has no cross-source branch, and the axis never feeds
+  `price`/`weightPrice` or any ranking input — the `1/price²` blend is unchanged.
+  (A future option, recorded here only: use zeroeval's list price as a fallback
+  fill for a model with no OpenRouter route.)
 
 An empty pool (unknown field size) or `covered === 0` (the metric's scores were
-not loaded) reports **all eight axes `unknown`**, coverage included — never a
+not loaded) reports **all nine axes `unknown`**, coverage included — never a
 silent `ok`. `belowBarReason(assessment)` names the failed axis.
 
 **Enforcement.** The pre-fetch catalog gate is count-only (`modelCount >= 3`); the
@@ -371,7 +393,7 @@ create-agent gate then probe-fetches each selected candidate's source
 (`loadBenchmarkScores`), joins it onto the ranking universe, and assesses the
 joined pool. A **discovered** candidate below-bar on any gating axis is dropped
 non-fatally with a reason naming the axis; a **user-named** metric is never
-dropped — it is annotated and warned. The report prints the eight signals and
+dropped — it is annotated and warned. The report prints the nine signals and
 warns per below-bar axis; the explorer's `/api/bootstrap` carries
 `focusAssessments` and the SPA renders a `table.focus` (below-bar warned,
 `unknown` muted, never green); the CLI report annotates a role's focus metrics
@@ -425,10 +447,10 @@ The shipped weights (`DEFAULT_ROLES`) and the archetype sets
    100%-coverage backbone plus the partial-coverage trio at reduced share;
    `mrcr`/`search` are unweighted and `long_context` is capped at 0.14.
    `website`/`long_context`/`writing` are capability-filled rather than
-   0-filled. The eight-axis focus-metric gate (above) is the automated check for
+   0-filled. The nine-axis focus-metric gate (above) is the automated check for
    this rule: it drops a discovered candidate that is below-bar on coverage,
-   dispersion, composition, freshness or trust (modality, maintenance and
-   provenance are annotations, never a drop).
+   dispersion, composition, freshness or trust (modality, maintenance,
+   provenance and cross-source are annotations, never a drop).
 5. **Non-collinear differentiation.** The capability indices are one latent
    factor (Pearson r over the pool: general↔reasoning 0.984, code↔agents 0.95,
    general↔code 0.94), so re-weighting them barely separates roles.
@@ -877,7 +899,7 @@ generic llm-stats source, joined direct on `model_id`):
 | `acebench` | 2 | 2 | 2/400 (0.5%) | 0.000 | below-bar | 12.8 mo | — | — | reject (below 3-model floor) |
 | `mcp-universe` | 1 | 1 | 1/400 (0.3%) | — | below-bar | 9.9 mo | — | — | reject (below 3-model floor) |
 
-`automationbench` is the only candidate that clears the implemented eight-axis
+`automationbench` is the only candidate that clears the implemented nine-axis
 gate (dispersion 0.62, composition ok, freshness ok, r(general) 0.24,
 r(agents) 0.30) — but it measures **single-agent tool orchestration**, not
 delegation / teams / handoffs / swarms / recovery / a2a, and it covers 5% of the

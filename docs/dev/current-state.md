@@ -8,6 +8,25 @@ copying the new numbers here; release prose belongs in
 below are the 2026-10-06 measurement (the input-price blend basis #21 and the
 #17/#18/#19/#20 wave; see the top bullet) and are not re-derived on read.
 
+- Cross-source axis (2026-10-07, issue #38): the focus-metric gate gained the
+  cross-source axis — the zeroeval per-benchmark payload's **second, independent**
+  set of the price/throughput/context quantities (`input_cost_per_million`/
+  `output_cost_per_million`/`speed_rps`/`context_window`, read by
+  `parseBenchmarkPayloadMeta` onto `BenchmarkPayloadMeta.crossSource`, keyed by
+  the entry's `model_id`) compared against the plugin's own `price`/`context`.
+  The join is **direct on the bare id** (the generic llm-stats benchmark's
+  `entries[].model_id` is the llm-stats id, the same space as `Model.id`); the
+  axis reports the median relative divergence per axis against
+  `PRICE_AGREEMENT_TOLERANCE` (0.5, a **chosen, tunable heuristic**).
+  `speedAgreement` is **informational only** and excluded from `status` (the
+  units differ — rps vs tok/s — and re-deriving throughput from `speed_rps` is
+  out of scope). It is an **annotation, never a gate** (`belowBarReason` has no
+  cross-source branch) and it never feeds `price`/`weightPrice` or any ranking
+  input — the `1/price²` blend is unchanged (a test pins `rankRole`
+  byte-identical with the annotation on). It is `unknown` when no model joined or
+  the payload carried none of the four fields. The ranking numbers are unchanged
+  — the axis is a create-agent/explorer annotation, not a weight.
+
 - Provenance axis (2026-10-07, issue #37): the focus-metric gate gained the
   provenance axis — the benchmark's owner (the catalog row's `dataset_org_id`,
   falling back to `dataset_slug`) and the source's own per-entry org mix (the
