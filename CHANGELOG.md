@@ -36,7 +36,9 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   `providerPinning`'s recommended setting is a **soft per-model policy**
   (`preferOwnProvider`), not a hard `providerPin`: it re-prices a model on its
   own lab's route where one exists (a slug-prefix match on the model's `orgId`,
-  with the display `org` as a second try) and falls back to the `1/price²` blend
+  with the display `org` as a second try) — the route's billed price **and** its
+  p50 throughput, the same basis a hard pin uses, so `q` moves as well as
+  `priceEff` — and falls back to the `1/price²` blend
   otherwise, so it never makes a model ineligible — an org whose lab slug differs
   (`zai-org` → `z-ai`) keeps the blend rather than being mis-pinned. The hard
   `providerPin` (an explicit slug) is untouched. `minContextTokens` is

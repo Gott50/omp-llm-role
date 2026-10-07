@@ -190,6 +190,14 @@ cache, `default` role, 142 eligible):
   `gryphe`). An unmatched model keeps the blend, so the capability
   **under-delivers rather than mis-pins**, and it **never changes eligibility**
   (unlike the hard `providerPin`, which drops a model with no matching route).
+  The resolved route is the same basis a hard pin uses, so the preference moves
+  the **throughput** axis as well as the billed price — a role that routes to the
+  lab's endpoint gets that endpoint's p50 tok/s, not the blend's. Measured on the
+  2026-10-07 cache, the `default` leader's `priceEff` rises 0.579 → 0.975 while
+  its `value` *rises* 0.8132 → 0.8172, because its own lab route's p50 throughput
+  is higher than the blend's, so `q` moves too. That is deliberate (the pin path
+  has always priced and measured on the pinned route); a role that wants the
+  blend's throughput should leave the flag off.
 - **`costCap`** (`filters.maxPriceUsdPerM: 10`) drops the priciest tail of the
   eligible pool: 142 → 135 (the top ≈5 %), leader unchanged. The pool's p90 is
   7.8 and p95 8.9 $/M, and every role leader sits at 0.58–0.85 $/M, so the

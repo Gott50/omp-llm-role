@@ -141,7 +141,7 @@ defaults.
 |---|---|---|
 | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | Routes that cannot call tools and routes whose output ceiling is below 16 384 tokens leave the pool — a reasoning model is not cut off mid-thought |
 | `cachePricing` | `cacheHitRate: 0.5` | The role is priced on a cache-heavy agent loop's invoice (the endpoint's `cacheReadPrice` blended in) rather than the sticker price |
-| `providerPinning` | `preferOwnProvider: true` | A model is priced on **its own lab's** route where one exists (DeepSeek's own endpoint, 94.5 % cache hit), falling back to the default blend otherwise |
+| `providerPinning` | `preferOwnProvider: true` | A model is priced **and measured** on its own lab's route where one exists (DeepSeek's own endpoint, 94.5 % cache hit) — the route's billed price and its p50 throughput, so `q` moves too — falling back to the default blend otherwise |
 | `costCap` | `filters.maxPriceUsdPerM: 10` | The priciest tail of the eligible pool leaves it, so the pick cannot be an expensive outlier |
 
 Precedence is one rule:
@@ -156,8 +156,9 @@ beats a global `true`. The preset fills only knobs the role does not already
 set, and an explicit key is merged last, so it always wins. `providerPinning`'s
 recommended setting is a **soft per-model policy** (`preferOwnProvider`), not a
 hard `providerPin`: it re-prices a model on its own lab's route where one exists
-and never makes a model ineligible (the hard `providerPin` stays available by
-hand). `minContextTokens` is deliberately **not** part of `endpointCeilings` —
+(the route's billed price **and** its p50 throughput, so `q` moves as well as
+`priceEff`) and never makes a model ineligible (the hard `providerPin` stays
+available by hand). `minContextTokens` is deliberately **not** part of `endpointCeilings` —
 the complaint it would answer is an endpoint advertising a *fraction of the
 model's own window*, which an absolute token floor cannot express, so it stays a
 hand-set knob.
