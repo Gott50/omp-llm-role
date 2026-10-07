@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_SETTINGS, isKnownMetric, resolveSettings } from "../src/settings.ts";
+import { FEATURES, expandFeatures } from "../src/features.ts";
+import { DEFAULT_ROLES, DEFAULT_SETTINGS, isKnownMetric, resolveSettings, roleUniverse } from "../src/settings.ts";
 
 test("opt-in roles: designer ships disabled and is dropped unless enabled", () => {
   const { settings, errors } = resolveSettings({});
@@ -96,4 +97,123 @@ test("the newly mapped leaderboard metrics are weightable", () => {
     roles: { x: { weights: { simpleqa_score: 0.5, price: 0.5 }, required: ["index_legal"] } },
   });
   assert.deepEqual(errors, []);
+});
+
+test("no flag is a no-op: resolved roles equal the shipped defs", () => {
+  const { settings, errors } = resolveSettings({});
+  assert.deepEqual(errors, []);
+  // The resolved set drops shipped-disabled roles (designer), so compare the
+  // surviving key set and each def byte-for-byte against DEFAULT_ROLES.
+  const expectedNames = Object.keys(DEFAULT_ROLES).filter((n) => DEFAULT_ROLES[n].enabled !== false);
+  assert.deepEqual(Object.keys(settings.roles).sort(), expectedNames.sort());
+  for (const [name, def] of Object.entries(settings.roles)) assert.deepEqual(def, DEFAULT_ROLES[name]);
+  assert.deepEqual(settings.features, {});
+});
+
+test("a global flag reaches every resolved role", () => {
+  const { settings, errors } = resolveSettings({ "features.cachePricing": true });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(settings.features, { cachePricing: true });
+  for (const [name, def] of Object.entries(settings.roles)) {
+    assert.equal(def.cacheHitRate, 0.5, `${name} should be cache-priced`);
+  }
+});
+
+test("each global flag applies its recommended bundle", () => {
+  const ceilings = resolveSettings({ "features.endpointCeilings": true });
+  assert.deepEqual(ceilings.errors, []);
+  for (const [name, def] of Object.entries(ceilings.settings.roles)) {
+    assert.equal(def.filters?.tools, true, `${name} tools`);
+    assert.equal(def.filters?.minOutputTokens, 16384, `${name} minOutputTokens`);
+  }
+  // A hand-set leaf survives the fill (vision ships filters.image: true).
+  assert.equal(ceilings.settings.roles.vision.filters?.image, true);
+
+  const cap = resolveSettings({ "features.costCap": true });
+  assert.deepEqual(cap.errors, []);
+  assert.equal(cap.settings.roles.default.filters?.maxPriceUsdPerM, 10);
+
+  const pin = resolveSettings({ "features.providerPinning": true });
+  assert.deepEqual(pin.errors, []);
+  for (const [name, def] of Object.entries(pin.settings.roles)) {
+    assert.equal(def.preferOwnProvider, true, `${name} preferOwnProvider`);
+  }
+});
+
+test("an explicit knob beats the flag", () => {
+  const { settings, errors } = resolveSettings({ "features.cachePricing": true, "roles.default.cacheHitRate": 0.2 });
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.default.cacheHitRate, 0.2);
+  assert.equal(settings.roles.smol.cacheHitRate, 0.5);
+});
+
+test("a per-role false beats a global true", () => {
+  const { settings, errors } = resolveSettings({ "features.cachePricing": true, "roles.tiny.features.cachePricing": false });
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.tiny.cacheHitRate, undefined);
+  for (const [name, def] of Object.entries(settings.roles)) {
+    if (name === "tiny") continue;
+    assert.equal(def.cacheHitRate, 0.5, `${name} should be cache-priced`);
+  }
+});
+
+test("a per-role true beats a global false", () => {
+  const { settings, errors } = resolveSettings({ "roles.review.features.costCap": true, roles: { review: { weights: { general: 0.5, price: 0.5 }, required: [] } } });
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.review.filters?.maxPriceUsdPerM, 10);
+  assert.equal(settings.roles.default.filters?.maxPriceUsdPerM, undefined);
+});
+
+test("unknown and non-boolean flags abort with the offending key", () => {
+  const unknownGlobal = resolveSettings({ "features.katz": true });
+  assert.ok(unknownGlobal.errors.includes("features.katz is not a known capability"), unknownGlobal.errors.join("; "));
+
+  const unknownRole = resolveSettings({ "roles.review.features.katz": true, roles: { review: { weights: { general: 0.5, price: 0.5 }, required: [] } } });
+  assert.ok(unknownRole.errors.includes("role review: features.katz is not a known capability"), unknownRole.errors.join("; "));
+
+  const badGlobal = resolveSettings({ "features.cachePricing": "yes" });
+  assert.ok(badGlobal.errors.some((e) => e.startsWith("features.cachePricing: must be a boolean")), badGlobal.errors.join("; "));
+
+  const badRole = resolveSettings({ "roles.tiny.features.cachePricing": "yes" });
+  assert.ok(badRole.errors.some((e) => e.startsWith("role tiny: features.cachePricing must be a boolean")), badRole.errors.join("; "));
+
+  const badPrefer = resolveSettings({ "roles.tiny.preferOwnProvider": "yes" });
+  assert.ok(badPrefer.errors.some((e) => e.startsWith("role tiny: preferOwnProvider must be a boolean")), badPrefer.errors.join("; "));
+});
+
+test("roleUniverse keeps the authored def (flags retained, not expanded)", () => {
+  const raw = { "roles.tiny.features.costCap": true };
+  const resolved = resolveSettings(raw);
+  const universe = roleUniverse(raw, resolved.settings.roles);
+  assert.deepEqual(universe.tiny.def.features, { costCap: true });
+  assert.equal(universe.tiny.def.filters, undefined);
+});
+
+test("expandFeatures never mutates its input and strips features", () => {
+  const authored = { description: "x", weights: { general: 0.5, price: 0.5 }, required: [], features: { cachePricing: true } };
+  const snapshot = structuredClone(authored);
+  const out = expandFeatures(authored, {});
+  assert.deepEqual(authored, snapshot);
+  assert.equal(out.features, undefined);
+  assert.equal(out.cacheHitRate, 0.5);
+});
+
+test("feature bundles are pairwise leaf-disjoint", () => {
+  const leaves = (rec: (typeof FEATURES)[number]["recommended"]): string[] => {
+    const out: string[] = [];
+    if (rec.filters?.tools !== undefined) out.push("filters.tools");
+    if (rec.filters?.minOutputTokens !== undefined) out.push("filters.minOutputTokens");
+    if (rec.filters?.maxPriceUsdPerM !== undefined) out.push("filters.maxPriceUsdPerM");
+    if (rec.cacheHitRate !== undefined) out.push("cacheHitRate");
+    if (rec.preferOwnProvider !== undefined) out.push("preferOwnProvider");
+    return out;
+  };
+  for (let i = 0; i < FEATURES.length; i++) {
+    for (let j = i + 1; j < FEATURES.length; j++) {
+      const a = new Set(leaves(FEATURES[i].recommended));
+      for (const leaf of leaves(FEATURES[j].recommended)) {
+        assert.ok(!a.has(leaf), `${FEATURES[i].id} and ${FEATURES[j].id} share ${leaf}`);
+      }
+    }
+  }
 });

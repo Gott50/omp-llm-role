@@ -68,6 +68,26 @@
         "description": "Reapply the new default selector to an empty session's active model",
         "default": true
       },
+      "features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Drop routes that cannot call tools and routes whose output ceiling is below 16 384 tokens",
+        "default": false
+      },
+      "features.cachePricing": {
+        "type": "boolean",
+        "description": "Price the role on a cache-heavy agent loop's invoice (cacheHitRate 0.5) instead of the sticker price",
+        "default": false
+      },
+      "features.providerPinning": {
+        "type": "boolean",
+        "description": "Price a model on its own lab's route where one exists (per-model policy; never drops a model)",
+        "default": false
+      },
+      "features.costCap": {
+        "type": "boolean",
+        "description": "Drop the priciest tail of the eligible pool (maxPriceUsdPerM 10)",
+        "default": false
+      },
       "roles.default.enabled": {
         "type": "boolean",
         "description": "Enable the default role",
@@ -104,6 +124,31 @@
         "min": 0,
         "max": 1,
         "step": 0.01
+      },
+      "roles.default.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the default role",
+        "default": false
+      },
+      "roles.default.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the default role",
+        "default": false
+      },
+      "roles.default.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the default role",
+        "default": false
+      },
+      "roles.default.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the default role",
+        "default": false
+      },
+      "roles.default.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price default models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
       },
       "roles.default.required": {
         "type": "string",
@@ -228,6 +273,31 @@
         "max": 1,
         "step": 0.01
       },
+      "roles.smol.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the smol role",
+        "default": false
+      },
+      "roles.smol.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the smol role",
+        "default": false
+      },
+      "roles.smol.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the smol role",
+        "default": false
+      },
+      "roles.smol.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the smol role",
+        "default": false
+      },
+      "roles.smol.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price smol models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
+      },
       "roles.smol.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for smol",
@@ -343,6 +413,31 @@
         "max": 1,
         "step": 0.01
       },
+      "roles.slow.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the slow role",
+        "default": false
+      },
+      "roles.slow.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the slow role",
+        "default": false
+      },
+      "roles.slow.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the slow role",
+        "default": false
+      },
+      "roles.slow.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the slow role",
+        "default": false
+      },
+      "roles.slow.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price slow models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
+      },
       "roles.slow.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for slow",
@@ -457,6 +552,31 @@
         "min": 0,
         "max": 1,
         "step": 0.01
+      },
+      "roles.vision.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the vision role",
+        "default": false
+      },
+      "roles.vision.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the vision role",
+        "default": false
+      },
+      "roles.vision.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the vision role",
+        "default": false
+      },
+      "roles.vision.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the vision role",
+        "default": false
+      },
+      "roles.vision.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price vision models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
       },
       "roles.vision.required": {
         "type": "string",
@@ -581,6 +701,31 @@
         "max": 1,
         "step": 0.01
       },
+      "roles.plan.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the plan role",
+        "default": false
+      },
+      "roles.plan.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the plan role",
+        "default": false
+      },
+      "roles.plan.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the plan role",
+        "default": false
+      },
+      "roles.plan.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the plan role",
+        "default": false
+      },
+      "roles.plan.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price plan models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
+      },
       "roles.plan.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for plan",
@@ -687,6 +832,31 @@
         "min": 0,
         "max": 1,
         "step": 0.01
+      },
+      "roles.commit.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the commit role",
+        "default": false
+      },
+      "roles.commit.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the commit role",
+        "default": false
+      },
+      "roles.commit.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the commit role",
+        "default": false
+      },
+      "roles.commit.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the commit role",
+        "default": false
+      },
+      "roles.commit.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price commit models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
       },
       "roles.commit.required": {
         "type": "string",
@@ -795,6 +965,31 @@
         "max": 1,
         "step": 0.01
       },
+      "roles.tiny.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the tiny role",
+        "default": false
+      },
+      "roles.tiny.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the tiny role",
+        "default": false
+      },
+      "roles.tiny.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the tiny role",
+        "default": false
+      },
+      "roles.tiny.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the tiny role",
+        "default": false
+      },
+      "roles.tiny.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price tiny models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
+      },
       "roles.tiny.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for tiny",
@@ -893,6 +1088,31 @@
         "min": 0,
         "max": 1,
         "step": 0.01
+      },
+      "roles.task.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the task role",
+        "default": false
+      },
+      "roles.task.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the task role",
+        "default": false
+      },
+      "roles.task.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the task role",
+        "default": false
+      },
+      "roles.task.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the task role",
+        "default": false
+      },
+      "roles.task.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price task models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
       },
       "roles.task.required": {
         "type": "string",
@@ -1017,6 +1237,31 @@
         "max": 1,
         "step": 0.01
       },
+      "roles.advisor.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the advisor role",
+        "default": false
+      },
+      "roles.advisor.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the advisor role",
+        "default": false
+      },
+      "roles.advisor.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the advisor role",
+        "default": false
+      },
+      "roles.advisor.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the advisor role",
+        "default": false
+      },
+      "roles.advisor.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price advisor models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
+      },
       "roles.advisor.required": {
         "type": "string",
         "description": "Comma-separated metrics a model must have to rank for advisor",
@@ -1123,6 +1368,31 @@
         "min": 0,
         "max": 1,
         "step": 0.01
+      },
+      "roles.designer.features.endpointCeilings": {
+        "type": "boolean",
+        "description": "Enable the Endpoint capability ceilings capability for the designer role",
+        "default": false
+      },
+      "roles.designer.features.cachePricing": {
+        "type": "boolean",
+        "description": "Enable the Cache-read pricing capability for the designer role",
+        "default": false
+      },
+      "roles.designer.features.providerPinning": {
+        "type": "boolean",
+        "description": "Enable the Prefer the model's own lab endpoint capability for the designer role",
+        "default": false
+      },
+      "roles.designer.features.costCap": {
+        "type": "boolean",
+        "description": "Enable the Cost cap capability for the designer role",
+        "default": false
+      },
+      "roles.designer.preferOwnProvider": {
+        "type": "boolean",
+        "description": "Price designer models on their own lab's route where one exists (soft preference; never drops a model)",
+        "default": false
       },
       "roles.designer.required": {
         "type": "string",

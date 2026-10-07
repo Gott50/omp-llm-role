@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SUFFIX_LEVELS, type RoleDef } from "./engine.ts";
+import { FEATURES, expandFeatures, featureById } from "./features.ts";
 import { isRecord } from "./guards.ts";
 
 /** User-level plugin settings lock file (the explorer's read/export target and
@@ -235,6 +236,9 @@ export type ResolvedSettings = {
   fallbackChainDepth: number;
   roles: Record<string, RoleDef>;
   activateDefaultOnEmptySession: boolean;
+  /** Global capability flags (`features.<id>`); a role's `features.<id>` overrides
+   * the global in either direction. Expanded per role by `resolveSettings`. */
+  features: Record<string, boolean>;
 };
 
 export const DEFAULT_SETTINGS: ResolvedSettings = {
@@ -244,6 +248,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   fallbackChainDepth: 2,
   roles: DEFAULT_ROLES,
   activateDefaultOnEmptySession: true,
+  features: {},
 };
 
 /** One row of the plugin's settings schema (omp's `PluginSettingSchema`): the
@@ -296,6 +301,13 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       default: DEFAULT_SETTINGS.activateDefaultOnEmptySession,
     },
   };
+  for (const row of FEATURES) {
+    schema[`features.${row.id}`] = {
+      type: "boolean",
+      description: row.description,
+      default: false,
+    };
+  }
   for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
     const p = `roles.${name}`;
     schema[`${p}.enabled`] = {
@@ -325,6 +337,18 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       min: 0,
       max: 1,
       step: 0.01,
+    };
+    for (const row of FEATURES) {
+      schema[`${p}.features.${row.id}`] = {
+        type: "boolean",
+        description: `Enable the ${row.label} capability for the ${name} role`,
+        default: false,
+      };
+    }
+    schema[`${p}.preferOwnProvider`] = {
+      type: "boolean",
+      description: `Price ${name} models on their own lab's route where one exists (soft preference; never drops a model)`,
+      default: false,
     };
     schema[`${p}.required`] = {
       type: "string",
@@ -528,6 +552,19 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
     );
   }
 
+  // Global capability flags (`features.<id>`): an unknown id or a non-boolean
+  // value aborts the run (a typo must never silently do nothing). A non-record
+  // `features` is reset so the per-role expansion below always gets a map.
+  if (!isRecord(merged.features)) {
+    errors.push(`features: must be an object, got ${JSON.stringify(merged.features)}`);
+    merged.features = {};
+  } else {
+    for (const [id, v] of Object.entries(merged.features)) {
+      if (featureById(id) === null) errors.push(`features.${id} is not a known capability`);
+      if (typeof v !== "boolean") errors.push(`features.${id}: must be a boolean, got ${JSON.stringify(v)}`);
+    }
+  }
+
   for (const [name, rdef] of Object.entries(merged.roles)) {
     if (!isRecord(rdef)) {
       errors.push(`role ${name}: must be an object with weights/required, got ${JSON.stringify(rdef)}`);
@@ -632,7 +669,26 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
         delete rdef.providerPin;
       }
     }
+    // Per-role capability flags (`roles.<role>.features.<id>`): an unknown id or
+    // a non-boolean value aborts the run, naming the role and the key.
+    if (rdef.features !== undefined) {
+      if (!isRecord(rdef.features)) {
+        errors.push(`role ${name}: features must be an object`);
+        delete rdef.features;
+      } else {
+        for (const [id, v] of Object.entries(rdef.features)) {
+          if (featureById(id) === null) errors.push(`role ${name}: features.${id} is not a known capability`);
+          if (typeof v !== "boolean") errors.push(`role ${name}: features.${id} must be a boolean, got ${JSON.stringify(v)}`);
+        }
+      }
+    }
+    if (rdef.preferOwnProvider !== undefined && typeof rdef.preferOwnProvider !== "boolean") {
+      errors.push(`role ${name}: preferOwnProvider must be a boolean, got ${JSON.stringify(rdef.preferOwnProvider)}`);
+    }
     if (rdef.description === undefined) rdef.description = "";
+    // The resolved def is the EFFECTIVE def: the authored def with the enabled
+    // flags' recommended knobs filled in (explicit keys win; `features` stripped).
+    merged.roles[name] = expandFeatures(rdef, merged.features);
   }
 
   return { settings: merged, errors };

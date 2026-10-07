@@ -202,6 +202,13 @@ export type RoleDef = {
    * full input price. The weight basis stays the listed input price (the router's
    * sort key), so a cheap cache on a lightly-weighted route does not dominate. */
   cacheHitRate?: number;
+  /** Opt-in capability flags (`roles.<role>.features.<id>`); expanded by
+   * `expandFeatures` before ranking. `true`/`false` overrides the global flag. */
+  features?: Record<string, boolean>;
+  /** Soft provider preference (issue #40): price a model on its own lab's route
+   * when the role's `providerPinning` feature is on, else the 1/price² blend.
+   * Unlike `providerPin` this NEVER drops a model. */
+  preferOwnProvider?: boolean;
   /** Locked role: the plugin still ranks it (so it stays in the universe and its
    * sources are fetched) but never rewrites its `modelRoles` selector or fallback
    * chain, and never removes it. Enable/disable still applies. */
