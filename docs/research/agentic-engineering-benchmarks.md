@@ -267,19 +267,34 @@ index"* is the per-role weight design.
   every sampled benchmark is `verified: false` (self-reported). A `self_reported`/
   `verified` field is the missing trust input.
 
-  > **Update (2026-10-07):** the signal exists upstream; the plugin ignores it,
-  > and it is **inert today**. Verified live against the source —
-  > `GET api.zeroeval.com/leaderboard/benchmarks` carries a boolean `verified`
-  > on all 745 rows, but `parseBenchmarkCatalog` (`src/benchmark-sources.ts`)
-  > drops it: `BenchmarkCatalogEntry` reads only
-  > id/name/description/categories/`model_count`. So the trust input is a
-  > one-line mapping away — *except* that **all 745 rows are `verified: false`**,
-  > so the flag has zero variance and reading it would rank nothing (no
-  > distinction between "self-reported" and "verified"; every candidate is
-  > equally unverified). It becomes actionable only if the source starts marking
-  > some benchmarks verified, at which point a `verified` gate (or a
-  > trust-weighted selection) could separate them. Until then, adding it is dead
-  > weight — the same fill-dominated-variance objection §1 raises.
+  > **Update (2026-10-07):** the trust signal exists upstream, and it is **not
+  > uniformly inert** — but the catalog `verified` is the wrong place to look.
+  > Verified live against the source:
+  >
+  > - **Catalog** (`GET …/leaderboard/benchmarks`; 18 fields/row): `verified` is
+  >   **uniformly `false`** (745/745) — inert at this level. `parseBenchmarkCatalog`
+  >   drops it and 12 other fields (`modality`, `max_score`, `is_community`,
+  >   `updated_at`, `version_count`, `star_count`, `dataset_id`/`dataset_org_id`/
+  >   `dataset_slug`, `latest_version_row_count`, `size_bytes`, `subset_count`),
+  >   reading only id/name/description/categories/`model_count`.
+  > - **Per-entry** (`GET …/benchmarks/<id>`; the payload's `entries`, ~19
+  >   fields/row): carries `verified` (**also uniformly `false`**) *and*
+  >   **`self_reported`, which varies** — `gpqa` 19/20, `deepswe-1.1` 14/20,
+  >   `terminal-bench-4.0` 10/20, `aa-omniscience-index` 2/3, `automationbench-aa`
+  >   0/1; the general benchmarks ~20/20. `parseLlmStatsBenchmark` drops both (it
+  >   reads only `model_id` + `normalized_score`), plus
+  >   `organization_id`/`provider_id` (provider provenance — the video's bias
+  >   signal), `input_cost_per_million`/`output_cost_per_million` (a second,
+  >   independent price source), `speed_rps`/`context_window`, `release_date`
+  >   (freshness), `multimodal`, `benchmark_score` (raw), `param_count`, `is_new`.
+  >
+  > So the "missing trust input" is not missing — it rides the per-benchmark
+  > payload at *entry* granularity and a 2-field parser discards it. It is not
+  > yet a usable *gate*, though: `verified` is never true and `self_reported` is
+  > true for the large majority of ranking-pool entries, so a `verified` (or an
+  > inverted `self_reported`) gate would drop ~nothing (or ~everything) — the
+  > same fill-dominated-variance objection §1 raises. It becomes discriminating
+  > only if the source starts marking entries verified.
 - **Missing benchmark categories (video's wishlist, none exist at all):**
   delegation, small agent teams (SATs), agent handoffs, agent swarms, failure
   recovery / self-healing, and agent-to-agent communication. Verified against the
