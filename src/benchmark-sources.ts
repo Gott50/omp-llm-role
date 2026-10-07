@@ -189,19 +189,28 @@ export function parseLlmStatsBenchmark(v: unknown): Record<string, number> | nul
  * carry a boolean `multimodal` (the share denominator) and how many of those are
  * `true`. It is `null` when no parsed entry carried the flag, so the axis
  * degrades to `unknown` rather than a silent `ok`.
+ *
+ * `provenance` is the per-entry org distribution: each row's `organization_id`
+ * (falling back to `provider_id` when `organization_id` is not a non-empty
+ * string) is the lab a model's score comes from. `covered` counts the entries
+ * carrying a non-empty org string, `orgs` the distinct org count, and
+ * `dominantOrg`/`dominantShare` the most frequent org and its count / `covered`.
+ * It is `null` when no entry carried an org, so the axis degrades to `unknown`
+ * rather than a silent `ok`.
  */
 export type BenchmarkPayloadMeta = {
   trust: { selfReported: number; verified: number; covered: number } | null;
   modality: { multimodal: number; covered: number } | null;
+  provenance: { dominantOrg: string | null; dominantShare: number; orgs: number; covered: number } | null;
 };
 
 /**
  * Pure: the per-entry summary of a raw llm-stats benchmark payload, or `null`
  * when the payload has no llm-stats entries shape. Junk rows are skipped exactly
  * like `parseLlmStatsBenchmark`; `verified` counts the covered rows (those
- * carrying a boolean `self_reported`), so `verified <= covered` holds. The two
+ * carrying a boolean `self_reported`), so `verified <= covered` holds. The three
  * summaries have independent denominators (a row may carry one flag and not the
- * other).
+ * others).
  */
 export function parseBenchmarkPayloadMeta(v: unknown): BenchmarkPayloadMeta | null {
   if (!isRecord(v) || !Array.isArray(v.entries)) return null;
@@ -210,6 +219,8 @@ export function parseBenchmarkPayloadMeta(v: unknown): BenchmarkPayloadMeta | nu
   let covered = 0;
   let multimodal = 0;
   let modalityCovered = 0;
+  const orgCounts = new Map<string, number>();
+  let orgCovered = 0;
   for (const row of v.entries) {
     if (!isRecord(row)) continue;
     if (typeof row.self_reported === "boolean") {
@@ -221,10 +232,24 @@ export function parseBenchmarkPayloadMeta(v: unknown): BenchmarkPayloadMeta | nu
       modalityCovered++;
       if (row.multimodal) multimodal++;
     }
+    const org = typeof row.organization_id === "string" && row.organization_id !== "" ? row.organization_id : typeof row.provider_id === "string" && row.provider_id !== "" ? row.provider_id : null;
+    if (org !== null) {
+      orgCovered++;
+      orgCounts.set(org, (orgCounts.get(org) ?? 0) + 1);
+    }
+  }
+  let dominantOrg: string | null = null;
+  let dominantCount = 0;
+  for (const [org, count] of orgCounts) {
+    if (count > dominantCount) {
+      dominantOrg = org;
+      dominantCount = count;
+    }
   }
   return {
     trust: covered === 0 ? null : { selfReported, verified, covered },
     modality: modalityCovered === 0 ? null : { multimodal, covered: modalityCovered },
+    provenance: orgCovered === 0 ? null : { dominantOrg, dominantShare: dominantCount / orgCovered, orgs: orgCounts.size, covered: orgCovered },
   };
 }
 
@@ -257,6 +282,17 @@ export type BenchmarkCatalogEntry = {
   /** The catalog row's `star_count`; `null` when absent or non-finite.
    * Supporting detail for the maintenance axis. */
   starCount: number | null;
+  /** The catalog row's `dataset_id` (the benchmark dataset's id); `null` when
+   * absent or non-string. Provenance detail (the dataset the benchmark is built
+   * on). */
+  datasetId: string | null;
+  /** The catalog row's `dataset_org_id` (the owning organisation of the
+   * benchmark dataset); `null` when absent or non-string. The provenance axis's
+   * owner — who publishes the benchmark. */
+  datasetOrgId: string | null;
+  /** The catalog row's `dataset_slug`; `null` when absent or non-string. The
+   * provenance axis's owner fallback when `dataset_org_id` is absent. */
+  datasetSlug: string | null;
 };
 
 /** Pure: the catalog payload (a top-level array) -> entries; null when unusable. */
@@ -281,6 +317,9 @@ export function parseBenchmarkCatalog(v: unknown): BenchmarkCatalogEntry[] | nul
       latestVersionRowCount:
         typeof row.latest_version_row_count === "number" && Number.isFinite(row.latest_version_row_count) ? row.latest_version_row_count : null,
       starCount: typeof row.star_count === "number" && Number.isFinite(row.star_count) ? row.star_count : null,
+      datasetId: typeof row.dataset_id === "string" && row.dataset_id !== "" ? row.dataset_id : null,
+      datasetOrgId: typeof row.dataset_org_id === "string" && row.dataset_org_id !== "" ? row.dataset_org_id : null,
+      datasetSlug: typeof row.dataset_slug === "string" && row.dataset_slug !== "" ? row.dataset_slug : null,
     });
   }
   return out;
@@ -824,8 +863,8 @@ export async function loadBenchmarkScores(source: BenchmarkSource, refresh: bool
 type CatalogCacheFile = { fetchedAt: string; source: string; entries: BenchmarkCatalogEntry[] };
 
 /** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale.
- * Exported for the shape-guard test (a cache predating `isCommunity`/`modality` or the
- * maintenance fields must be rejected). */
+ * Exported for the shape-guard test (a cache predating `isCommunity`/`modality`, the
+ * maintenance fields or the provenance fields must be rejected). */
 export function readCatalogCache(path: string, requireFresh: boolean): CatalogCacheFile | null {
   let parsed: CatalogCacheFile;
   try {
@@ -834,8 +873,9 @@ export function readCatalogCache(path: string, requireFresh: boolean): CatalogCa
     return null;
   }
   if (!Array.isArray(parsed?.entries)) return null;
-  // A cache written before `isCommunity`/`modality` (#34/#35) or the maintenance
+  // A cache written before `isCommunity`/`modality` (#34/#35), the maintenance
   // fields `updatedAt`/`versionCount`/`latestVersionRowCount`/`starCount` (#36)
+  // or the provenance fields `datasetId`/`datasetOrgId`/`datasetSlug` (#37)
   // landed lacks the field; refetch rather than silently reporting `undefined`
   // (mirrors `readEndpointsCache`). An empty catalog is still `null` (nothing to
   // sample, nothing to discover).
@@ -848,7 +888,10 @@ export function readCatalogCache(path: string, requireFresh: boolean): CatalogCa
     !("updatedAt" in sample) ||
     !("versionCount" in sample) ||
     !("latestVersionRowCount" in sample) ||
-    !("starCount" in sample)
+    !("starCount" in sample) ||
+    !("datasetId" in sample) ||
+    !("datasetOrgId" in sample) ||
+    !("datasetSlug" in sample)
   )
     return null;
   if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
@@ -897,9 +940,10 @@ export async function loadBenchmarkCatalog(refresh: boolean, cacheDir = CACHE_DI
   return null;
 }
 
-/** The cached trust inputs for one focus metric: the payload's per-entry trust
- * summary (from the source's scores cache) and the catalog row (from the catalog
- * cache). Either half is `null` when its cache is absent or predates the field. */
+/** The cached source inputs for one focus metric: the payload's per-entry
+ * summary (trust/modality/provenance, from the source's scores cache) and the
+ * catalog row (from the catalog cache). Either half is `null` when its cache is
+ * absent or predates the field. */
 export type FocusSourceInfo = {
   payload?: BenchmarkPayloadMeta | null;
   catalog?: BenchmarkCatalogEntry | null;

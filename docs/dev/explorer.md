@@ -71,7 +71,7 @@ Endpoints:
   `universe` (kind/enabled/locked + effective def per known role), `metrics`
   (`weightableMetrics`: the shipped keys plus any external metric a resolved role
   weights), `metricMeta` (`metricMetaFor`: `METRIC_META` plus a derived entry per
-  external metric), `focusAssessments` (per role, the seven-axis assessment of its
+  external metric), `focusAssessments` (per role, the eight-axis assessment of its
   focus metrics over the resolved dataset), `levels` (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors`
   (per-level billed-blend multiplier from the engine's own `thinkingPriceFactor`,
   so the UI readout cannot drift), `fetchedAt`, `modelCount`, `orMatched`,
@@ -244,8 +244,8 @@ a scraped third-party site, so the DOM is built with
   scope. The header names the active scope and its lock file path.
 - **Focus table**: the editor renders a `table.focus` for the role's weighted
   benchmark/percentile metrics (`focusMetricsOf`), one row per metric with the
-  seven signals from `focusAssessments[role]` (coverage, dispersion, composition,
-  freshness, trust, modality, maintenance). A below-bar cell is warned (tint + glyph), `unknown` is muted —
+  eight signals from `focusAssessments[role]` (coverage, dispersion, composition,
+  freshness, trust, modality, maintenance, provenance). A below-bar cell is warned (tint + glyph), `unknown` is muted —
   never green. A metric the editor just added reads "not assessed" until the next
   reload (the payload is computed over the resolved definition).
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +

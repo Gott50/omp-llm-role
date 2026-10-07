@@ -59,7 +59,7 @@ test("parseBenchmarkPayload reads the llm-stats entries shape and rejects junk",
         "junk",
       ],
     }),
-    { scores: { a: 0.5 }, loaded: 1, total: null, meta: { trust: null, modality: null } },
+    { scores: { a: 0.5 }, loaded: 1, total: null, meta: { trust: null, modality: null, provenance: null } },
   );
   assert.equal(parseBenchmarkPayload(source, {}), null);
   assert.equal(parseBenchmarkPayload(source, null), null);
@@ -69,18 +69,19 @@ test("parseBenchmarkPayloadMeta reads the per-entry self_reported/verified flags
   // 19 self-reported of 20 covered entries (the 20th carries the flag as false).
   const entries = Array.from({ length: 20 }, (_, i) => ({ model_id: `m${i}`, normalized_score: 0.5, self_reported: i < 19, verified: false }));
   const payload = { benchmark_id: "alpacaeval-2.0", total_models: 20, entries };
-  assert.deepEqual(parseBenchmarkPayloadMeta(payload), { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null });
+  assert.deepEqual(parseBenchmarkPayloadMeta(payload), { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null, provenance: null });
   // The same summary rides `parseBenchmarkPayload`'s `meta`.
   const source = resolveBenchmarkSource("alpacaeval-2.0");
   assert.ok(source);
-  assert.deepEqual(parseBenchmarkPayload(source, payload)?.meta, { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null });
+  assert.deepEqual(parseBenchmarkPayload(source, payload)?.meta, { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null, provenance: null });
   // An independently measured source: no entry is self-reported.
   assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5, self_reported: false }] }), {
     trust: { selfReported: 0, verified: 0, covered: 1 },
     modality: null,
+    provenance: null,
   });
   // A payload whose entries carry no boolean self_reported: trust is null, not a silent ok.
-  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), { trust: null, modality: null });
+  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), { trust: null, modality: null, provenance: null });
   // A payload with no llm-stats entries shape (a writing/declared payload): the whole meta is null.
   assert.equal(parseBenchmarkPayloadMeta({ records: [{ modelId: "q", writingBenchScore: 0.9 }] }), null);
   assert.equal(parseBenchmarkPayloadMeta(null), null);
@@ -96,9 +97,9 @@ test("parseBenchmarkPayloadMeta reads the per-entry multimodal flag", () => {
         { model_id: "b", normalized_score: 0.4, multimodal: false },
       ],
     }),
-    { trust: null, modality: { multimodal: 1, covered: 2 } },
+    { trust: null, modality: { multimodal: 1, covered: 2 }, provenance: null },
   );
-  // The two summaries have independent denominators: a row may carry one flag and not the other.
+  // The three summaries have independent denominators: a row may carry one flag and not the others.
   assert.deepEqual(
     parseBenchmarkPayloadMeta({
       entries: [
@@ -106,13 +107,56 @@ test("parseBenchmarkPayloadMeta reads the per-entry multimodal flag", () => {
         { model_id: "b", normalized_score: 0.4, self_reported: false },
       ],
     }),
-    { trust: { selfReported: 1, verified: 0, covered: 2 }, modality: { multimodal: 1, covered: 1 } },
+    { trust: { selfReported: 1, verified: 0, covered: 2 }, modality: { multimodal: 1, covered: 1 }, provenance: null },
   );
   // No entry carries a boolean multimodal: modality is null, not a silent ok.
   assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5, multimodal: "yes" }] }), {
     trust: null,
     modality: null,
+    provenance: null,
   });
+});
+
+test("parseBenchmarkPayloadMeta reads the per-entry org distribution", () => {
+  // Two openai entries and one google (via provider_id): openai dominates 2/3.
+  assert.deepEqual(
+    parseBenchmarkPayloadMeta({
+      entries: [
+        { model_id: "a", normalized_score: 0.5, organization_id: "openai" },
+        { model_id: "b", normalized_score: 0.4, organization_id: "openai" },
+        { model_id: "c", normalized_score: 0.3, provider_id: "google" },
+      ],
+    }),
+    { trust: null, modality: null, provenance: { dominantOrg: "openai", dominantShare: 2 / 3, orgs: 2, covered: 3 } },
+  );
+  // `organization_id` wins over `provider_id`; an empty string falls back.
+  assert.deepEqual(
+    parseBenchmarkPayloadMeta({
+      entries: [
+        { model_id: "a", normalized_score: 0.5, organization_id: "openai", provider_id: "other" },
+        { model_id: "b", normalized_score: 0.4, organization_id: "", provider_id: "google" },
+      ],
+    }),
+    { trust: null, modality: null, provenance: { dominantOrg: "openai", dominantShare: 0.5, orgs: 2, covered: 2 } },
+  );
+  // A payload with no org fields: provenance is null, not a silent ok.
+  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5 }] }), { trust: null, modality: null, provenance: null });
+  // A non-string org is ignored; a payload with only junk orgs is null.
+  assert.deepEqual(parseBenchmarkPayloadMeta({ entries: [{ model_id: "a", normalized_score: 0.5, organization_id: 3, provider_id: null }] }), {
+    trust: null,
+    modality: null,
+    provenance: null,
+  });
+  // The three summaries keep independent denominators: a row may carry an org and no flag.
+  assert.deepEqual(
+    parseBenchmarkPayloadMeta({
+      entries: [
+        { model_id: "a", normalized_score: 0.5, organization_id: "openai", self_reported: true },
+        { model_id: "b", normalized_score: 0.4, organization_id: "openai" },
+      ],
+    }),
+    { trust: { selfReported: 1, verified: 0, covered: 1 }, modality: null, provenance: { dominantOrg: "openai", dominantShare: 1, orgs: 1, covered: 2 } },
+  );
 });
 
 test("parseBenchmarkPayload reads the writing evidence shape", () => {
@@ -245,6 +289,9 @@ test("parseBenchmarkCatalog keeps valid rows and rejects a non-array payload", (
       versionCount: null,
       latestVersionRowCount: null,
       starCount: null,
+      datasetId: null,
+      datasetOrgId: null,
+      datasetSlug: null,
     },
     {
       id: "gpqa",
@@ -258,6 +305,9 @@ test("parseBenchmarkCatalog keeps valid rows and rejects a non-array payload", (
       versionCount: null,
       latestVersionRowCount: null,
       starCount: null,
+      datasetId: null,
+      datasetOrgId: null,
+      datasetSlug: null,
     },
   ]);
   assert.equal(parseBenchmarkCatalog({ benchmarks: [] }), null);
@@ -282,6 +332,9 @@ test("parseBenchmarkCatalog carries the row's maintenance fields, nulling a miss
     versionCount: 4,
     latestVersionRowCount: 40,
     starCount: 7,
+    datasetId: null,
+    datasetOrgId: null,
+    datasetSlug: null,
   });
   // A missing field, a non-string `updated_at` and a non-finite count are all null.
   assert.deepEqual(entries?.slice(1, 3).map((e) => [e.updatedAt, e.versionCount, e.latestVersionRowCount, e.starCount]), [
@@ -303,6 +356,19 @@ test("parseBenchmarkCatalog carries the row's modality, keeping an unknown value
   assert.deepEqual(entries?.map((e) => e.modality), ["image", null, null, null, "3d"]);
 });
 
+test("parseBenchmarkCatalog carries the row's dataset provenance, nulling a missing or non-string one", () => {
+  const entries = parseBenchmarkCatalog([
+    { benchmark_id: "x", name: "X", dataset_id: "ds-1", dataset_org_id: "metr", dataset_slug: "metr/swe" },
+    { benchmark_id: "y", name: "Y" },
+    { benchmark_id: "z", name: "Z", dataset_id: 3, dataset_org_id: "", dataset_slug: null },
+  ]);
+  assert.deepEqual(entries?.map((e) => [e.datasetId, e.datasetOrgId, e.datasetSlug]), [
+    ["ds-1", "metr", "metr/swe"],
+    [null, null, null],
+    [null, null, null],
+  ]);
+});
+
 test("loadBenchmarkCatalog: fresh cache wins, a live fetch writes the cache, a stale cache is the last resort", async () => {
   const dir = mkdtempSync(join(tmpdir(), "bench-cat-"));
   const cachePath = join(dir, "benchmark-catalog-fetched-data.json");
@@ -310,7 +376,7 @@ test("loadBenchmarkCatalog: fresh cache wins, a live fetch writes the cache, a s
   let calls = 0;
   try {
     // Fresh cache wins: no fetch.
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", entries: [{ id: "a", name: "A", description: "", categories: [], modelCount: 1, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null }] }));
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", entries: [{ id: "a", name: "A", description: "", categories: [], modelCount: 1, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null, datasetId: null, datasetOrgId: null, datasetSlug: null }] }));
     globalThis.fetch = (async () => {
       calls++;
       return new Response(JSON.stringify([{ benchmark_id: "b", name: "B" }]));
@@ -326,7 +392,7 @@ test("loadBenchmarkCatalog: fresh cache wins, a live fetch writes the cache, a s
     assert.deepEqual(JSON.parse(readFileSync(cachePath, "utf8")).entries.map((e: { id: string }) => e.id), ["b"]);
 
     // A stale cache is the last resort when the fetch fails.
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", entries: [{ id: "c", name: "C", description: "", categories: [], modelCount: 0, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null }] }));
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", entries: [{ id: "c", name: "C", description: "", categories: [], modelCount: 0, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null, datasetId: null, datasetOrgId: null, datasetSlug: null }] }));
     globalThis.fetch = (async () => {
       throw new Error("offline");
     }) as typeof fetch;
@@ -349,7 +415,7 @@ test("catalogMetric maps shipped ids and falls back to a dot-free bench key", ()
   assert.equal(catalogMetric("alpacaeval-2.0"), "bench:alpacaeval-2_0");
 });
 
-test("the catalog cache is rejected when its entries predate isCommunity/modality or the maintenance fields", () => {
+test("the catalog cache is rejected when its entries predate isCommunity/modality, the maintenance fields or the provenance fields", () => {
   const dir = mkdtempSync(join(tmpdir(), "catalog-guard-"));
   const path = join(dir, "benchmark-catalog-fetched-data.json");
   // A row in the pre-#34 shape: every field the guard checks except the newer ones.
@@ -367,8 +433,20 @@ test("the catalog cache is rejected when its entries predate isCommunity/modalit
   assert.equal(readCatalogCache(path, true), null, "a cache without the maintenance fields must be rejected");
 
   // Every maintenance field is required: dropping any one rejects the cache.
-  const full = { ...legacy, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null };
+  const maintained = { ...legacy, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null };
   for (const key of ["updatedAt", "versionCount", "latestVersionRowCount", "starCount"] as const) {
+    const { [key]: _omitted, ...without } = maintained;
+    write([without]);
+    assert.equal(readCatalogCache(path, true), null, `a cache without ${key} must be rejected`);
+  }
+
+  // The maintenance fields but no provenance fields (a pre-#37 cache): rejected.
+  write([maintained]);
+  assert.equal(readCatalogCache(path, true), null, "a cache without the provenance fields must be rejected");
+
+  // Every provenance field is required: dropping any one rejects the cache.
+  const full = { ...maintained, datasetId: null, datasetOrgId: null, datasetSlug: null };
+  for (const key of ["datasetId", "datasetOrgId", "datasetSlug"] as const) {
     const { [key]: _omitted, ...without } = full;
     write([without]);
     assert.equal(readCatalogCache(path, true), null, `a cache without ${key} must be rejected`);

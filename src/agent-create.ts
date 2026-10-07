@@ -192,7 +192,7 @@ export type BenchmarkApplication = {
   unknown: string[];
   /** Focus metrics dropped by the top-K cap (priority order preserved). */
   dropped: string[];
-  /** Seven-axis assessment per focus metric, for the report annotation. */
+  /** Eight-axis assessment per focus metric, for the report annotation. */
   assessments: Record<string, FocusMetricAssessment>;
 };
 
@@ -244,6 +244,15 @@ export const FOCUS_ORG_MIN_SHARE = 0.1;
  * today, so it is carried but not gated. */
 export const FOCUS_SELF_REPORTED_MAX_SHARE = 0.5;
 
+/** The per-entry org share above which a source is flagged as vendor-populated:
+ * one lab's own scores dominate the benchmark's entries. A **chosen, tunable
+ * heuristic** (a strict majority), not a measured value — the source's per-entry
+ * org mix is not measurable from the repo's caches at implementation time, so
+ * this bar is picked to flag a single-lab source while passing a mixed one. The
+ * axis is an annotation, never a gate: a `below-bar` provenance is warned but
+ * never drops a discovered candidate. */
+export const FOCUS_PROVENANCE_DOMINANT_SHARE = 0.5;
+
 /** The status vocabulary shared by every focus-metric axis. */
 export type FocusSignal = "ok" | "below-bar" | "unknown";
 
@@ -256,9 +265,9 @@ export type FocusCoverageEntry = {
   status: FocusSignal;
 };
 
-/** The seven-axis assessment of one focus metric: coverage, dispersion, provider
- * composition, freshness, source trust, modality and benchmark maintenance. The
- * single object the gate and every report share. */
+/** The eight-axis assessment of one focus metric: coverage, dispersion, provider
+ * composition, freshness, source trust, modality, benchmark maintenance and
+ * provenance. The single object the gate and every report share. */
 export type FocusMetricAssessment = {
   coverage: FocusCoverageEntry;
   dispersion: { value: number | null; status: FocusSignal };
@@ -282,6 +291,24 @@ export type FocusMetricAssessment = {
    * a stale dataset is warned but never drops a discovered candidate. `unknown`
    * when the catalog row is absent or its `updated_at` is missing/unparseable. */
   maintenance: { updatedAt: string | null; monthsOld: number | null; versionCount: number | null; starCount: number | null; status: FocusSignal };
+  /** The benchmark's provenance: the catalog row's owning organisation
+   * (`dataset_org_id`, falling back to `dataset_slug`) and the source's own
+   * per-entry org mix (the dominant lab and its share). This is the **source's
+   * own claim** about who publishes the benchmark and whose scores it carries —
+   * an independent cross-check on the pool-derived `composition` axis, not a
+   * replacement for it. `compositionAgreement` records whether the two concur:
+   * `"disagree"` when exactly one of the two flags `below-bar`, `"agree"` when
+   * both or neither do, `"unknown"` when the payload carries no org mix. It is an
+   * **annotation, never a gate** — `belowBarReason` has no provenance branch, so
+   * a vendor-populated source is warned but never drops a discovered candidate.
+   * `unknown` when there is neither an owner nor a payload org mix. */
+  provenance: {
+    owner: string | null;
+    dominantOrg: string | null;
+    dominantShare: number | null;
+    compositionAgreement: "agree" | "disagree" | "unknown";
+    status: FocusSignal;
+  };
 };
 
 /** Per-metric coverage of the ranking field, for the focus-coverage gate. */
@@ -292,8 +319,8 @@ export type FocusCoverage = {
   covered: Record<string, number>;
   /** Declared sources, so a declared metric's fill resolves. */
   declared?: readonly SourceDeclaration[];
-  /** Seven-axis assessment per metric, when the caller assessed the loaded pool.
-   * Absent → the six new axes are `unknown` (the metric's scores were not
+  /** Eight-axis assessment per metric, when the caller assessed the loaded pool.
+   * Absent → the seven new axes are `unknown` (the metric's scores were not
    * loaded), never a silent `ok`. */
   assessments?: Record<string, FocusMetricAssessment>;
 };
@@ -458,6 +485,29 @@ function maintenanceAxis(source?: FocusSourceInfo): FocusMetricAssessment["maint
   return { updatedAt, monthsOld, versionCount, starCount, status: monthsOld > FOCUS_DATASET_STALENESS_MONTHS ? "below-bar" : "ok" };
 }
 
+/** The provenance axis: the benchmark's owner (the catalog row's `dataset_org_id`,
+ * falling back to `dataset_slug`) and the source's own per-entry org mix (the
+ * dominant lab and its share). This is the **source's own claim** about who
+ * publishes the benchmark and whose scores it carries — an independent
+ * cross-check on the pool-derived `composition` axis, not a replacement for it.
+ * `compositionAgreement` records whether the two concur: `"disagree"` when
+ * exactly one of the two flags `below-bar`, `"agree"` when both or neither do,
+ * `"unknown"` when the payload carries no org mix. It is an **annotation, never a
+ * gate**: `belowBarReason` has no provenance branch, so a vendor-populated source
+ * is warned but never drops a discovered candidate. `unknown` when there is
+ * neither an owner nor a payload org mix. */
+function provenanceAxis(source: FocusSourceInfo | undefined, compositionStatus: FocusSignal): FocusMetricAssessment["provenance"] {
+  const owner = source?.catalog?.datasetOrgId ?? source?.catalog?.datasetSlug ?? null;
+  const mix = source?.payload?.provenance ?? null;
+  const dominantOrg = mix?.dominantOrg ?? null;
+  const dominantShare = mix?.dominantShare ?? null;
+  const status: FocusSignal =
+    owner === null && mix === null ? "unknown" : dominantShare !== null && dominantShare > FOCUS_PROVENANCE_DOMINANT_SHARE ? "below-bar" : "ok";
+  const compositionAgreement: "agree" | "disagree" | "unknown" =
+    mix === null ? "unknown" : (compositionStatus === "below-bar") !== (status === "below-bar") ? "disagree" : "agree";
+  return { owner, dominantOrg, dominantShare, compositionAgreement, status };
+}
+
 /** The all-unknown assessment: the field size is unknown, or the metric's scores
  * were not loaded. Annotated, never warned. */
 function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment {
@@ -469,16 +519,17 @@ function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment 
     trust: { selfReported: 0, covered: 0, status: "unknown" },
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: null, monthsOld: null, versionCount: null, starCount: null, status: "unknown" },
+    provenance: { owner: null, dominantOrg: null, dominantShare: null, compositionAgreement: "unknown", status: "unknown" },
   };
 }
 
 /**
  * The one assessment rule, shared by the discovery gate, the report and the
  * explorer: coverage, dispersion, provider composition, freshness, source trust,
- * modality and benchmark maintenance of one focus metric over the loaded pool.
- * `focusCoverageOk`/`countMetricCoverage` are its coverage branch; `source` (the
- * cached trust, modality and catalog inputs) is its trust/modality/maintenance
- * branch.
+ * modality, benchmark maintenance and provenance of one focus metric over the
+ * loaded pool. `focusCoverageOk`/`countMetricCoverage` are its coverage branch;
+ * `source` (the cached trust, modality, catalog and provenance inputs) is its
+ * trust/modality/maintenance/provenance branch.
  *
  * An empty pool (unknown field size) or a metric with no covered values (its
  * scores were not loaded) reports every axis `unknown` — never a silent `ok`.
@@ -500,21 +551,24 @@ export function assessFocusMetric(
     status: focusCoverageOk(metric, covered, total > 0 ? total : null, declared),
   };
   if (total === 0 || covered === 0) return unknownAssessment({ ...coverage, status: "unknown" });
+  const composition = compositionAxis(models, metric, fill);
   return {
     coverage,
     dispersion: dispersionAxis(models, metric, fill),
-    composition: compositionAxis(models, metric, fill),
+    composition,
     freshness: freshnessAxis(models, metric, fill),
     trust: trustAxis(source),
     modality: modalityAxis(source),
     maintenance: maintenanceAxis(source),
+    provenance: provenanceAxis(source, composition.status),
   };
 }
 
 /** The one-line reason a below-bar assessment is dropped/warned, naming the
  * failed axis; null when every axis is ok or unknown. Deliberately has **no
- * maintenance branch**: the maintenance axis is an annotation, never a drop
- * reason, so a stale dataset cannot remove a discovered candidate. */
+ * maintenance or provenance branch**: both axes are annotations, never drop
+ * reasons, so a stale dataset or a vendor-populated source cannot remove a
+ * discovered candidate. */
 export function belowBarReason(assessment: FocusMetricAssessment): string | null {
   const { coverage, dispersion, composition, freshness, trust } = assessment;
   if (coverage.status === "below-bar") {
@@ -556,8 +610,8 @@ export function belowBarReason(assessment: FocusMetricAssessment): string | null
  * The focus set is capped at `FOCUS_METRIC_CAP` in priority order (named/linked
  * first, then discovery order), so the caller's explicit choices survive and one
  * benchmark keeps a decisive share; the metrics beyond the cap are reported as
- * `dropped`. `coverage.assessments` (the seven-axis assessment the caller computed
- * over the loaded pool) drives the per-metric annotation; without it the six
+ * `dropped`. `coverage.assessments` (the eight-axis assessment the caller computed
+ * over the loaded pool) drives the per-metric annotation; without it the seven
  * new axes are `unknown` (the metric's scores were not loaded).
  */
 export function applyFocusBenchmarks(
@@ -1192,7 +1246,7 @@ export function formatArchetypes(): string {
   }).join("\n\n");
 }
 
-/** One focus-metric line: coverage plus the six new signals. */
+/** One focus-metric line: coverage plus the seven new signals. */
 function assessmentLine(metric: string, a: FocusMetricAssessment): string {
   const c = a.coverage;
   const head =
@@ -1209,7 +1263,11 @@ function assessmentLine(metric: string, a: FocusMetricAssessment): string {
       ? "unknown"
       : `${a.modality.value ?? "?"}${a.modality.multimodalShare === null ? "" : ` ${(a.modality.multimodalShare * 100).toFixed(0)}% multimodal`}`;
   const maintenance = a.maintenance.status === "unknown" ? "unknown" : `${a.maintenance.monthsOld?.toFixed(1)}mo ${a.maintenance.status}`;
-  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}  modality ${modality}  maintenance ${maintenance}`;
+  const provenance =
+    a.provenance.status === "unknown"
+      ? "unknown"
+      : `${a.provenance.owner ?? "?"}${a.provenance.dominantShare === null ? "" : ` ${(a.provenance.dominantShare * 100).toFixed(0)}% ${a.provenance.dominantOrg ?? "?"}`} ${a.provenance.compositionAgreement}`;
+  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}  modality ${modality}  maintenance ${maintenance}  provenance ${provenance}`;
 }
 
 /** The human-readable report for a completed (or dry-run) create. */
@@ -1256,6 +1314,17 @@ export function formatCreateAgentReport(
     if (a.maintenance.status === "below-bar") {
       lines.push(
         `  warning:   ${metric} dataset last updated ${a.maintenance.monthsOld?.toFixed(1)} months ago — the benchmark may be unmaintained`,
+      );
+    }
+    if (a.provenance.status === "below-bar") {
+      const share = a.provenance.dominantShare === null ? "?" : `${(a.provenance.dominantShare * 100).toFixed(0)}%`;
+      lines.push(
+        `  warning:   ${metric} provenance ${a.provenance.dominantOrg ?? "?"} dominates ${share} of the source's entries — the benchmark is vendor-populated`,
+      );
+    }
+    if (a.provenance.compositionAgreement === "disagree") {
+      lines.push(
+        `  warning:   ${metric} provenance disagrees with the composition axis — the source's own org mix and the pool-derived check do not concur`,
       );
     }
   }

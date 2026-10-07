@@ -8,6 +8,26 @@ copying the new numbers here; release prose belongs in
 below are the 2026-10-06 measurement (the input-price blend basis #21 and the
 #17/#18/#19/#20 wave; see the top bullet) and are not re-derived on read.
 
+- Provenance axis (2026-10-07, issue #37): the focus-metric gate gained the
+  provenance axis — the benchmark's owner (the catalog row's `dataset_org_id`,
+  falling back to `dataset_slug`) and the source's own per-entry org mix (the
+  dominant lab and its share, read from each row's `organization_id`, falling
+  back to `provider_id`), below-bar above `FOCUS_PROVENANCE_DOMINANT_SHARE` (0.5,
+  a **chosen, tunable heuristic** — the per-entry org mix is not measurable from
+  the repo's caches at implementation time). It is the **source's own claim**
+  about who publishes the benchmark and whose scores it carries: an independent
+  cross-check on the pool-derived `composition` axis (whose rule is unchanged),
+  with `compositionAgreement` recording whether the two concur (`disagree` when
+  exactly one flags `below-bar`, `agree` when both or neither, `unknown` when the
+  payload carries no org mix). It is an **annotation, never a gate**
+  (`belowBarReason` has no provenance branch), so a vendor-populated source is
+  warned but never drops a discovered candidate; it is `unknown` when there is
+  neither an owner nor a payload org mix. The three catalog fields (`datasetId`/
+  `datasetOrgId`/`datasetSlug`) ride `BenchmarkCatalogEntry` behind the cache
+  shape guard (a pre-#37 cache is refetched); the per-entry org mix rides
+  `BenchmarkPayloadMeta.provenance`. The ranking numbers are unchanged — the axis
+  is a create-agent/explorer annotation, not a weight.
+
 - Maintenance axis (2026-10-07, issue #36): the focus-metric gate gained the
   maintenance axis — the catalog row's `updated_at` age in months against
   `FOCUS_DATASET_STALENESS_MONTHS` (12), with `version_count`/`star_count`
