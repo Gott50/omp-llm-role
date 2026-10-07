@@ -712,6 +712,46 @@ test("assessFocusMetric: the trust axis reads the payload's self-reported share"
   assert.equal(assessFocusMetric([], "gpqa", [], { payload: { trust: { selfReported: 19, verified: 0, covered: 20 }, modality: null } }).trust.status, "unknown");
 });
 
+test("assessFocusMetric: the trust axis annotates the catalog row's community flag", () => {
+  const catalog = (isCommunity: boolean): BenchmarkCatalogEntry => ({ id: "gpqa", name: "GPQA", description: "", categories: [], modelCount: 4, isCommunity, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null, datasetId: null, datasetOrgId: null, datasetSlug: null });
+
+  // A metric whose scores were not loaded: the all-unknown branch still carries
+  // the catalog row's community flag.
+  const unloaded = assessmentPool();
+  const unloadedCommunity = assessFocusMetric(unloaded, "gpqa", [], { catalog: catalog(true) });
+  assert.equal(unloadedCommunity.trust.community, true);
+  assert.equal(unloadedCommunity.trust.status, "unknown");
+
+  const models = assessmentPool();
+  for (const m of models) m.metrics.gpqa = 0.5;
+
+  // A community row with no payload trust: unknown status, but visible as community.
+  const community = assessFocusMetric(models, "gpqa", [], { catalog: catalog(true) });
+  assert.equal(community.trust.community, true);
+  assert.equal(community.trust.status, "unknown");
+
+  // A non-community row stays unknown.
+  const standard = assessFocusMetric(models, "gpqa", [], { catalog: catalog(false) });
+  assert.equal(standard.trust.community, false);
+  assert.equal(standard.trust.status, "unknown");
+
+  // No source at all: no community flag.
+  assert.equal(assessFocusMetric(models, "gpqa").trust.community, false);
+
+  // The flag rides alongside an ok/below-bar status without changing it.
+  const withTrust = (selfReported: number, covered: number) =>
+    assessFocusMetric(models, "gpqa", [], { catalog: catalog(true), payload: { trust: { selfReported, verified: 0, covered }, modality: null } });
+  const ok = withTrust(0, 20);
+  assert.equal(ok.trust.community, true);
+  assert.equal(ok.trust.status, "ok");
+  const flagged = withTrust(19, 20);
+  assert.equal(flagged.trust.community, true);
+  assert.equal(flagged.trust.status, "below-bar");
+
+  // The community flag is an annotation, never a gate: belowBarReason never names it.
+  assert.doesNotMatch(belowBarReason(flagged) ?? "", /community/);
+});
+
 test("assessFocusMetric: the modality axis is an annotation, never a gate", () => {
   const models = assessmentPool();
   for (const m of models) m.metrics.gpqa = 0.5;

@@ -78,7 +78,8 @@ passing.
     `modality` and the maintenance fields (`updatedAt`/`versionCount`/
     `latestVersionRowCount`/`starCount`, each `null` when missing or non-finite);
     the catalog cache rejects a pre-`isCommunity`/`modality`/maintenance cache
-    (and an empty one);
+    (and an empty one); the scores cache rejects a cache lacking the `meta` key
+    (and accepts `meta: null`);
     `applyBenchmarkScores` fills uncovered
     models; `loadBenchmarkScores` follows fresh → live → stale with a temp cache
     dir and an injected fetch; a declaration executes (payload path, id/score
@@ -128,6 +129,10 @@ passing.
 26. **Architect provenance** (`architect-provenance.test.ts`) — the vendored
     prompt header matches `ARCHITECT_PROMPT_VERSION` and the version named in
     [`agent-authoring.md`](agent-authoring.md).
+27. **Architect retry** (`agent-architect.test.ts`) — a malformed architect
+    response is retried once and the parsed spec returned; an always-malformed
+    run throws carrying the raw output; a `run()` failure propagates with no
+    retry.
 
 ## Live checks
 

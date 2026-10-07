@@ -45,7 +45,15 @@ export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): 
       if (Object.keys(nested).length === 0) delete plugin.roles;
     }
 
+    // An Export means "make this role's keys match this def", so a key the def
+    // no longer carries (a capability flag set back to inherit, a cleared knob,
+    // a dropped filter) is removed rather than left stale. Same prefix rule as
+    // `mergeRemove` below.
     const prefix = `roles.${name}`;
+    for (const key of Object.keys(plugin)) {
+      if (key === prefix || key.startsWith(`${prefix}.`)) delete plugin[key];
+    }
+
     plugin[`${prefix}.description`] = def.description;
     if (def.enabled !== undefined) plugin[`${prefix}.enabled`] = def.enabled;
     if (def.locked !== undefined) plugin[`${prefix}.locked`] = def.locked;

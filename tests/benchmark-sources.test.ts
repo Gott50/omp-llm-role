@@ -21,6 +21,7 @@ import {
   parseBenchmarkPayloadMeta,
   parseSourceDeclaration,
   readCatalogCache,
+  readScoresCache,
   resolveBenchmarkSource,
   sourceForMetric,
   validateDeclaration,
@@ -282,7 +283,7 @@ test("loadBenchmarkScores: fresh cache wins, a live fetch writes the cache, a st
   let calls = 0;
   try {
     // Fresh cache wins: no fetch.
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", scores: { a: 0.9 } }));
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", scores: { a: 0.9 }, meta: null }));
     globalThis.fetch = (async () => {
       calls++;
       return new Response(JSON.stringify({ entries: [{ model_id: "b", normalized_score: 0.1 }] }));
@@ -298,7 +299,7 @@ test("loadBenchmarkScores: fresh cache wins, a live fetch writes the cache, a st
     assert.deepEqual(JSON.parse(readFileSync(cachePath, "utf8")).scores, { b: 0.1 });
 
     // A stale cache is the last resort when the fetch fails.
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", scores: { c: 0.3 } }));
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", scores: { c: 0.3 }, meta: null }));
     globalThis.fetch = (async () => {
       throw new Error("offline");
     }) as typeof fetch;
@@ -507,6 +508,29 @@ test("the catalog cache is rejected when its entries predate isCommunity/modalit
   // An empty catalog is still null (nothing to sample, nothing to discover).
   write([]);
   assert.equal(readCatalogCache(path, true), null);
+});
+
+test("the scores cache is rejected when it predates the payload-meta fields", () => {
+  const dir = mkdtempSync(join(tmpdir(), "scores-guard-"));
+  const path = join(dir, "benchmark-scores-fetched-data.json");
+  const today = new Date().toISOString();
+  const write = (cache: object) => writeFileSync(path, JSON.stringify(cache));
+
+  // A cache written before the payload-meta fields (#34/#35/#37/#38): no `meta` key.
+  write({ fetchedAt: today, source: "t", scores: { a: 0.5 }, total: 1 });
+  assert.equal(readScoresCache(path, true), null, "a cache without the meta key must be rejected");
+
+  // `meta` is legitimately null for a declared/writing payload: accepted.
+  write({ fetchedAt: today, source: "t", scores: { a: 0.5 }, total: 1, meta: null });
+  assert.ok(readScoresCache(path, true), "a null meta is accepted");
+
+  write({ fetchedAt: today, source: "t", scores: { a: 0.5 }, total: 1, meta: { trust: null, modality: null, provenance: null, crossSource: null } });
+  assert.ok(readScoresCache(path, true), "a populated meta is accepted");
+
+  // A stale cache with meta is the last resort: accepted only when not requiring freshness.
+  write({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "t", scores: { a: 0.5 }, total: 1, meta: null });
+  assert.ok(readScoresCache(path, false), "a stale cache with meta is accepted when not requiring freshness");
+  assert.equal(readScoresCache(path, true), null, "a stale cache is rejected when requiring freshness");
 });
 
 test("executeDeclaration walks the payload path, normalizes scoreMax and joins", () => {

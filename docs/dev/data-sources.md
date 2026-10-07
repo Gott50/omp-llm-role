@@ -330,7 +330,11 @@ gpqa 19/20, deepswe-1.1 14/20, terminal-bench-4.0 10/20, automationbench-aa 0/1)
 carried the respective field, and the whole meta is `null` when the payload has
 no llm-stats entries shape.
 `BenchmarkPayload` carries it as `meta`, `BenchmarkScores` as `meta`, and the
-scores cache persists it (an old cache without the field reads back `null`). The
+scores cache persists it. The scores-cache reader carries the same shape guard as
+the catalog reader: a cache lacking the `meta` key (written before the
+payload-meta fields landed) is rejected and refetched, so the four
+payload-derived focus axes never go silently inert; `meta: null` (a
+declared/writing payload) is still accepted. The
 focus-metric trust, modality, provenance and cross-source axes (scoring.md)
 consume it via `cachedSourceInfo`.
 
@@ -353,8 +357,8 @@ narrows it to
 `{ id, name, description, categories, modelCount, isCommunity, modality,
 updatedAt, versionCount, latestVersionRowCount, starCount, datasetId,
 datasetOrgId, datasetSlug }` (the
-row's `is_community`, defaulting `false` when absent/non-boolean — the only
-catalog-level trust signal, 20/745 true — the row's `modality` as an open
+row's `is_community`, defaulting `false` when absent/non-boolean — consumed by
+the trust axis as `community`, 20/745 true — the row's `modality` as an open
 string, `null` when absent/non-string, so an unknown value survives, the
 maintenance fields `updated_at`/`version_count`/`latest_version_row_count`/
 `star_count`, each `null` when absent, non-string (for `updated_at`) or

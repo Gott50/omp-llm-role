@@ -183,10 +183,11 @@ cache, `default` role, 142 eligible):
   model's own routes at rank time, not a slug baked into the lock file. The lab
   match is a **slug prefix on the model's `orgId`** (exact, or `orgId` + `/`),
   with the display `org` as a second try; there is no alias map in v1. Measured
-  coverage: 50 of the 149 routed models resolve to one of their own lab's routes
-  (33 on an exact slug match), and 11 of 25 orgs match for no model (`zai-org` —
+  coverage: 51 of the 149 routed models resolve to one of their own lab's routes
+  (33 on an exact slug match, 17 on an `orgId` prefix, 1 on the display-`org`
+  fallback), and 10 of 25 orgs match for no model (`zai-org` —
   its lab route slug is `z-ai` — `google`, `qwen`, `inclusionai`, `nvidia`,
-  `microsoft`, `bytedance`, `thinking-machines`, `inceptionlabs`, `ibm`,
+  `microsoft`, `bytedance`, `thinking-machines`, `ibm`,
   `gryphe`). An unmatched model keeps the blend, so the capability
   **under-delivers rather than mis-pins**, and it **never changes eligibility**
   (unlike the hard `providerPin`, which drops a model with no matching route).
@@ -396,6 +397,10 @@ metric, declared, source?)` (`src/agent-create.ts`) is the one rule, returning a
   catalog cache for the row); a payload with no entry flags (a declared or
   writing source) or no covered entries is `unknown` — never a silent `ok`.
   `verified` is uniformly `false` upstream today, so it is carried but not gated.
+  The axis also carries the catalog row's `is_community` flag as `community` — a
+  community-submitted benchmark is visible even when the payload half is absent
+  (no per-entry flags); it is an annotation, never a gate (it never changes
+  `status` and `belowBarReason` has no community branch).
 - **modality** — the catalog row's `modality` (e.g. `text`/`image`/`audio`/
   `video`/`multimodal`) and the payload's per-entry `multimodal` share, read by
   `parseBenchmarkPayloadMeta` and carried on `BenchmarkCatalogEntry`. This axis

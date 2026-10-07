@@ -74,8 +74,12 @@ flatten nested objects. The capability flags join that set:
 `mergeExport` writes these as flat dotted keys alongside the existing role keys
 (`roles.<name>.weights.<metric>`, `.description`, `.enabled`, `.locked`,
 `.required`, `.thinking`, `.providerPin`, `.cacheHitRate`, `.lambda`,
-`.filters.image`). `mergeRemove` needs no change: its existing `roles.<name>.`
-prefix already covers the new keys, so `/remove-agent` deletes them.
+`.filters.image`). `mergeExport` first deletes the role's existing
+`roles.<name>.*` flat dotted keys, so an Export means "make this role's keys
+match this def" — a capability flag set back to inherit (or a cleared knob) is
+removed rather than left stale. `mergeRemove` needs no change: its existing
+`roles.<name>.` prefix already covers the new keys, so `/remove-agent` deletes
+them.
 
 **Validation aborts** (notify, no write), in the existing one-error-string-per-
 violation style (`resolveSettings` in `src/settings.ts`):

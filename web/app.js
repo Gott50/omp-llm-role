@@ -638,7 +638,7 @@ function focusSignal(text, status) {
 /** The nine-axis focus assessment of the role's weighted benchmark/percentile
  * metrics, from the bootstrap payload's focusAssessments[role]. The payload is
  * computed over the resolved definition, so a metric the editor just added reads
- * "not assessed" until the next reload. */
+ * "not assessed" until it is Exported and the page reloaded. */
 function renderFocus(panel) {
   const def = state.defs[state.role];
   const assessments = state.focusAssessments[state.role] || {};
@@ -670,7 +670,7 @@ function renderFocus(panel) {
       body.append(
         el("tr", {}, [
           el("td", { "data-tip": metricTip(metric), text: metricLabel(metric) }),
-          el("td", { class: "sig unknown", colspan: "9", text: "not assessed — reload to assess the edited definition" }),
+          el("td", { class: "sig unknown", colspan: "9", text: "not assessed — Export, then reload to assess the edited definition" }),
         ]),
       );
       continue;
@@ -680,7 +680,11 @@ function renderFocus(panel) {
     const dispersion = a.dispersion.status === "unknown" ? "unknown" : a.dispersion.value.toFixed(3);
     const composition = a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : "omits " + a.composition.omittedOrgs.join(", ");
     const freshness = a.freshness.status === "unknown" ? "unknown" : a.freshness.monthsBehind.toFixed(1) + "mo";
-    const trust = a.trust.status === "unknown" ? "unknown" : a.trust.selfReported + "/" + a.trust.covered;
+    const community = a.trust.community ?? false;
+    const trust =
+      a.trust.status === "unknown"
+        ? community ? "community" : "unknown"
+        : a.trust.selfReported + "/" + a.trust.covered + " " + a.trust.status + (community ? " community" : "");
     const modality =
       a.modality.status === "unknown"
         ? "unknown"

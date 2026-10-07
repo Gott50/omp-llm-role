@@ -255,8 +255,9 @@ a scraped third-party site, so the DOM is built with
   benchmark/percentile metrics (`focusMetricsOf`), one row per metric with the
   nine signals from `focusAssessments[role]` (coverage, dispersion, composition,
   freshness, trust, modality, maintenance, provenance, cross-source). A below-bar cell is warned (tint + glyph), `unknown` is muted —
-  never green. A metric the editor just added reads "not assessed" until the next
-  reload (the payload is computed over the resolved definition).
+  never green. A metric the editor just added reads "not assessed" until the edit
+  is **Exported and the page reloaded** (the payload is computed over the resolved
+  definition, and the editor's in-memory edit is discarded by a plain reload).
 - **Features panel**: the editor renders one **tri-state** control per capability
   (inherit / on / off) from the bootstrap payload's feature registry, showing the
   recommended bundle and the effective values. A value the preset filled (rather

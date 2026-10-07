@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import { parseConfig } from "../src/config-edit.ts";
-import { mergeRemove } from "../src/role-settings.ts";
+import { mergeExport, mergeRemove } from "../src/role-settings.ts";
 import { resolveSettings } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
@@ -50,6 +50,31 @@ test("mergeRemove deletes a role's feature keys with the rest of the role", () =
   assert.equal(plugin["roles.gone.features.costCap"], undefined);
   assert.equal(plugin["roles.gone.preferOwnProvider"], undefined);
   assert.equal(plugin["roles.keep.features.cachePricing"], true);
+});
+
+test("mergeExport drops a role's stale keys and leaves siblings alone", () => {
+  const first = mergeExport({}, {
+    probe: { description: "p", weights: { general: 1 }, required: ["general"], features: { costCap: true }, cacheHitRate: 0.5 },
+  });
+  assert.ok("lock" in first);
+  const lock = first.lock as { settings: { "omp-llm-role": Record<string, unknown> } };
+  const plugin = lock.settings["omp-llm-role"];
+  assert.equal(plugin["roles.probe.features.costCap"], true);
+  assert.equal(plugin["roles.probe.cacheHitRate"], 0.5);
+  // A sibling role's keys must survive the probe export.
+  plugin["roles.other.weights.general"] = 1;
+
+  const second = mergeExport(lock, { probe: { description: "p", weights: { general: 1 }, required: ["general"] } });
+  assert.ok("lock" in second);
+  const lock2 = second.lock as { settings: { "omp-llm-role": Record<string, unknown> } };
+  const plugin2 = lock2.settings["omp-llm-role"];
+  // Keys the def no longer carries are removed, not left stale.
+  assert.equal(plugin2["roles.probe.features.costCap"], undefined);
+  assert.equal(plugin2["roles.probe.cacheHitRate"], undefined);
+  // The def's own keys survive.
+  assert.equal(plugin2["roles.probe.weights.general"], 1);
+  assert.equal(plugin2["roles.probe.description"], "p");
+  assert.equal(plugin2["roles.other.weights.general"], 1);
 });
 
 test("locked role is not switched while a sibling unlocked role switches", async () => {

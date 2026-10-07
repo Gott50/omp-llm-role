@@ -151,6 +151,29 @@ async function runArchitect(opts: {
 }
 
 /**
+ * Run the architect and parse its output, retrying only a PARSE failure. A
+ * `run()` failure (the SDK import, "architect returned no text") propagates
+ * immediately: a second session would fail the same way. The final error
+ * carries the raw output so the caller's `notifyLines(ctx, ...err.message)`
+ * surfaces what the architect actually said.
+ */
+export async function withArchitectRetry<T>(run: () => Promise<string>, parse: (raw: string) => T, attempts = 2): Promise<T> {
+  let lastRaw = "";
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    lastRaw = await run();
+    try {
+      return parse(lastRaw);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  const raw = lastRaw.length > 2000 ? `${lastRaw.slice(0, 2000)}…` : lastRaw;
+  throw new Error(`${detail} (after ${attempts} attempts)\n--- raw architect output ---\n${raw}`);
+}
+
+/**
  * Run omp's architect and return the validated spec. The session is isolated:
  * no tools, no LSP/MCP/extensions/skills/context files, and it does not bind
  * process state (the host session keeps the process-wide effects).
@@ -160,15 +183,18 @@ export async function generateAgentSpec(opts: ArchitectOptions): Promise<AgentSp
     opts.benchmarks !== undefined && opts.benchmarks.length > 0
       ? `${opts.description}\n\nThis agent's model role is ranked on: ${opts.benchmarks.join(", ")}. Name that benchmark in the agent's rubric so the body matches the model that was chosen.`
       : opts.description;
-  const raw = await runArchitect({
-    systemPrompt: ARCHITECT_PROMPT,
-    userPrompt: USER_PROMPT.replace("{{request}}", request),
-    cwd: opts.cwd,
-    model: opts.model,
-    modelRegistry: opts.modelRegistry,
-    onText: opts.onText,
-  });
-  return parseAgentSpec(raw);
+  return withArchitectRetry(
+    () =>
+      runArchitect({
+        systemPrompt: ARCHITECT_PROMPT,
+        userPrompt: USER_PROMPT.replace("{{request}}", request),
+        cwd: opts.cwd,
+        model: opts.model,
+        modelRegistry: opts.modelRegistry,
+        onText: opts.onText,
+      }),
+    parseAgentSpec,
+  );
 }
 
 const PROJECT_ARCHITECT_PROMPT = readFileSync(new URL("./prompts/project-profile-architect.md", import.meta.url), "utf8");
@@ -222,13 +248,16 @@ export type ProjectArchitectOptions = {
  */
 export async function generateProjectProfile(opts: ProjectArchitectOptions): Promise<ProjectProfile> {
   const purpose = opts.purpose !== undefined && opts.purpose.trim() !== "" ? `The user overrides the discovered usecase with: ${opts.purpose.trim()}` : "";
-  const raw = await runArchitect({
-    systemPrompt: PROJECT_ARCHITECT_PROMPT,
-    userPrompt: PROJECT_USER_PROMPT.replace("{{artifacts}}", opts.artifacts).replace("{{purpose}}", purpose),
-    cwd: opts.cwd,
-    model: opts.model,
-    modelRegistry: opts.modelRegistry,
-    onText: opts.onText,
-  });
-  return parseProjectProfile(raw);
+  return withArchitectRetry(
+    () =>
+      runArchitect({
+        systemPrompt: PROJECT_ARCHITECT_PROMPT,
+        userPrompt: PROJECT_USER_PROMPT.replace("{{artifacts}}", opts.artifacts).replace("{{purpose}}", purpose),
+        cwd: opts.cwd,
+        model: opts.model,
+        modelRegistry: opts.modelRegistry,
+        onText: opts.onText,
+      }),
+    parseProjectProfile,
+  );
 }

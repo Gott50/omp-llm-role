@@ -77,7 +77,12 @@ function focusLine(metric: string, a: FocusMetricAssessment): string {
   const composition =
     a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : `omits ${a.composition.omittedOrgs.join(", ")}`;
   const freshness = a.freshness.status === "unknown" ? "unknown" : `${a.freshness.monthsBehind?.toFixed(1)}mo ${a.freshness.status}`;
-  const trust = a.trust.status === "unknown" ? "unknown" : `${a.trust.selfReported}/${a.trust.covered} ${a.trust.status}`;
+  const trust =
+    a.trust.status === "unknown"
+      ? a.trust.community
+        ? "community"
+        : "unknown"
+      : `${a.trust.selfReported}/${a.trust.covered} ${a.trust.status}${a.trust.community ? " community" : ""}`;
   const modality =
     a.modality.status === "unknown"
       ? "unknown"

@@ -782,3 +782,12 @@ test("export writes the capability flag, never the expanded knobs", () => {
   assert.equal(settings.roles.tiny.cacheHitRate, 0.5);
   assert.equal(settings.roles.tiny.filters?.maxPriceUsdPerM, 10);
 });
+
+// Issue #42: the focus table's unassessed row must tell the user the edit has to
+// be Exported before a reload can assess it — the payload is computed over the
+// resolved definition, so an in-memory edit is discarded by a plain reload.
+test("the focus table's unassessed row points at Export before reload", () => {
+  const src = readFileSync(join(process.cwd(), "web", "app.js"), "utf8");
+  assert.match(src, /not assessed — Export, then reload to assess the edited definition/);
+  assert.doesNotMatch(src, /not assessed — reload to assess the edited definition/);
+});

@@ -372,6 +372,8 @@ export function formatProjectRolesReport(
     lines.push(`  @${name} [${result.archetypes[name] ?? "?"}]`);
     lines.push(`    weights: ${weights}`);
     lines.push(`    focus:   ${focus}`);
+    const features = Object.entries(def.features ?? {});
+    if (features.length > 0) lines.push(`    features: ${features.map(([id, on]) => `${id}=${on}`).join(",")}`);
     if (top !== undefined) lines.push(`    top pick: ${top}`);
   }
   for (const warning of opts.warnings ?? []) lines.push(`  warning: ${warning}`);

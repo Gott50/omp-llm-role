@@ -260,6 +260,18 @@ test("formatProjectRolesReport lists kept/dropped/added and each new role's weig
   assert.match(report, /warning: a divergence warning/);
 });
 
+test("formatProjectRolesReport lists the capability flags a new role will author", () => {
+  const ws = workspace();
+  const withFeatures = setupProject(DATA_SCIENCE, opts(ws, { dryRun: true, features: { costCap: true } }));
+  assert.ok(withFeatures.ok, withFeatures.ok ? "" : withFeatures.errors.join("; "));
+  const report = formatProjectRolesReport(DATA_SCIENCE, withFeatures);
+  assert.match(report, /features: costCap=true/);
+
+  const withoutFeatures = setupProject(DATA_SCIENCE, opts(ws, { dryRun: true }));
+  assert.ok(withoutFeatures.ok, withoutFeatures.ok ? "" : withoutFeatures.errors.join("; "));
+  assert.doesNotMatch(formatProjectRolesReport(DATA_SCIENCE, withoutFeatures), /features:/);
+});
+
 test("setupProject creates <project>/.omp/plugins when the project has no .omp yet", () => {
   // A fresh project: no <root>/.omp at all, as when /project-roles runs in a
   // repo where the plugin was never installed. The lock write must create the

@@ -292,8 +292,12 @@ export type FocusMetricAssessment = {
   freshness: { newestCovered: string | null; newestPool: string | null; monthsBehind: number | null; status: FocusSignal };
   /** The source's per-entry trust: the self-reported share of the covered
    * entries. Zeros + `unknown` when the payload carried no entry flags (a
-   * declared/writing source) or the metric's scores were not loaded. */
-  trust: { selfReported: number; covered: number; status: FocusSignal };
+   * declared/writing source) or the metric's scores were not loaded. `community`
+   * is the catalog row's `is_community` flag: a community-submitted benchmark is
+   * still visible even when the payload half is absent (its scores carry no
+   * entry flags). It is an **annotation, never a gate** — it never changes
+   * `status` and `belowBarReason` has no community branch. */
+  trust: { selfReported: number; covered: number; status: FocusSignal; community: boolean };
   /** The benchmark's modality: the catalog row's `modality` and the payload's
    * multimodal share. Informational only — there is no role modality field, so
    * this axis is never `below-bar` and never a drop reason; it is `unknown` only
@@ -490,12 +494,14 @@ function freshnessAxis(models: readonly Model[], metric: string, fill: number): 
  * `FOCUS_SELF_REPORTED_MAX_SHARE`. A payload with no entry flags (a declared or
  * writing source) or no covered entries is `unknown` — never a silent `ok`. */
 function trustAxis(source?: FocusSourceInfo): FocusMetricAssessment["trust"] {
+  const community = source?.catalog?.isCommunity ?? false;
   const trust = source?.payload?.trust ?? null;
-  if (trust === null || trust.covered === 0) return { selfReported: 0, covered: 0, status: "unknown" };
+  if (trust === null || trust.covered === 0) return { selfReported: 0, covered: 0, status: "unknown", community };
   return {
     selfReported: trust.selfReported,
     covered: trust.covered,
     status: trust.selfReported / trust.covered > FOCUS_SELF_REPORTED_MAX_SHARE ? "below-bar" : "ok",
+    community,
   };
 }
 
@@ -613,13 +619,13 @@ function crossSourceAxis(models: readonly Model[], metric: string, fill: number,
 
 /** The all-unknown assessment: the field size is unknown, or the metric's scores
  * were not loaded. Annotated, never warned. */
-function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment {
+function unknownAssessment(coverage: FocusCoverageEntry, source?: FocusSourceInfo): FocusMetricAssessment {
   return {
     coverage,
     dispersion: { value: null, status: "unknown" },
     composition: { omittedOrgs: [], status: "unknown" },
     freshness: { newestCovered: null, newestPool: null, monthsBehind: null, status: "unknown" },
-    trust: { selfReported: 0, covered: 0, status: "unknown" },
+    trust: { selfReported: 0, covered: 0, status: "unknown", community: source?.catalog?.isCommunity ?? false },
     modality: { value: null, multimodalShare: null, status: "unknown" },
     maintenance: { updatedAt: null, monthsOld: null, versionCount: null, starCount: null, status: "unknown" },
     provenance: { owner: null, dominantOrg: null, dominantShare: null, compositionAgreement: "unknown", status: "unknown" },
@@ -655,7 +661,7 @@ export function assessFocusMetric(
     fill,
     status: focusCoverageOk(metric, covered, total > 0 ? total : null, declared),
   };
-  if (total === 0 || covered === 0) return unknownAssessment({ ...coverage, status: "unknown" });
+  if (total === 0 || covered === 0) return unknownAssessment({ ...coverage, status: "unknown" }, source);
   const composition = compositionAxis(models, metric, fill);
   return {
     coverage,
@@ -1391,7 +1397,12 @@ function assessmentLine(metric: string, a: FocusMetricAssessment): string {
   const composition =
     a.composition.status === "unknown" ? "unknown" : a.composition.status === "ok" ? "ok" : `omits ${a.composition.omittedOrgs.join(", ")}`;
   const freshness = a.freshness.status === "unknown" ? "unknown" : `${a.freshness.monthsBehind?.toFixed(1)}mo ${a.freshness.status}`;
-  const trust = a.trust.status === "unknown" ? "unknown" : `${a.trust.selfReported}/${a.trust.covered} ${a.trust.status}`;
+  const trust =
+    a.trust.status === "unknown"
+      ? a.trust.community
+        ? "community"
+        : "unknown"
+      : `${a.trust.selfReported}/${a.trust.covered} ${a.trust.status}${a.trust.community ? " community" : ""}`;
   const modality =
     a.modality.status === "unknown"
       ? "unknown"

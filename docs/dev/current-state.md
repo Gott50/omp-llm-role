@@ -24,7 +24,7 @@ bullets) and are not re-derived on read.
   |---|---|---|
   | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | 142 → 132 eligible, leader unchanged (`deepseek-v4.1-flash`, 0.579 $/M) |
   | `cachePricing` | `cacheHitRate: 0.5` | 142 eligible, leader unchanged, its `priceEff` 0.579 → 0.508 (−12 %) |
-  | `providerPinning` | `preferOwnProvider: true` | per-model policy, never changes eligibility; 50 of 149 routed models match under a slug-prefix rule (33 exact), 11 of 25 orgs match for no model |
+  | `providerPinning` | `preferOwnProvider: true` | per-model policy, never changes eligibility; 51 of 149 routed models match under a slug-prefix rule (33 exact, 17 prefix, 1 display-org), 10 of 25 orgs match for no model |
   | `costCap` | `filters.maxPriceUsdPerM: 10` | 142 → 135 eligible (the top ≈5 %), leader unchanged; pool p90 7.8, p95 8.9 $/M, every leader 0.58–0.85 $/M |
 
   `providerPinning`'s recommended setting is a **soft per-model policy**
@@ -110,7 +110,9 @@ bullets) and are not re-derived on read.
   general benchmarks ~20/20), so a strict-majority bar flags the mostly
   vendor-submitted sources while passing an independently measured one. The
   catalog row's `is_community` (20/745 true) rides `BenchmarkCatalogEntry` behind
-  a cache shape guard. The ranking numbers are unchanged — the axis is a
+  a cache shape guard and is surfaced on the trust axis as `community` (issue
+  #43), so a community-submitted benchmark is visible even before its scores are
+  loaded. The ranking numbers are unchanged — the axis is a
   create-agent discovery gate, not a weight.
 
 - Explorer scope switcher (2026-10-06, issue #28): the explorer is no longer

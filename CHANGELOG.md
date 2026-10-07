@@ -244,8 +244,24 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   `Decision.pinBlocked`, rendered `; pin-blocked: …`); `explainModel` mirrors the
   gate and pricing. An unpinned role ignores `routes` and is unchanged.
   (issue #20)
+- **Community flag on the trust axis** — the focus-metric trust axis now carries
+  the catalog row's `is_community` flag as `community`, so a community-submitted
+  benchmark is visible even when the payload half is absent (no per-entry flags).
+  It is an annotation, never a gate: it never changes `status` and
+  `belowBarReason` has no community branch. The create report, the CLI report and
+  the explorer's trust cell render it. (issue #43)
+- **`/project-roles` plan prints the authored capability flags** — the plan
+  report now prints a `features: <id>=<on>,…` line under each new role whose def
+  carries features, so a `--feature` run shows what it will author before the
+  write. (issue #45)
 
 ### Changed
+
+- **`providerPinning` coverage numbers corrected** — the measured lab-match
+  coverage is 51 of the 149 routed models (33 exact `orgId`, 17 `orgId` prefix, 1
+  display-`org` fallback), and 10 of 25 orgs match for no model; one org
+  previously listed as unresolved resolves via the display-`org` fallback (org
+  `Inception` → slug `inception`). Docs only. (issue #44)
 
 - **Guardrail/alignment axis evaluated and not landed** — the catalog's
   guardrail/alignment entries were measured as a "completes the objective without
@@ -356,6 +372,29 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **The benchmark-scores cache shape guard now covers the payload meta** — a
+  `cache/bench-<id>-fetched-data.json` written before the payload-meta fields
+  (#34/#35/#37/#38) lacks the `meta` key, and `readScoresCache` accepted it, so
+  the four payload-derived focus axes (trust, modality, provenance, cross-source)
+  went silently inert until the next daily refetch. The guard now rejects a cache
+  lacking the `meta` key and refetches; `meta: null` (a declared/writing payload)
+  is still accepted. (issue #41)
+- **Explorer focus table: the unassessed row now says how to assess it** — the
+  row read "not assessed — reload to assess the edited definition", but a plain
+  reload discards the editor's in-memory edit, so the message was wrong. It now
+  reads "not assessed — Export, then reload to assess the edited definition".
+  (issue #42)
+- **`/create-agent` retries a malformed architect response once** — a parse
+  failure now retries the architect once (a `run()` failure propagates
+  immediately, since a second session would fail the same way), and the final
+  error carries the raw architect output so the failure surfaces what the
+  architect actually said. (issue #46)
+- **Export now removes a role's stale keys** — `mergeExport` wrote the def's keys
+  but never deleted the role's existing `roles.<name>.*` flat dotted keys, so a
+  capability flag set back to inherit (or a cleared knob) stayed in the lock and
+  the flag stayed on after a reload. `mergeExport` now deletes the role's
+  existing keys first, so an Export means "make this role's keys match this def".
+  (issue #47)
 - **The endpoints cache shape guard now covers the cache-read price** — a
   `cache/openrouter-endpoints-fetched-data.json` written before #30 lacks
   `cacheReadPrice`, and `readEndpointsCache` accepted it, so every route's

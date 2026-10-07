@@ -143,7 +143,11 @@ effect on the next session.
   falls back to `@default`) rather than a dangling role; a failed role write
   rolls the agent file back — restoring the prior file on a `--force` re-create,
   else removing the new one — so a retry needs no `--force` and the user's prior
-  agent is never destroyed. The step-3 benchmark prompt previews the request's
+  agent is never destroyed. A malformed architect response is retried once (a
+  parse failure only — a `run()` failure propagates immediately, since a second
+  session would fail the same way), and the final error carries the raw architect
+  output so the failure surfaces what the architect actually said. The step-3
+  benchmark prompt previews the request's
   resolved weights (`resolveRole`), so the "already in this role's weights"
   marker appears live.
 - **Capability flags on `/create-agent`.** `--feature <id,...>` (comma-separated)

@@ -772,8 +772,9 @@ export function applyBenchmarkScores(models: Model[], source: BenchmarkSource, s
 
 type ScoresCacheFile = { fetchedAt: string; source: string; scores: Record<string, number>; total?: number | null; meta?: BenchmarkPayloadMeta | null };
 
-/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale. */
-function readScoresCache(path: string, requireFresh: boolean): ScoresCacheFile | null {
+/** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale.
+ * Exported for the shape-guard test (a cache predating the payload-meta fields must be rejected). */
+export function readScoresCache(path: string, requireFresh: boolean): ScoresCacheFile | null {
   let parsed: ScoresCacheFile;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8")) as ScoresCacheFile;
@@ -781,6 +782,11 @@ function readScoresCache(path: string, requireFresh: boolean): ScoresCacheFile |
     return null;
   }
   if (typeof parsed?.scores !== "object" || parsed.scores === null) return null;
+  // A cache written before the payload-meta fields (#34/#35/#37/#38) landed lacks
+  // the `meta` key; refetch rather than silently reporting `undefined` (the four
+  // payload-derived focus axes would go inert). `meta` is legitimately `null` for
+  // a declared/writing payload, so the guard keys on the key, not its value.
+  if (!("meta" in parsed)) return null;
   if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
   return parsed;
 }
