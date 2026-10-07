@@ -8,8 +8,22 @@ copying the new numbers here; release prose belongs in
 below are the 2026-10-06 measurement (the input-price blend basis #21 and the
 #17/#18/#19/#20 wave; see the top bullet) and are not re-derived on read.
 
-- Modality axis (2026-10-07, issue #35): the focus-metric gate gained a sixth
-  axis — the catalog row's `modality` (text 514, multimodal 194, image 19,
+- Maintenance axis (2026-10-07, issue #36): the focus-metric gate gained the
+  maintenance axis — the catalog row's `updated_at` age in months against
+  `FOCUS_DATASET_STALENESS_MONTHS` (12), with `version_count`/`star_count`
+  carried as supporting detail. This is the **dataset-date** axis, distinct from
+  the model-date `freshness` axis: a benchmark whose dataset was last touched
+  years ago but whose rows include one recent model passes freshness and is
+  caught here. It is an **annotation, never a gate** (`belowBarReason` has no
+  maintenance branch), so a stale dataset is warned but never drops a discovered
+  candidate; it is `unknown` when the catalog row is absent or its `updated_at`
+  is missing/unparseable. The four fields (`updatedAt`/`versionCount`/
+  `latestVersionRowCount`/`starCount`) ride `BenchmarkCatalogEntry` behind the
+  cache shape guard (a pre-#36 cache is refetched). The ranking numbers are
+  unchanged — the axis is a create-agent/explorer annotation, not a weight.
+
+- Modality axis (2026-10-07, issue #35): the focus-metric gate gained the
+  modality axis — the catalog row's `modality` (text 514, multimodal 194, image 19,
   audio 9, video 2, null 7 of 745) and the payload's per-entry `multimodal`
   share. It is an **annotation, never a gate**: there is no role modality field,
   so the axis is never `below-bar` and never a drop reason; it is `unknown` only

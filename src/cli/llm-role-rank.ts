@@ -68,7 +68,7 @@ function metricAbbr(metric: string): string {
   return local.slice(0, 10);
 }
 
-/** One focus-metric annotation line: the six signals, same rule as the report. */
+/** One focus-metric annotation line: the seven signals, same rule as the report. */
 function focusLine(metric: string, a: FocusMetricAssessment): string {
   const c = a.coverage;
   const coverage =
@@ -82,7 +82,8 @@ function focusLine(metric: string, a: FocusMetricAssessment): string {
     a.modality.status === "unknown"
       ? "unknown"
       : `${a.modality.value ?? "?"}${a.modality.multimodalShare === null ? "" : ` ${(a.modality.multimodalShare * 100).toFixed(0)}% multimodal`}`;
-  return `focus: ${metric} — coverage ${coverage}; dispersion ${dispersion}; composition ${composition}; freshness ${freshness}; trust ${trust}; modality ${modality}`;
+  const maintenance = a.maintenance.status === "unknown" ? "unknown" : `${a.maintenance.monthsOld?.toFixed(1)}mo ${a.maintenance.status}`;
+  return `focus: ${metric} — coverage ${coverage}; dispersion ${dispersion}; composition ${composition}; freshness ${freshness}; trust ${trust}; modality ${modality}; maintenance ${maintenance}`;
 }
 
 function formatRankings(
@@ -211,7 +212,7 @@ function formatRankings(
     );
     for (let ri = 1; ri < padded.length; ri++) lines.push(`| ${padded[ri].join(" | ")} |`);
     // A role's focus metrics (the benchmarks it was ranked on) carry the same
-    // six-axis annotation as the create-agent report. Shipped roles weight index
+    // seven-axis annotation as the create-agent report. Shipped roles weight index
     // metrics, so this is empty for them.
     for (const metric of focusMetricsOf(def, declared)) lines.push(focusLine(metric, assessFocusMetric(models, metric, declared, cachedSourceInfo(metric, declared))));
     lines.push("");

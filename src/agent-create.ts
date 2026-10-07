@@ -192,7 +192,7 @@ export type BenchmarkApplication = {
   unknown: string[];
   /** Focus metrics dropped by the top-K cap (priority order preserved). */
   dropped: string[];
-  /** Six-axis assessment per focus metric, for the report annotation. */
+  /** Seven-axis assessment per focus metric, for the report annotation. */
   assessments: Record<string, FocusMetricAssessment>;
 };
 
@@ -220,6 +220,16 @@ export const FOCUS_DISPERSION_FLOOR = 0.05;
  * before the source is flagged as frozen. */
 export const FOCUS_STALENESS_MONTHS = 1;
 
+/** The dataset-staleness bar: months since the catalog row's `updated_at` before
+ * a benchmark's dataset is flagged as unmaintained. The issue's user story is
+ * "not updated in over a year", so 12 months. This is the **dataset-date** axis,
+ * distinct from `FOCUS_STALENESS_MONTHS` (the **model-date** freshness axis):
+ * freshness asks whether the benchmark tracks the model field, maintenance asks
+ * whether the benchmark *project* is alive. A benchmark whose dataset was last
+ * touched years ago but whose rows happen to include one recent model passes
+ * freshness and is caught here. */
+export const FOCUS_DATASET_STALENESS_MONTHS = 12;
+
 /** The pool share above which an org's absence from the covered set is flagged
  * (a smaller provider's absence is not a false positive). */
 export const FOCUS_ORG_MIN_SHARE = 0.1;
@@ -246,9 +256,9 @@ export type FocusCoverageEntry = {
   status: FocusSignal;
 };
 
-/** The six-axis assessment of one focus metric: coverage, dispersion, provider
- * composition, freshness, source trust and modality. The single object the gate
- * and every report share. */
+/** The seven-axis assessment of one focus metric: coverage, dispersion, provider
+ * composition, freshness, source trust, modality and benchmark maintenance. The
+ * single object the gate and every report share. */
 export type FocusMetricAssessment = {
   coverage: FocusCoverageEntry;
   dispersion: { value: number | null; status: FocusSignal };
@@ -263,6 +273,15 @@ export type FocusMetricAssessment = {
    * this axis is never `below-bar` and never a drop reason; it is `unknown` only
    * when neither the catalog row nor the payload carries a modality signal. */
   modality: { value: string | null; multimodalShare: number | null; status: FocusSignal };
+  /** The benchmark's own maintenance: the catalog row's `updated_at` age in
+   * months against `FOCUS_DATASET_STALENESS_MONTHS`, with `version_count` and
+   * `star_count` carried as supporting detail. This is the **dataset-date** axis,
+   * distinct from `freshness` (the **model-date** axis): it measures whether the
+   * benchmark *project* is alive, not whether it tracks the model field. It is an
+   * **annotation, never a gate** — `belowBarReason` has no maintenance branch, so
+   * a stale dataset is warned but never drops a discovered candidate. `unknown`
+   * when the catalog row is absent or its `updated_at` is missing/unparseable. */
+  maintenance: { updatedAt: string | null; monthsOld: number | null; versionCount: number | null; starCount: number | null; status: FocusSignal };
 };
 
 /** Per-metric coverage of the ranking field, for the focus-coverage gate. */
@@ -273,8 +292,8 @@ export type FocusCoverage = {
   covered: Record<string, number>;
   /** Declared sources, so a declared metric's fill resolves. */
   declared?: readonly SourceDeclaration[];
-  /** Six-axis assessment per metric, when the caller assessed the loaded pool.
-   * Absent → the five new axes are `unknown` (the metric's scores were not
+  /** Seven-axis assessment per metric, when the caller assessed the loaded pool.
+   * Absent → the six new axes are `unknown` (the metric's scores were not
    * loaded), never a silent `ok`. */
   assessments?: Record<string, FocusMetricAssessment>;
 };
@@ -420,6 +439,25 @@ function modalityAxis(source?: FocusSourceInfo): FocusMetricAssessment["modality
   return { value, multimodalShare, status: value === null && multimodalShare === null ? "unknown" : "ok" };
 }
 
+/** The maintenance axis: the catalog row's dataset age against
+ * `FOCUS_DATASET_STALENESS_MONTHS`, with `version_count`/`star_count` carried as
+ * supporting detail. This is the **dataset-date** axis, distinct from `freshness`
+ * (the **model-date** axis). It is an **annotation, never a gate**:
+ * `belowBarReason` has no maintenance branch, so a stale dataset is warned but
+ * never drops a discovered candidate. `unknown` when the catalog row is absent or
+ * its `updated_at` is missing/unparseable. */
+function maintenanceAxis(source?: FocusSourceInfo): FocusMetricAssessment["maintenance"] {
+  const catalog = source?.catalog ?? null;
+  const updatedAt = catalog?.updatedAt ?? null;
+  const versionCount = catalog?.versionCount ?? null;
+  const starCount = catalog?.starCount ?? null;
+  const parsed = updatedAt === null ? Number.NaN : Date.parse(updatedAt);
+  if (Number.isNaN(parsed)) return { updatedAt, monthsOld: null, versionCount, starCount, status: "unknown" };
+  // 30.4375 = 365.25/12 days per month, matching the freshness axis.
+  const monthsOld = (Date.now() - parsed) / (1000 * 60 * 60 * 24 * 30.4375);
+  return { updatedAt, monthsOld, versionCount, starCount, status: monthsOld > FOCUS_DATASET_STALENESS_MONTHS ? "below-bar" : "ok" };
+}
+
 /** The all-unknown assessment: the field size is unknown, or the metric's scores
  * were not loaded. Annotated, never warned. */
 function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment {
@@ -430,15 +468,17 @@ function unknownAssessment(coverage: FocusCoverageEntry): FocusMetricAssessment 
     freshness: { newestCovered: null, newestPool: null, monthsBehind: null, status: "unknown" },
     trust: { selfReported: 0, covered: 0, status: "unknown" },
     modality: { value: null, multimodalShare: null, status: "unknown" },
+    maintenance: { updatedAt: null, monthsOld: null, versionCount: null, starCount: null, status: "unknown" },
   };
 }
 
 /**
  * The one assessment rule, shared by the discovery gate, the report and the
- * explorer: coverage, dispersion, provider composition, freshness, source trust
- * and modality of one focus metric over the loaded pool. `focusCoverageOk`/
- * `countMetricCoverage` are its coverage branch; `source` (the cached trust and
- * modality inputs) is its trust/modality branch.
+ * explorer: coverage, dispersion, provider composition, freshness, source trust,
+ * modality and benchmark maintenance of one focus metric over the loaded pool.
+ * `focusCoverageOk`/`countMetricCoverage` are its coverage branch; `source` (the
+ * cached trust, modality and catalog inputs) is its trust/modality/maintenance
+ * branch.
  *
  * An empty pool (unknown field size) or a metric with no covered values (its
  * scores were not loaded) reports every axis `unknown` — never a silent `ok`.
@@ -467,11 +507,14 @@ export function assessFocusMetric(
     freshness: freshnessAxis(models, metric, fill),
     trust: trustAxis(source),
     modality: modalityAxis(source),
+    maintenance: maintenanceAxis(source),
   };
 }
 
 /** The one-line reason a below-bar assessment is dropped/warned, naming the
- * failed axis; null when every axis is ok or unknown. */
+ * failed axis; null when every axis is ok or unknown. Deliberately has **no
+ * maintenance branch**: the maintenance axis is an annotation, never a drop
+ * reason, so a stale dataset cannot remove a discovered candidate. */
 export function belowBarReason(assessment: FocusMetricAssessment): string | null {
   const { coverage, dispersion, composition, freshness, trust } = assessment;
   if (coverage.status === "below-bar") {
@@ -513,8 +556,8 @@ export function belowBarReason(assessment: FocusMetricAssessment): string | null
  * The focus set is capped at `FOCUS_METRIC_CAP` in priority order (named/linked
  * first, then discovery order), so the caller's explicit choices survive and one
  * benchmark keeps a decisive share; the metrics beyond the cap are reported as
- * `dropped`. `coverage.assessments` (the six-axis assessment the caller computed
- * over the loaded pool) drives the per-metric annotation; without it the five
+ * `dropped`. `coverage.assessments` (the seven-axis assessment the caller computed
+ * over the loaded pool) drives the per-metric annotation; without it the six
  * new axes are `unknown` (the metric's scores were not loaded).
  */
 export function applyFocusBenchmarks(
@@ -1149,7 +1192,7 @@ export function formatArchetypes(): string {
   }).join("\n\n");
 }
 
-/** One focus-metric line: coverage plus the five new signals. */
+/** One focus-metric line: coverage plus the six new signals. */
 function assessmentLine(metric: string, a: FocusMetricAssessment): string {
   const c = a.coverage;
   const head =
@@ -1165,7 +1208,8 @@ function assessmentLine(metric: string, a: FocusMetricAssessment): string {
     a.modality.status === "unknown"
       ? "unknown"
       : `${a.modality.value ?? "?"}${a.modality.multimodalShare === null ? "" : ` ${(a.modality.multimodalShare * 100).toFixed(0)}% multimodal`}`;
-  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}  modality ${modality}`;
+  const maintenance = a.maintenance.status === "unknown" ? "unknown" : `${a.maintenance.monthsOld?.toFixed(1)}mo ${a.maintenance.status}`;
+  return `${head}  dispersion ${dispersion}  composition ${composition}  freshness ${freshness}  trust ${trust}  modality ${modality}  maintenance ${maintenance}`;
 }
 
 /** The human-readable report for a completed (or dry-run) create. */
@@ -1207,6 +1251,11 @@ export function formatCreateAgentReport(
     if (a.trust.status === "below-bar") {
       lines.push(
         `  warning:   ${metric} trust ${a.trust.selfReported}/${a.trust.covered} self-reported is above the ${FOCUS_SELF_REPORTED_MAX_SHARE} bar — the source is mostly vendor-submitted`,
+      );
+    }
+    if (a.maintenance.status === "below-bar") {
+      lines.push(
+        `  warning:   ${metric} dataset last updated ${a.maintenance.monthsOld?.toFixed(1)} months ago — the benchmark may be unmaintained`,
       );
     }
   }

@@ -135,7 +135,7 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   published 2026-10-03). It is not from this tree; `latest` still points at
   `1.0.0`, so it does not affect installs.
 - **Next release: `1.1.0`.** `## [Unreleased]` already holds a full feature
-  batch (explorer key-availability marking, the six-axis discovery gate, the
+  batch (explorer key-availability marking, the seven-axis discovery gate, the
   endpoint capability filters, `/project-roles`, the role weight rebalances), so
   a minor release is owed — see "How to cut a release". Do not bump per commit;
   the number comes from the Unreleased scope, not from the open issues.

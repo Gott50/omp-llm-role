@@ -590,7 +590,7 @@ export default function (pi: ExtensionAPI) {
 
       // 3b. Assess the focus metrics: a discovered metric's coverage is the
       //     catalog's model count; a named metric's is the loaded models that
-      //     carry it. The six-axis assessment is computed over the joined pool
+      //     carry it. The seven-axis assessment is computed over the joined pool
       //     (the same object the gate and the report consume).
       const covered: Record<string, number> = {};
       const assessments: Record<string, FocusMetricAssessment> = {};

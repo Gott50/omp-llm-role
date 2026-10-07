@@ -242,6 +242,21 @@ export type BenchmarkCatalogEntry = {
    * `"video"`, `"multimodal"`); `null` when absent or non-string. Kept as an
    * open string (not a closed enum) so a future value survives. */
   modality: string | null;
+  /** The catalog row's `updated_at` (when the dataset was last updated); `null`
+   * when absent or non-string. Drives the maintenance axis's dataset age
+   * (distinct from the model-date freshness axis). */
+  updatedAt: string | null;
+  /** The catalog row's `version_count` (how many revisions the dataset has);
+   * `null` when absent or non-finite. Supporting detail for the maintenance
+   * axis (churn). */
+  versionCount: number | null;
+  /** The catalog row's `latest_version_row_count` (the current dataset size);
+   * `null` when absent or non-finite. Supporting detail for the maintenance
+   * axis. */
+  latestVersionRowCount: number | null;
+  /** The catalog row's `star_count`; `null` when absent or non-finite.
+   * Supporting detail for the maintenance axis. */
+  starCount: number | null;
 };
 
 /** Pure: the catalog payload (a top-level array) -> entries; null when unusable. */
@@ -261,6 +276,11 @@ export function parseBenchmarkCatalog(v: unknown): BenchmarkCatalogEntry[] | nul
       modelCount: typeof row.model_count === "number" && Number.isFinite(row.model_count) ? row.model_count : 0,
       isCommunity: row.is_community === true,
       modality: typeof row.modality === "string" && row.modality !== "" ? row.modality : null,
+      updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
+      versionCount: typeof row.version_count === "number" && Number.isFinite(row.version_count) ? row.version_count : null,
+      latestVersionRowCount:
+        typeof row.latest_version_row_count === "number" && Number.isFinite(row.latest_version_row_count) ? row.latest_version_row_count : null,
+      starCount: typeof row.star_count === "number" && Number.isFinite(row.star_count) ? row.star_count : null,
     });
   }
   return out;
@@ -804,7 +824,8 @@ export async function loadBenchmarkScores(source: BenchmarkSource, refresh: bool
 type CatalogCacheFile = { fetchedAt: string; source: string; entries: BenchmarkCatalogEntry[] };
 
 /** Daily cache: current when fetchedAt is the current UTC day; requireFresh=false accepts stale.
- * Exported for the shape-guard test (a cache predating `isCommunity` must be rejected). */
+ * Exported for the shape-guard test (a cache predating `isCommunity`/`modality` or the
+ * maintenance fields must be rejected). */
 export function readCatalogCache(path: string, requireFresh: boolean): CatalogCacheFile | null {
   let parsed: CatalogCacheFile;
   try {
@@ -813,12 +834,23 @@ export function readCatalogCache(path: string, requireFresh: boolean): CatalogCa
     return null;
   }
   if (!Array.isArray(parsed?.entries)) return null;
-  // A cache written before `isCommunity`/`modality` landed lacks the field;
-  // refetch rather than silently reporting `undefined` (mirrors
-  // `readEndpointsCache`). An empty catalog is still `null` (nothing to sample,
-  // nothing to discover).
+  // A cache written before `isCommunity`/`modality` (#34/#35) or the maintenance
+  // fields `updatedAt`/`versionCount`/`latestVersionRowCount`/`starCount` (#36)
+  // landed lacks the field; refetch rather than silently reporting `undefined`
+  // (mirrors `readEndpointsCache`). An empty catalog is still `null` (nothing to
+  // sample, nothing to discover).
   const sample = parsed.entries[0];
-  if (typeof sample !== "object" || sample === null || !("isCommunity" in sample) || !("modality" in sample)) return null;
+  if (
+    typeof sample !== "object" ||
+    sample === null ||
+    !("isCommunity" in sample) ||
+    !("modality" in sample) ||
+    !("updatedAt" in sample) ||
+    !("versionCount" in sample) ||
+    !("latestVersionRowCount" in sample) ||
+    !("starCount" in sample)
+  )
+    return null;
   if (requireFresh && parsed.fetchedAt?.slice(0, 10) !== new Date().toISOString().slice(0, 10)) return null;
   return parsed;
 }

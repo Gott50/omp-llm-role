@@ -74,8 +74,11 @@ passing.
     dot-free; `parseBenchmarkPayload` reads the llm-stats `entries[]` and writing
     evidence shapes and rejects junk; `parseBenchmarkPayloadMeta` reads the
     per-entry `self_reported`/`verified` flags (19/20 → `trust`, no flag → `null`,
-    no entries shape → `null`); `parseBenchmarkCatalog` carries `isCommunity`; the
-    catalog cache rejects a pre-`isCommunity` cache (and an empty one);
+    no entries shape → `null`); `parseBenchmarkCatalog` carries `isCommunity`,
+    `modality` and the maintenance fields (`updatedAt`/`versionCount`/
+    `latestVersionRowCount`/`starCount`, each `null` when missing or non-finite);
+    the catalog cache rejects a pre-`isCommunity`/`modality`/maintenance cache
+    (and an empty one);
     `applyBenchmarkScores` fills uncovered
     models; `loadBenchmarkScores` follows fresh → live → stale with a temp cache
     dir and an injected fetch; a declaration executes (payload path, id/score
@@ -88,7 +91,8 @@ passing.
     `--dry-run` writes neither file; an architect `spec` replaces the
     description/body; `applyFocusBenchmarks` gives a named benchmark a decisive
     share, is a no-op for the archetype's own specialist set, and keeps both
-    invariants; the six-axis gate.
+    invariants; the seven-axis gate (the maintenance axis is an annotation, never
+    a drop).
 18. **Agent removal** (`remove-agent.test.ts`) — the role's lock-file keys and the
     agent file are deleted (backup written); a shipped default role, a reserved
     name and an invalid name are refused; nothing-to-remove errors; `--dry-run`

@@ -233,10 +233,63 @@ test("parseBenchmarkCatalog keeps valid rows and rejects a non-array payload", (
     { benchmark_id: "gpqa", name: "GPQA", categories: "nope" },
   ];
   assert.deepEqual(parseBenchmarkCatalog(payload), [
-    { id: "writingbench", name: "WritingBench", description: "d", categories: ["writing"], modelCount: 12, isCommunity: true, modality: "text" },
-    { id: "gpqa", name: "GPQA", description: "", categories: [], modelCount: 0, isCommunity: false, modality: null },
+    {
+      id: "writingbench",
+      name: "WritingBench",
+      description: "d",
+      categories: ["writing"],
+      modelCount: 12,
+      isCommunity: true,
+      modality: "text",
+      updatedAt: null,
+      versionCount: null,
+      latestVersionRowCount: null,
+      starCount: null,
+    },
+    {
+      id: "gpqa",
+      name: "GPQA",
+      description: "",
+      categories: [],
+      modelCount: 0,
+      isCommunity: false,
+      modality: null,
+      updatedAt: null,
+      versionCount: null,
+      latestVersionRowCount: null,
+      starCount: null,
+    },
   ]);
   assert.equal(parseBenchmarkCatalog({ benchmarks: [] }), null);
+});
+
+test("parseBenchmarkCatalog carries the row's maintenance fields, nulling a missing or non-finite one", () => {
+  const entries = parseBenchmarkCatalog([
+    { benchmark_id: "x", name: "X", updated_at: "2023-01-15T00:00:00Z", version_count: 4, latest_version_row_count: 40, star_count: 7 },
+    { benchmark_id: "y", name: "Y" },
+    { benchmark_id: "z", name: "Z", updated_at: 123, version_count: Number.NaN, latest_version_row_count: Number.POSITIVE_INFINITY, star_count: "9" },
+    { benchmark_id: "w", name: "W", updated_at: "" },
+  ]);
+  assert.deepEqual(entries?.[0], {
+    id: "x",
+    name: "X",
+    description: "",
+    categories: [],
+    modelCount: 0,
+    isCommunity: false,
+    modality: null,
+    updatedAt: "2023-01-15T00:00:00Z",
+    versionCount: 4,
+    latestVersionRowCount: 40,
+    starCount: 7,
+  });
+  // A missing field, a non-string `updated_at` and a non-finite count are all null.
+  assert.deepEqual(entries?.slice(1, 3).map((e) => [e.updatedAt, e.versionCount, e.latestVersionRowCount, e.starCount]), [
+    [null, null, null, null],
+    [null, null, null, null],
+  ]);
+  // An empty string is still a string: carried as-is (the axis degrades to unknown).
+  assert.equal(entries?.[3].updatedAt, "");
 });
 
 test("parseBenchmarkCatalog carries the row's modality, keeping an unknown value", () => {
@@ -257,7 +310,7 @@ test("loadBenchmarkCatalog: fresh cache wins, a live fetch writes the cache, a s
   let calls = 0;
   try {
     // Fresh cache wins: no fetch.
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", entries: [{ id: "a", name: "A", description: "", categories: [], modelCount: 1, isCommunity: false, modality: null }] }));
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "x", entries: [{ id: "a", name: "A", description: "", categories: [], modelCount: 1, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null }] }));
     globalThis.fetch = (async () => {
       calls++;
       return new Response(JSON.stringify([{ benchmark_id: "b", name: "B" }]));
@@ -273,7 +326,7 @@ test("loadBenchmarkCatalog: fresh cache wins, a live fetch writes the cache, a s
     assert.deepEqual(JSON.parse(readFileSync(cachePath, "utf8")).entries.map((e: { id: string }) => e.id), ["b"]);
 
     // A stale cache is the last resort when the fetch fails.
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", entries: [{ id: "c", name: "C", description: "", categories: [], modelCount: 0, isCommunity: false, modality: null }] }));
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: "2000-01-01T00:00:00.000Z", source: "x", entries: [{ id: "c", name: "C", description: "", categories: [], modelCount: 0, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null }] }));
     globalThis.fetch = (async () => {
       throw new Error("offline");
     }) as typeof fetch;
@@ -296,10 +349,10 @@ test("catalogMetric maps shipped ids and falls back to a dot-free bench key", ()
   assert.equal(catalogMetric("alpacaeval-2.0"), "bench:alpacaeval-2_0");
 });
 
-test("the catalog cache is rejected when its entries predate isCommunity/modality", () => {
+test("the catalog cache is rejected when its entries predate isCommunity/modality or the maintenance fields", () => {
   const dir = mkdtempSync(join(tmpdir(), "catalog-guard-"));
   const path = join(dir, "benchmark-catalog-fetched-data.json");
-  // A row in the pre-#34 shape: every field the guard checks except isCommunity/modality.
+  // A row in the pre-#34 shape: every field the guard checks except the newer ones.
   const legacy = { id: "a", name: "A", description: "", categories: [], modelCount: 1 };
   const write = (entries: object[]) => writeFileSync(path, JSON.stringify({ fetchedAt: new Date().toISOString(), source: "t", entries }));
 
@@ -309,10 +362,22 @@ test("the catalog cache is rejected when its entries predate isCommunity/modalit
   write([{ ...legacy, isCommunity: false }]);
   assert.equal(readCatalogCache(path, true), null, "a cache without modality must be rejected");
 
+  // isCommunity + modality but no maintenance fields (a pre-#36 cache): rejected.
   write([{ ...legacy, isCommunity: false, modality: null }]);
-  assert.ok(readCatalogCache(path, true), "a cache with isCommunity and a null modality must be accepted");
+  assert.equal(readCatalogCache(path, true), null, "a cache without the maintenance fields must be rejected");
 
-  write([{ ...legacy, isCommunity: false, modality: "image" }]);
+  // Every maintenance field is required: dropping any one rejects the cache.
+  const full = { ...legacy, isCommunity: false, modality: null, updatedAt: null, versionCount: null, latestVersionRowCount: null, starCount: null };
+  for (const key of ["updatedAt", "versionCount", "latestVersionRowCount", "starCount"] as const) {
+    const { [key]: _omitted, ...without } = full;
+    write([without]);
+    assert.equal(readCatalogCache(path, true), null, `a cache without ${key} must be rejected`);
+  }
+
+  write([full]);
+  assert.ok(readCatalogCache(path, true), "a cache with every field must be accepted");
+
+  write([{ ...full, modality: "image" }]);
   assert.ok(readCatalogCache(path, true), "a non-null modality is accepted too");
 
   // An empty catalog is still null (nothing to sample, nothing to discover).

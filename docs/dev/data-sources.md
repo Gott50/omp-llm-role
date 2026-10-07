@@ -41,7 +41,7 @@ payload; there is no public JSON API.
   the index/benchmark values, with `price`/`throughput`/`website`/`writing`
   left `null` for later enrichment. The row's `release_date` is carried onto
   `Model.releaseDate` (null when absent) and used by the focus-metric freshness
-  axis (scoring.md, the six-axis gate).
+  axis (scoring.md, the seven-axis gate).
 - **Cache**: `cache/llm-stats-fetched-rankings.json` —
   `{ fetchedAt, source, modelCount, rankings[] }` (pretty-printed; each row
   gains a `rank` = array position). Fresh while `fetchedAt` is the current UTC
@@ -335,16 +335,22 @@ post-fetch coverage count is the loadable `loaded`, never the catalog's
 `GET https://api.zeroeval.com/leaderboard/benchmarks` (the same backend, no
 `/<id>`) returns the full catalog as a top-level JSON array of ~745 rows:
 `{ benchmark_id, name, description, categories[], modality, max_score, verified,
-model_count, is_community }`. `parseBenchmarkCatalog` narrows it to
-`{ id, name, description, categories, modelCount, isCommunity, modality }` (the
+model_count, is_community, updated_at, version_count, latest_version_row_count,
+star_count }`. `parseBenchmarkCatalog` narrows it to
+`{ id, name, description, categories, modelCount, isCommunity, modality,
+updatedAt, versionCount, latestVersionRowCount, starCount }` (the
 row's `is_community`, defaulting `false` when absent/non-boolean — the only
-catalog-level trust signal, 20/745 true — and the row's `modality` as an open
-string, `null` when absent/non-string, so an unknown value survives);
+catalog-level trust signal, 20/745 true — the row's `modality` as an open
+string, `null` when absent/non-string, so an unknown value survives, and the
+maintenance fields `updated_at`/`version_count`/`latest_version_row_count`/
+`star_count`, each `null` when absent, non-string (for `updated_at`) or
+non-finite (for the three counts));
 `loadBenchmarkCatalog` follows the same
 daily cache chain (cache file `benchmark-catalog-fetched-data.json`). The catalog
 cache reader carries a shape guard mirroring `readEndpointsCache`: a cache whose
-sampled entry lacks `isCommunity` or `modality` (written before the field landed)
-is rejected and refetched, so a stale cache never reports `undefined`; an empty
+sampled entry lacks `isCommunity`, `modality` or any of the four maintenance
+fields (written before the field landed) is rejected and refetched, so a stale
+cache never reports `undefined`; an empty
 catalog is still `null`. `/create-agent` uses it to discover the
 benchmarks relevant to a purpose: `discoverBenchmarks` filters by coverage
 (`modelCount >= 3`), ranks the survivors by IDF-weighted lexical overlap with the
@@ -420,7 +426,7 @@ fresh checkout needs no setup.
 | `cache/designarena-fetched-data.json` | `{ fetchedAt, source, categories }` | non-fatal (OR mirror alone) |
 | `cache/writing-fetched-data.json` | `{ fetchedAt, source, scores, total, meta }` | non-fatal (`writing` unfilled) |
 | `cache/bench-<id>-fetched-data.json` | `{ fetchedAt, source, scores, total, meta }` | non-fatal (the external metric is unfilled) |
-| `cache/benchmark-catalog-fetched-data.json` | `{ fetchedAt, source, entries }` (each entry carries `isCommunity` and `modality`) | non-fatal (discovery skipped) |
+| `cache/benchmark-catalog-fetched-data.json` | `{ fetchedAt, source, entries }` (each entry carries `isCommunity`, `modality` and the maintenance fields `updatedAt`/`versionCount`/`latestVersionRowCount`/`starCount`) | non-fatal (discovery skipped) |
 | `cache/<declared-id>-fetched-data.json` | `{ fetchedAt, source, scores, total, meta }` | non-fatal (the external metric is unfilled) |
 
 The last two are the registry's generic scores cache (`loadBenchmarkScores`),

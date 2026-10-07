@@ -10,6 +10,21 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Maintenance axis on the focus-metric gate** — the seventh focus-metric axis
+  carries the benchmark's own maintenance: the catalog row's `updated_at` age in
+  months against `FOCUS_DATASET_STALENESS_MONTHS` (12), with `version_count` and
+  `star_count` as supporting detail. `parseBenchmarkCatalog` reads the row's
+  `updated_at`/`version_count`/`latest_version_row_count`/`star_count` onto
+  `BenchmarkCatalogEntry` (each `null` when absent, non-string or non-finite),
+  and the catalog-cache shape guard now also requires all four (a pre-#36 cache
+  is refetched). This is the **dataset-date** axis, distinct from the model-date
+  `freshness` axis: a benchmark whose dataset was last touched years ago but
+  whose rows include one recent model passes freshness and is caught here. The
+  axis is an **annotation, never a gate** — `belowBarReason` has no maintenance
+  branch, so a stale dataset is warned but never drops a discovered candidate;
+  it is `unknown` when the catalog row is absent or its `updated_at` is
+  missing/unparseable. The create report, the explorer focus table and the CLI
+  report print the axis. (issue #36)
 - **Modality axis on the focus-metric gate** — the sixth focus-metric axis
   carries the benchmark's modality: the catalog row's `modality` (text/image/
   audio/video/multimodal) and the payload's per-entry `multimodal` share.

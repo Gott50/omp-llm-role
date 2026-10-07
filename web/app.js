@@ -141,13 +141,14 @@ const TIPS = {
   lambda: "λ = price of one quality point, in $/M. Derived as " + LAMBDA_DERIVATION + " unless the role overrides lambda.",
   sum: "Weights must sum to 1.0 (±0.01) or the plugin rejects the role.",
   required: "Eligibility gate, not a weight: a model missing this metric is not ranked at all for the role.",
-  focus: "Six-axis audit of each weighted benchmark/percentile metric, over the same pool the updater ranks on. A below-bar axis is warned; unknown means the metric's scores were not loaded (never a silent ok).",
+  focus: "Seven-axis audit of each weighted benchmark/percentile metric, over the same pool the updater ranks on. A below-bar axis is warned; unknown means the metric's scores were not loaded (never a silent ok).",
   focusCoverage: "Coverage: models carrying the metric (not the imputed fill) out of the pool, and the share. Below the coverage floor — or a capability-filled metric — is warned.",
   focusDispersion: "Dispersion: IQR/median of the cardinal-normalized covered values. Too little spread means the metric barely separates models.",
   focusComposition: "Composition: pool orgs above the minimum share that carry no covered model. A missing major provider is warned.",
   focusFreshness: "Freshness: months between the newest covered model and the newest pool model. A stale benchmark is warned.",
   focusTrust: "Trust: the self-reported share of the payload's covered entries (the per-entry self_reported flag). A mostly vendor-submitted source is warned; unknown means the payload carried no entry flags or the scores were not loaded.",
   focusModality: "Modality: the catalog row's modality (text/image/audio/video/multimodal) and the payload's multimodal share. Informational only — never a gate; unknown means neither the catalog row nor the payload carried a modality signal.",
+  focusMaintenance: "Maintenance: months since the catalog row's updated_at (the dataset's own age), against a 12-month bar, with version_count/star_count as supporting detail. This is the dataset-date axis, distinct from freshness (the model-date axis). An annotation, never a gate — a stale dataset is warned but never drops a candidate; unknown means the catalog row is absent or its updated_at is missing/unparseable.",
   imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
   thinking: "Thinking level appended to the role's selector (`:level`) and used to scale the price axis. The factor (3ρ+1+T)/(3ρ+1) applies only to models that will actually run the level (omp catalog `thinking[]` membership; meta levels off/auto need only a non-empty list). Bare = no suffix — the session's defaultThinkingLevel applies and the price is unadjusted.",
   thinkingBare: "Bare (no suffix). Not restorable once the role's shipped default or the lock file sets a level: the plugin deep-merges roles over DEFAULT_ROLES, so an omitted key keeps the inherited value.",
@@ -625,7 +626,7 @@ function focusSignal(text, status) {
   return el("td", { class: "sig " + cls, text });
 }
 
-/** The six-axis focus assessment of the role's weighted benchmark/percentile
+/** The seven-axis focus assessment of the role's weighted benchmark/percentile
  * metrics, from the bootstrap payload's focusAssessments[role]. The payload is
  * computed over the resolved definition, so a metric the editor just added reads
  * "not assessed" until the next reload. */
@@ -648,6 +649,7 @@ function renderFocus(panel) {
       el("th", { "data-tip": TIPS.focusFreshness, text: "freshness" }),
       el("th", { "data-tip": TIPS.focusTrust, text: "trust" }),
       el("th", { "data-tip": TIPS.focusModality, text: "modality" }),
+      el("th", { "data-tip": TIPS.focusMaintenance, text: "maintenance" }),
     ])),
   );
   const body = el("tbody");
@@ -657,7 +659,7 @@ function renderFocus(panel) {
       body.append(
         el("tr", {}, [
           el("td", { "data-tip": metricTip(metric), text: metricLabel(metric) }),
-          el("td", { class: "sig unknown", colspan: "6", text: "not assessed — reload to assess the edited definition" }),
+          el("td", { class: "sig unknown", colspan: "7", text: "not assessed — reload to assess the edited definition" }),
         ]),
       );
       continue;
@@ -672,7 +674,8 @@ function renderFocus(panel) {
       a.modality.status === "unknown"
         ? "unknown"
         : (a.modality.value ?? "?") + (a.modality.multimodalShare === null ? "" : " " + (a.modality.multimodalShare * 100).toFixed(0) + "% multimodal");
-    const statuses = [c.status, a.dispersion.status, a.composition.status, a.freshness.status, a.trust.status, a.modality.status];
+    const maintenance = a.maintenance.status === "unknown" ? "unknown" : a.maintenance.monthsOld.toFixed(1) + "mo";
+    const statuses = [c.status, a.dispersion.status, a.composition.status, a.freshness.status, a.trust.status, a.modality.status, a.maintenance.status];
     body.append(
       el("tr", { class: statuses.includes("below-bar") ? "warned" : "" }, [
         el("td", { "data-tip": metricTip(metric), text: metricLabel(metric) }),
@@ -682,6 +685,7 @@ function renderFocus(panel) {
         focusSignal(freshness, a.freshness.status),
         focusSignal(trust, a.trust.status),
         focusSignal(modality, a.modality.status),
+        focusSignal(maintenance, a.maintenance.status),
       ]),
     );
   }
