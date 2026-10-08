@@ -22,6 +22,7 @@ import { applyBenchmarkScores, BENCHMARK_ENTRY_CAP, cachedSourceInfo, declaratio
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
 import { THINKING_LEVELS, catalogFromOmpModelsJson, fetchKeyAvailability, type KeyAvailability } from "./availability.ts";
 import { loadRankData, rankRole, type Model } from "./engine.ts";
+import { defaultErrorReportDeps, reportUnexpectedError } from "./error-report.ts";
 import { formatFeatures } from "./features.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { resolveScopes, unionRoles } from "./explorer/scopes.ts";
@@ -168,6 +169,48 @@ function parseExplorerArgs(args: string): { port: number | undefined; open: bool
 function notifyLines(ctx: ExtContext, line: string): void {
   ctx.ui.notify(line, "info");
   if (!ctx.hasUI) console.error(line);
+}
+
+/** The reporting module's line sink: the UI notify, plus a stderr mirror in the
+ *  modes where `ctx.ui.notify` no-ops. */
+function reportNotify(ctx: ExtContext): (line: string, level: "info" | "warning") => void {
+  return (line, level) => {
+    ctx.ui.notify(line, level);
+    if (!ctx.hasUI) console.error(line);
+  };
+}
+
+/** The `ask` posture's yes/no prompt, built from `ctx.ui.select?` — present only
+ *  in a UI session, so a headless `ask` degrades to notify-plus-URL. */
+function reportConfirm(ctx: ExtContext): ((title: string, payload: string) => Promise<boolean>) | undefined {
+  if (!ctx.hasUI || !ctx.ui.select) return undefined;
+  return async (title, payload) => {
+    const answer = await ctx.ui.select?.(`${title}\n\n${payload}`, [
+      { label: "File", description: "create the GitHub issue with the text above" },
+      { label: "Cancel" },
+    ]);
+    return answer === "File";
+  };
+}
+
+/** Route an unexpected command failure through the reporting module. The
+ *  one-line summary is unchanged from the pre-reporting behaviour; the module
+ *  adds its own lines (filed/commented/offered) when reporting is on. */
+function reportCommandError(ctx: ExtContext, label: string, err: unknown, prefix = "llm-role"): void {
+  ctx.ui.notify(`${prefix}: ${err instanceof Error ? err.message : err}`, "warning");
+  void reportUnexpectedError(
+    { label, error: err, hasUI: ctx.hasUI, notify: reportNotify(ctx), confirm: reportConfirm(ctx) },
+    defaultErrorReportDeps(),
+  );
+}
+
+/** Report an updater defect (the abort line is already notified by runUpdater). */
+function reportDefect(ctx: ExtContext, label: string, defect: string | undefined): void {
+  if (defect === undefined) return;
+  void reportUnexpectedError(
+    { label, error: new Error(defect), hasUI: ctx.hasUI, notify: reportNotify(ctx), confirm: reportConfirm(ctx) },
+    defaultErrorReportDeps(),
+  );
 }
 
 /** External metrics already weighted by a resolved role, for `--list-benchmarks`. */
@@ -363,9 +406,10 @@ export default function (pi: ExtensionAPI) {
     // mid-loop, no write). runUpdater catches its own abort paths; a throw
     // here is contained by handler dispatch (extension error channel).
     try {
-      await runUpdater("session-start", extDeps(pi, ctx));
+      const runResult = await runUpdater("session-start", extDeps(pi, ctx));
+      reportDefect(ctx, "session-start", runResult.defect);
     } catch (err) {
-      ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
+      reportCommandError(ctx, "session-start", err);
     }
   });
 
@@ -373,9 +417,10 @@ export default function (pi: ExtensionAPI) {
     description: "Refresh model roles from today's llm-stats/OpenRouter rankings",
     handler: async (_args, ctx: ExtContext) => {
       try {
-        await runUpdater("manual", extDeps(pi, ctx), { force: true });
+        const runResult = await runUpdater("manual", extDeps(pi, ctx), { force: true });
+        reportDefect(ctx, "refresh-roles", runResult.defect);
       } catch (err) {
-        ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
+        reportCommandError(ctx, "refresh-roles", err);
       }
     },
   });
@@ -430,7 +475,7 @@ export default function (pi: ExtensionAPI) {
         });
         notifyLines(ctx, `llm-role explorer: ${explorer.url}`);
       } catch (err) {
-        ctx.ui.notify(`llm-role explorer: ${err instanceof Error ? err.message : err}`, "warning");
+        reportCommandError(ctx, "explore-roles", err, "llm-role explorer");
       }
     },
   });
@@ -617,9 +662,10 @@ export default function (pi: ExtensionAPI) {
       else notifyLines(ctx, formatCreateAgentReport(result, "ranking the new role…", { differentiation }));
       if (result.dryRun) return;
       try {
-        await runUpdater("manual", extDeps(pi, ctx), { force: true });
+        const runResult = await runUpdater("manual", extDeps(pi, ctx), { force: true });
+        reportDefect(ctx, "create-agent", runResult.defect);
       } catch (err) {
-        ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
+        reportCommandError(ctx, "create-agent", err);
       }
     },
   });
@@ -783,9 +829,10 @@ export default function (pi: ExtensionAPI) {
 
       // 5. Run the updater in-process so the project's modelRoles land.
       try {
-        await runUpdater("manual", extDeps(pi, ctx), { force: true });
+        const runResult = await runUpdater("manual", extDeps(pi, ctx), { force: true });
+        reportDefect(ctx, "project-roles", runResult.defect);
       } catch (err) {
-        ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
+        reportCommandError(ctx, "project-roles", err);
       }
     },
   });
@@ -823,9 +870,10 @@ export default function (pi: ExtensionAPI) {
       notifyLines(ctx, formatRemoveAgentReport(result, "cleaning up config.yml…"));
       if (result.dryRun) return;
       try {
-        await runUpdater("manual", extDeps(pi, ctx), { force: true });
+        const runResult = await runUpdater("manual", extDeps(pi, ctx), { force: true });
+        reportDefect(ctx, "remove-agent", runResult.defect);
       } catch (err) {
-        ctx.ui.notify(`llm-role: ${err instanceof Error ? err.message : err}`, "warning");
+        reportCommandError(ctx, "remove-agent", err);
       }
     },
   });
