@@ -42,17 +42,28 @@ bullets) and are not re-derived on read.
   form (`disabledAgents:` + `- "designer"`); any other inline value on a managed
   key line still throws. Verified against a copy of the real
   `~/.omp/agent/config.yml` (which carries `disabledAgents: null`): the run wrote
-  and reported 8 decisions instead of aborting. The same probe turned up two more
-  defects, one of them tracked as its own issue (#55 — a different error-report
-  fingerprint): the parent-block variant of this class — an empty `task:` + `  {}`
-  / `retry:` + `  {}` used to take the new child key *after* the `{}` line, YAML
-  no parser accepts, with the read-back self-check still passing, i.e. **silent
-  corruption** — now has the child key replace the `{}` line, and a prune-only
-  patch creates nothing; and #55's block-bound bug (`chainEntries` scanned to the
-  end of `retry:` instead of to the end of `fallbackChains:`, so any sibling
-  `retry.*` key aborted every run with `unexpected line in fallbackChains block`)
-  is fixed by bounding the scan at the key's own indent. Ranking numbers
-  unchanged.
+  and reported 8 decisions instead of aborting — and the real file carries its own
+  production confirmation. Its 2026-10-08T16:34Z `session-start` run wrote the
+  config while `disabledAgents: null` was present (config, `llm-role-state.json`
+  and `llm-role-history.jsonl` are all stamped 18:34:17 local), which pre-fix was
+  impossible: the read threw before any write. The write is recognizably the
+  plugin's surgical one, not omp's serializer: a *changed* role line is re-quoted
+  (`tiny: "…deepseek-v4.1-flash:off"`) while an unchanged one stays byte-identical
+  (`smol: …deepseek-v4.1-flash:off`), the previously plugin-written
+  `openrouter/inclusionai/ling-3.0-flash` chain key is pruned (a dumper never
+  prunes), and the chain keys the plugin does not own (`web:`,
+  `openrouter/~deepseek/…`) keep their unquoted items. The placeholder is left in
+  place because the agent sync had nothing to add or remove — `patchDisabledAgents`
+  early-returns then, by design. The same probe turned up two more defects, one of
+  them tracked as its own issue (#55 — a different error-report fingerprint): the
+  parent-block variant of this class — an empty `task:` + `  {}` / `retry:` + `  {}`
+  used to take the new child key *after* the `{}` line, YAML no parser accepts,
+  with the read-back self-check still passing, i.e. **silent corruption** — now
+  has the child key replace the `{}` line, and a prune-only patch creates nothing;
+  and #55's block-bound bug (`chainEntries` scanned to the end of `retry:`
+  instead of to the end of `fallbackChains:`, so any sibling `retry.*` key
+  aborted every run with `unexpected line in fallbackChains block`) is fixed by
+  bounding the scan at the key's own indent. Ranking numbers unchanged.
 
 - Capability presets (2026-10-07, issue #40): one opt-in flag per capability
   (`features.<id>` global, `roles.<role>.features.<id>` per role) applies the
