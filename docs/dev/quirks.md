@@ -154,6 +154,22 @@ things that only bite someone changing or debugging the code.
   stderr; `get_available_commands` confirms registration. Verified this way for
   `/create-agent` and `/explore-roles` (omp 18.4.8).
 
+## Repository plumbing
+
+- **The https credential cannot *introduce* a workflow change.** `origin` is
+  https and its credential is a `gh` OAuth token with scopes
+  `admin:public_key, gist, read:org, repo` — no `workflow` — so a push that adds
+  or modifies `.github/workflows/*` is rejected ("refusing to allow an OAuth App
+  to create or update workflow … without `workflow` scope"), and the REST
+  contents API is rejected the same way. The check is a diff against the ref's
+  base, not a property of the ref: a new branch or tag whose commit already
+  contains the workflow, with `main` also containing it, pushes fine over https
+  (verified 2026-10-08). So only the commit that lands a workflow edit needs the
+  SSH route — `git push git@github.com:Gott50/omp-llm-role.git main` — and
+  because that bypasses the `origin` remote it leaves `refs/remotes/origin/main`
+  stale, which makes `scripts/release.ts cut` refuse ("HEAD is not origin/main")
+  until `git fetch origin` runs.
+
 ## Historical
 
 - **Bare roles were priced as if thinking were free** (fixed 2026-09-30).
