@@ -12,7 +12,7 @@
     {
       "name": "omp-llm-role",
       "description": "Daily model-role updater: ranks models per omp role from llm-stats + OpenRouter and rewrites the agent config's modelRoles to the day's best key-eligible picks.",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "source": "./",
       "category": "development",
       "homepage": "https://github.com/Gott50/omp-llm-role",

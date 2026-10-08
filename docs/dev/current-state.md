@@ -6,7 +6,7 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The ranking numbers
-below are the 2026-10-07 measurement (the input-price blend basis #21, the
+below are the 2026-10-08 measurement (the input-price blend basis #21, the
 #17/#18/#19/#20 wave and the #34–#40 focus-axis/capability-flag work; see the top
 bullets) and are not re-derived on read.
 
@@ -616,18 +616,18 @@ bullets) and are not re-derived on read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 400 llm-stats models; OpenRouter matched 150/400 (throughput), 149 priced (the
-  2026-10-06 snapshot read 151/150 — the daily cache moved, not the code; the
+- 407 llm-stats models; OpenRouter matched 155/407 (throughput), 153 priced (the
+  2026-10-07 snapshot read 150/400 — the daily cache moved, not the code; the
   #34–#40 axes and flags leave every ranking byte-identical until a flag is
   turned on).
-- Eligible per role: 142 (vision 75, designer 87, image-input filter).
+- Eligible per role: 146 (vision 75, designer 89, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.813), `smol` DeepSeek-V4.1-Flash (0.700),
-  `slow` DeepSeek-V4.1-Flash (0.835), `vision` Qwen3.8 Flash (0.733), `plan`
-  Muse Spark 1.3 (0.798), `commit` DeepSeek-V4.1-Flash (0.732), `tiny`
-  Mercury 2 (0.798), `task` DeepSeek-V4.1-Flash (0.755), `advisor`
-  Muse Spark 1.3 (0.782), `designer` DeepSeek-V4.1-Flash (0.773).
+  `default` DeepSeek-V4.1-Flash (0.808), `smol` Muse Spark 1.1 (0.687),
+  `slow` Muse Spark 1.3 (0.832), `vision` Qwen3.8 Flash (0.731), `plan`
+  Muse Spark 1.3 (0.795), `commit` Muse Spark 1.1 (0.725), `tiny`
+  Mercury 2 (0.797), `task` DeepSeek-V4.1-Flash (0.749), `advisor`
+  Muse Spark 1.3 (0.786), `designer` DeepSeek-V4.1-Flash (0.761).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
