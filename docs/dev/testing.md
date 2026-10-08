@@ -23,7 +23,10 @@ passing.
 4. **Surgical edit** (`config-edit.test.ts`) — commented config, unknown keys,
    missing roles upsert, chain-key replace-in-place (no duplicate YAML keys),
    unchanged file → zero-byte diff and no mtime change; structural surprises
-   rejected; the patched output parses as real YAML.
+   rejected; the empty-collection spellings omp's own writer emits (a null token
+   on the key line, a flow `[]`/`{}` on its own indented line) read as empty and
+   are normalized into the block form on write (issue #54); the patched output
+   parses as real YAML.
 5. **Hysteresis** (`hysteresis.test.ts`) — no-current adopt; ineligible current
    switch; margin-below keep; margin-above switch; `switchMargin: 0` always takes
    best; cost override (`switched-cost`); `priceSwitchFraction: 0` keeps the

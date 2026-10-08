@@ -2,15 +2,23 @@
  * Surgical YAML editing for the omp agent config.
  *
  * The document is patched as TEXT, line-oriented: only the value tokens of
- * managed roles inside the top-level `modelRoles:` block and the managed keys
- * inside `retry:` → `fallbackChains:` change. Comments, blank lines, unknown
- * keys and formatting stay byte-identical. Reading back uses the same
- * line-oriented rules, so the plugin has no runtime YAML dependency (required
- * for omp marketplace installs, which never install package dependencies) and
+ * managed roles inside the top-level `modelRoles:` block, the managed keys
+ * inside `retry:` → `fallbackChains:` and the `- name` entries of
+ * `task.disabledAgents` change. Comments, blank lines, unknown keys and
+ * formatting stay byte-identical. Reading back uses the same line-oriented
+ * rules, so the plugin has no runtime YAML dependency (required for omp
+ * marketplace installs, which never install package dependencies) and
  * read/write can never disagree. Every patch is self-checked: the patched text
  * must read back as exactly the intended state or it throws instead of
  * returning. The real `yaml` parser still validates patch output in tests
  * (dev-only dependency). Values are always emitted as double-quoted strings.
+ *
+ * An empty managed collection may be spelled the way a YAML serializer writes
+ * it — a null scalar (`disabledAgents: null`) or a flow collection on its own
+ * indented line (`fallbackChains:` then `    {}`) — and reads as empty; the
+ * patch path rewrites that placeholder line into the block form. Any other
+ * inline value on a managed key line is a structural surprise and throws, so
+ * the plugin never silently drops something it cannot re-emit.
  *
  * Indentation follows the file's own style: existing chain keys keep their
  * indent; new keys match the first existing sibling (defaulting to the
@@ -46,13 +54,52 @@ function scalarValue(raw: string): string | null {
   return stripped.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
 }
 
+/** A line's value text: trailing ` # comment` stripped, trimmed. */
+function valueText(value: string): string {
+  return value.replace(/\s+#.*$/, "").trim();
+}
+
+/**
+ * A YAML null *token* (`key: null`, `key: ~`) — a spelling a config writer
+ * emits for an empty collection value. Not a structural surprise: it means
+ * exactly what an empty block means, and the patch path rewrites the line. An
+ * empty inline value is a different thing — a block header whose body follows —
+ * so it is not a token.
+ */
+function isNullToken(value: string): boolean {
+  const text = valueText(value);
+  return text === "null" || text === "~" || text === "Null" || text === "NULL";
+}
+
+/**
+ * The flow collection a YAML serializer puts on its own indented line for an
+ * empty collection (`key:` followed by `    []` / `    {}` — Bun's
+ * `YAML.stringify` does this, and omp's config writer uses it). Recognized so
+ * the patch path replaces the placeholder line instead of reading it as content.
+ */
+function isEmptyFlow(line: string, flow: "[]" | "{}"): boolean {
+  return valueText(line) === flow;
+}
+
+/**
+ * A `key: value # comment` line rewritten as its block header: the `indent +
+ * key + :` head keeps its own indentation and trailing comment, so replacing an
+ * inline empty value with a block loses nothing but the empty value token.
+ */
+function keyHead(line: string): string {
+  return line.slice(0, line.indexOf(":") + 1) + (line.match(/\s+#.*$/)?.[0] ?? "");
+}
+
 /**
  * Best-effort line-oriented read of the two surfaces the plugin owns: values
  * inside the top-level `modelRoles:` block and keys inside
  * `retry:` → `fallbackChains:`. Uses the same structural rules as the patch
  * path, so read and write cannot disagree on a block-style document; inline
- * blocks (`modelRoles: {}`), indented blocks and duplicate top-level blocks
- * are structural surprises and throw.
+ * flow-style blocks (`modelRoles: {}`), indented blocks and duplicate top-level
+ * blocks are structural surprises and throw. The empty-collection spellings a
+ * config writer emits — a null scalar (`disabledAgents: null`) or a flow
+ * collection on its own indented line (`disabledAgents:` then `    []`, `    {}`
+ * for an empty mapping) — are NOT surprises: they read as the empty collection.
  */
 export function parseConfig(text: string): { modelRoles: Record<string, string>; chainKeys: string[]; disabledAgents: string[] } {
   const lines = text.split("\n");
@@ -70,20 +117,17 @@ export function parseConfig(text: string): { modelRoles: Record<string, string>;
   const chainKeys: string[] = [];
   const retryIdx = findTopLevel(lines, "retry");
   if (retryIdx !== -1) {
-    const fcIdx = findFallbackChains(lines, retryIdx);
-    if (fcIdx !== -1) {
-      for (const key of Object.keys(chainEntries(lines, fcIdx, blockEnd(lines, fcIdx)))) chainKeys.push(key);
+    const fc = findFallbackChains(lines, retryIdx);
+    if (fc.keyLine !== -1) {
+      for (const key of Object.keys(chainEntries(lines, fc.keyLine, blockEnd(lines, fc.keyLine)))) chainKeys.push(key);
     }
   }
   const disabledAgents: string[] = [];
   const taskIdx = findTopLevel(lines, "task");
   if (taskIdx !== -1) {
-    const daIdx = findDisabledAgents(lines, taskIdx);
-    if (daIdx !== -1) {
-      for (const i of sequenceItemLines(lines, daIdx)) {
-        const value = scalarValue(lines[i].trim().replace(/^-\s+/, ""));
-        if (value !== null) disabledAgents.push(value);
-      }
+    for (const i of disabledAgentsBody(lines, taskIdx).itemLines) {
+      const value = scalarValue(lines[i].trim().replace(/^-\s+/, ""));
+      if (value !== null) disabledAgents.push(value);
     }
   }
   return { modelRoles, chainKeys, disabledAgents };
@@ -240,8 +284,13 @@ function patchModelRoles(out: string[], roleSelectors: Record<string, string>, r
       upserts.push(`  ${role}: ${quote(selector)}`);
     }
   }
-  // Upserts go to the end of the block, before its terminator line, in role order.
-  if (upserts.length > 0) out.splice(end, 0, ...upserts);
+  // Upserts go to the end of the block, before its terminator line, in role order —
+  // replacing a serializer-emitted empty-mapping placeholder (`modelRoles:` + `  {}`).
+  if (upserts.length > 0) {
+    const placeholder = emptyFlowLine(out, blockIdx, "{}");
+    if (placeholder === -1) out.splice(end, 0, ...upserts);
+    else out.splice(placeholder, 1, ...upserts);
+  }
 }
 
 type ChainEntry = { keyLine: number; itemLines: number[]; indent: number };
@@ -249,20 +298,50 @@ type ChainEntry = { keyLine: number; itemLines: number[]; indent: number };
 /** One disjoint edit on the ORIGINAL line array; applied bottom-up so positions stay valid. */
 type LineEdit = { start: number; deleteCount: number; insert: string[] };
 
-/** Index of the `fallbackChains:` line (indent 2) under the top-level retry: block; -1 when absent. */
-function findFallbackChains(lines: string[], retryIdx: number): number {
+/** A managed key's line plus the line carrying an empty-collection placeholder; -1 for the latter when the body is a real block. */
+type KeyBody = { keyLine: number; emptyLine: number };
+
+/**
+ * The `fallbackChains:` line (indent 2) under the top-level retry: block and the
+ * line carrying its empty-collection placeholder when it holds no chain keys —
+ * `keyLine` is -1 when the key is absent. An inline flow-style value on the key
+ * line stays a structural surprise (the plugin writes the block form); a null
+ * scalar reads as an empty mapping.
+ */
+function findFallbackChains(lines: string[], retryIdx: number): KeyBody {
   const retryEnd = blockEnd(lines, retryIdx);
-  let fcIdx = -1;
+  let keyLine = -1;
   for (let i = retryIdx + 1; i < retryEnd; i++) {
     const parsed = parseMapLine(lines[i]);
-    if (parsed && parsed.key === "fallbackChains") {
-      if (parsed.indent !== 2) throw new ConfigEditError(`fallbackChains: expected 2-space indent under retry:, got ${parsed.indent}`);
-      if (parsed.value.replace(/\s+#.*$/, "").trim().length > 0) throw new ConfigEditError("fallbackChains: inline value is not supported (block mapping expected)");
-      if (fcIdx !== -1) throw new ConfigEditError("duplicate fallbackChains: block under retry:");
-      fcIdx = i;
-    }
+    if (!parsed || parsed.key !== "fallbackChains") continue;
+    if (parsed.indent !== 2) throw new ConfigEditError(`fallbackChains: expected 2-space indent under retry:, got ${parsed.indent}`);
+    if (keyLine !== -1) throw new ConfigEditError("duplicate fallbackChains: block under retry:");
+    keyLine = i;
   }
-  return fcIdx;
+  if (keyLine === -1) return { keyLine: -1, emptyLine: -1 };
+  const inline = valueText(parseMapLine(lines[keyLine])!.value);
+  if (inline.length > 0) {
+    if (!isNullToken(inline)) throw new ConfigEditError("fallbackChains: inline value is not supported (block mapping expected)");
+    return { keyLine, emptyLine: keyLine };
+  }
+  return { keyLine, emptyLine: emptyFlowLine(lines, keyLine, "{}") };
+}
+
+/**
+ * Index of the line holding an empty flow collection (`[]`/`{}`) as the first
+ * content line of `keyLine`'s body — the spelling a YAML serializer emits for an
+ * empty collection — or -1 when the body starts with a real entry (or is empty).
+ */
+function emptyFlowLine(lines: string[], keyLine: number, flow: "[]" | "{}"): number {
+  const end = blockEnd(lines, keyLine);
+  const keyIndent = indentOf(lines[keyLine]);
+  for (let i = keyLine + 1; i < end; i++) {
+    const line = lines[i];
+    if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
+    if (indentOf(line) <= keyIndent) return -1;
+    return isEmptyFlow(line, flow) ? i : -1;
+  }
+  return -1;
 }
 
 /**
@@ -276,6 +355,7 @@ function chainEntries(lines: string[], fcIdx: number, fcEnd: number): Record<str
   for (let i = fcIdx + 1; i < fcEnd; i++) {
     const line = lines[i];
     if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
+    if (current === null && isEmptyFlow(line, "{}")) continue; // serializer-emitted empty-mapping placeholder, not content
     const parsed = parseMapLine(line);
     if (parsed && parsed.indent > 2) {
       if (parsed.indent % 2 !== 0) throw new ConfigEditError(`odd indent (${parsed.indent}) in fallbackChains block`);
@@ -310,13 +390,13 @@ function patchFallbackChains(out: string[], chainUpserts: Record<string, string[
     return;
   }
 
-  let fcIdx = findFallbackChains(out, retryIdx);
-  if (fcIdx === -1) {
+  let fc = findFallbackChains(out, retryIdx);
+  if (fc.keyLine === -1) {
     out.splice(retryIdx + 1, 0, "  fallbackChains:");
-    fcIdx = retryIdx + 1;
+    fc = { keyLine: retryIdx + 1, emptyLine: -1 };
   }
-  const fcEnd = blockEnd(out, fcIdx);
-  const entries = chainEntries(out, fcIdx, fcEnd);
+  const fcEnd = blockEnd(out, fc.keyLine);
+  const entries = chainEntries(out, fc.keyLine, fcEnd);
 
   // Collect disjoint edits on original coordinates: prunes delete; upserts replace an
   // existing key's item run (or delete the key when the new chain is empty); new keys
@@ -353,7 +433,15 @@ function patchFallbackChains(out: string[], chainUpserts: Record<string, string[
       block.push(`${" ".repeat(siblingIndent)}${key}:`);
       for (const v of values) block.push(`${" ".repeat(siblingIndent + 2)}- ${quote(v)}`);
     }
-    edits.push({ start: fcEnd, deleteCount: 0, insert: block });
+    if (fc.emptyLine === -1) {
+      edits.push({ start: fcEnd, deleteCount: 0, insert: block });
+    } else if (fc.emptyLine === fc.keyLine) {
+      // An inline empty value becomes the block header; the chain keys follow it.
+      edits.push({ start: fc.emptyLine, deleteCount: 1, insert: [keyHead(out[fc.emptyLine]), ...block] });
+    } else {
+      // The serializer's `{}` placeholder line becomes the first chain key.
+      edits.push({ start: fc.emptyLine, deleteCount: 1, insert: block });
+    }
   }
 
   for (const edit of edits.sort((a, b) => b.start - a.start)) {
@@ -361,33 +449,44 @@ function patchFallbackChains(out: string[], chainUpserts: Record<string, string[
   }
 }
 
-/** Index of the `disabledAgents:` line (indent 2) under the top-level task: block; -1 when absent. */
-function findDisabledAgents(lines: string[], taskIdx: number): number {
+/** The `task.disabledAgents` key line, its `- name` item lines, and its empty-collection placeholder line; -1s when absent. */
+type DisabledAgentsBody = { keyLine: number; itemLines: number[]; emptyLine: number };
+
+/**
+ * The `task.disabledAgents:` line (indent 2) under the top-level task: block, its
+ * `- name` item lines in document order, and the line carrying its
+ * empty-collection placeholder when it holds no names — `keyLine` is -1 when the
+ * key is absent. An inline flow-style value on the key line stays a structural
+ * surprise (the plugin writes the block form); a null scalar reads as an empty
+ * sequence. Every other non-comment body line must be an item.
+ */
+function disabledAgentsBody(lines: string[], taskIdx: number): DisabledAgentsBody {
   const taskEnd = blockEnd(lines, taskIdx);
-  let idx = -1;
+  let keyLine = -1;
   for (let i = taskIdx + 1; i < taskEnd; i++) {
     const parsed = parseMapLine(lines[i]);
-    if (parsed && parsed.key === "disabledAgents") {
-      if (parsed.indent !== 2) throw new ConfigEditError(`disabledAgents: expected 2-space indent under task:, got ${parsed.indent}`);
-      if (parsed.value.replace(/\s+#.*$/, "").trim().length > 0) throw new ConfigEditError("disabledAgents: inline value is not supported (block sequence expected)");
-      if (idx !== -1) throw new ConfigEditError("duplicate disabledAgents: block under task:");
-      idx = i;
-    }
+    if (!parsed || parsed.key !== "disabledAgents") continue;
+    if (parsed.indent !== 2) throw new ConfigEditError(`disabledAgents: expected 2-space indent under task:, got ${parsed.indent}`);
+    if (keyLine !== -1) throw new ConfigEditError("duplicate disabledAgents: block under task:");
+    keyLine = i;
   }
-  return idx;
-}
-
-/** Line indexes of the `- item` entries under a sequence key, in document order. */
-function sequenceItemLines(lines: string[], keyIdx: number): number[] {
-  const items: number[] = [];
-  for (let i = keyIdx + 1; i < lines.length; i++) {
+  if (keyLine === -1) return { keyLine: -1, itemLines: [], emptyLine: -1 };
+  const inline = valueText(parseMapLine(lines[keyLine])!.value);
+  if (inline.length > 0) {
+    if (!isNullToken(inline)) throw new ConfigEditError("disabledAgents: inline value is not supported (block sequence expected)");
+    return { keyLine, itemLines: [], emptyLine: keyLine };
+  }
+  const itemLines: number[] = [];
+  let emptyLine = -1;
+  for (let i = keyLine + 1; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
     if (indentOf(line) <= 2) break;
-    if (line.trim().startsWith("- ")) items.push(i);
+    if (line.trim().startsWith("- ")) itemLines.push(i);
+    else if (itemLines.length === 0 && emptyLine === -1 && isEmptyFlow(line, "[]")) emptyLine = i;
     else throw new ConfigEditError(`unexpected line in disabledAgents sequence: ${JSON.stringify(line)}`);
   }
-  return items;
+  return { keyLine, itemLines, emptyLine };
 }
 
 /**
@@ -405,18 +504,17 @@ function patchDisabledAgents(out: string[], adds: string[], removes: string[]): 
     out.splice(at, 0, ...block);
     return;
   }
-  const daIdx = findDisabledAgents(out, taskIdx);
-  if (daIdx === -1) {
+  const body = disabledAgentsBody(out, taskIdx);
+  if (body.keyLine === -1) {
     if (adds.length === 0) return;
     out.splice(taskIdx + 1, 0, "  disabledAgents:", ...adds.map((name) => `    - ${quote(name)}`));
     return;
   }
-  const itemLines = sequenceItemLines(out, daIdx);
   const removeSet: Record<string, true> = {};
   for (const name of removes) removeSet[name] = true;
   const present: Record<string, true> = {};
   const removeLines: number[] = [];
-  for (const i of itemLines) {
+  for (const i of body.itemLines) {
     const value = scalarValue(out[i].trim().replace(/^-\s+/, ""));
     if (value === null) continue;
     present[value] = true;
@@ -424,12 +522,21 @@ function patchDisabledAgents(out: string[], adds: string[], removes: string[]): 
   }
   const toAdd = adds.filter((name) => !(name in present));
   if (removeLines.length === 0 && toAdd.length === 0) return;
+  const items = (indent: number) => toAdd.map((name) => `${" ".repeat(indent)}- ${quote(name)}`);
   const edits: LineEdit[] = [];
   for (const i of removeLines) edits.push({ start: i, deleteCount: 1, insert: [] });
   if (toAdd.length > 0) {
-    const itemIndent = itemLines.length > 0 ? indentOf(out[itemLines[0]]) : 4;
-    const insertAt = itemLines.length > 0 ? itemLines[itemLines.length - 1] + 1 : daIdx + 1;
-    edits.push({ start: insertAt, deleteCount: 0, insert: toAdd.map((name) => `${" ".repeat(itemIndent)}- ${quote(name)}`) });
+    if (body.emptyLine === body.keyLine) {
+      // An inline empty value becomes the block header; the names follow it.
+      edits.push({ start: body.emptyLine, deleteCount: 1, insert: [keyHead(out[body.emptyLine]), ...items(4)] });
+    } else if (body.emptyLine !== -1) {
+      // The serializer's `[]` placeholder line becomes the item run, at its own indent.
+      edits.push({ start: body.emptyLine, deleteCount: 1, insert: items(indentOf(out[body.emptyLine])) });
+    } else {
+      const itemIndent = body.itemLines.length > 0 ? indentOf(out[body.itemLines[0]]) : 4;
+      const insertAt = body.itemLines.length > 0 ? body.itemLines[body.itemLines.length - 1] + 1 : body.keyLine + 1;
+      edits.push({ start: insertAt, deleteCount: 0, insert: items(itemIndent) });
+    }
   }
   for (const edit of edits.sort((a, b) => b.start - a.start)) {
     out.splice(edit.start, edit.deleteCount, ...edit.insert);

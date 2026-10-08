@@ -159,14 +159,111 @@ test("disabledAgents: already-correct state is a byte-identical no-op", () => {
   assert.equal(out, config);
 });
 
-test("disabledAgents: inline value is a structural surprise", () => {
-  assert.throws(
-    () => patchConfig("task:\n  disabledAgents: []\n", {
-      roleSelectors: {}, roleRemovals: {}, chainUpserts: {}, chainPrunes: [],
-      agentDisableAdds: ["designer"],
-    }),
-    ConfigEditError,
-  );
+// The empty-collection spellings a YAML serializer emits for an empty managed
+// collection (Bun's `YAML.stringify`, which omp's own config writer uses):
+// a null scalar on the key line, or a flow collection on its own indented line.
+// Reported as issue #54: `task.disabledAgents: null` refused the whole run.
+const SERIALIZER_EMPTY = `modelRoles:
+  {}
+task:
+  disabledAgents:
+    []
+retry:
+  fallbackChains:
+    {}
+tail: true
+`;
+
+test("issue #54: a hand-written `disabledAgents: null` patches instead of refusing", () => {
+  const config = `modelRoles:
+  default: "openrouter/org/model-a:auto"
+task:
+  disabledAgents: null
+  isolation:
+    enabled: true
+  enableLsp: true
+retry:
+  fallbackChains:
+    openrouter/org/model-a:
+      - "openrouter/org/model-b"
+`;
+  assert.deepEqual(parseConfig(config).disabledAgents, []);
+  const out = patchConfig(config, {
+    roleSelectors: { default: "openrouter/org/model-a:auto" },
+    roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+    agentDisableAdds: ["designer"],
+  });
+  const doc = parseYaml(out) as { task: { disabledAgents: string[]; isolation: { enabled: boolean }; enableLsp: boolean } };
+  assert.deepEqual(doc.task.disabledAgents, ["designer"]);
+  assert.equal(doc.task.isolation.enabled, true);
+  assert.equal(doc.task.enableLsp, true);
+  assert.ok(out.includes("openrouter/org/model-b"));
+  assert.ok(!out.includes("null"));
+});
+
+test("disabledAgents: a null scalar with nothing to add is a byte-identical no-op", () => {
+  const config = "task:\n  disabledAgents: ~\n";
+  assert.deepEqual(parseConfig(config).disabledAgents, []);
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+    agentDisableRemoves: ["designer"],
+  });
+  assert.equal(out, config);
+});
+
+test("disabledAgents: the serializer's indented [] placeholder takes the added names", () => {
+  const config = "task:\n  disabledAgents:\n    []\ntail: true\n";
+  assert.deepEqual(parseConfig(config).disabledAgents, []);
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+    agentDisableAdds: ["designer"],
+  });
+  const doc = parseYaml(out) as { task: { disabledAgents: string[] } };
+  assert.deepEqual(doc.task.disabledAgents, ["designer"]);
+  assert.ok(out.includes("tail: true"));
+  assert.ok(!out.includes("[]"));
+});
+
+test("fallbackChains: the serializer's {} placeholder takes the first chain", () => {
+  const config = "retry:\n  fallbackChains:\n    {}\ntail: true\n";
+  assert.deepEqual(parseConfig(config).chainKeys, []);
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [],
+    chainUpserts: { "openrouter/org/a": ["openrouter/org/b"] },
+    chainPrunes: [],
+  });
+  const doc = parseYaml(out) as { retry: { fallbackChains: Record<string, string[]> } };
+  assert.deepEqual(doc.retry.fallbackChains, { "openrouter/org/a": ["openrouter/org/b"] });
+  assert.deepEqual(parseConfig(out).chainKeys, ["openrouter/org/a"]);
+  assert.ok(out.includes("tail: true"));
+});
+
+test("modelRoles: the serializer's {} placeholder takes the first role", () => {
+  const config = "modelRoles:\n  {}\ntail: true\n";
+  assert.deepEqual(parseConfig(config).modelRoles, {});
+  const out = patchConfig(config, {
+    roleSelectors: { default: "openrouter/org/a" },
+    roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+  });
+  const doc = parseYaml(out) as { modelRoles: Record<string, string> };
+  assert.deepEqual(doc.modelRoles, { default: "openrouter/org/a" });
+  assert.ok(out.includes("tail: true"));
+});
+
+test("the serializer's empty spellings read as empty through parseConfig", () => {
+  assert.deepEqual(parseConfig(SERIALIZER_EMPTY), { modelRoles: {}, chainKeys: [], disabledAgents: [] });
+});
+
+test("disabledAgents: inline flow-style values stay a structural surprise", () => {
+  for (const value of ["[]", '["designer"]']) {
+    assert.throws(
+      () => patchConfig(`task:\n  disabledAgents: ${value}\n`, {
+        roleSelectors: {}, roleRemovals: {}, chainUpserts: {}, chainPrunes: [],
+        agentDisableAdds: ["designer"],
+      }),
+      ConfigEditError,
+    );
+  }
 });
 
 test("missing retry block is created at the end (house style: keys 4, items 6)", () => {
@@ -243,7 +340,7 @@ tail: true
     chainUpserts: { "openrouter/owner/key": ["openrouter/c"], "openrouter/new/key": ["openrouter/d"] },
     chainPrunes: [],
   });
-  for (const text of [COMMENTED_CONFIG, REAL_SHAPED, patched]) {
+  for (const text of [COMMENTED_CONFIG, REAL_SHAPED, SERIALIZER_EMPTY, patched]) {
     const doc = parseYaml(text) as {
       modelRoles?: Record<string, unknown>;
       retry?: { fallbackChains?: Record<string, unknown> };

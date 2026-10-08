@@ -30,6 +30,20 @@ bullets) and are not re-derived on read.
   or suppressed is `llm-role-error-reports.json` under the agent dir. The ranking
   numbers are unchanged — reporting is a side channel, not a ranking input.
 
+- Empty-collection spellings accepted (2026-10-08, issue #54): a config whose
+  `task.disabledAgents` is spelled `null` — or whose `retry.fallbackChains` /
+  `modelRoles` body is the serializer's own indented `{}` / `[]` line — used to
+  throw inside `parseConfig`, so **every session start aborted with `config edit
+  refused: disabledAgents: inline value is not supported (block sequence
+  expected)` and no role was ever refreshed**. omp re-serializes `config.yml`
+  through Bun's `YAML.stringify` (`stringifyYamlConfig`), which spells an empty
+  collection exactly that way, so those spellings now read as the empty
+  collection and the patch path rewrites the placeholder line into the block
+  form (`disabledAgents:` + `- "designer"`); any other inline value on a managed
+  key line still throws. Verified against a copy of the real
+  `~/.omp/agent/config.yml` (which carries `disabledAgents: null`): the run wrote
+  and reported 8 decisions instead of aborting. Ranking numbers unchanged.
+
 - Capability presets (2026-10-07, issue #40): one opt-in flag per capability
   (`features.<id>` global, `roles.<role>.features.<id>` per role) applies the
   plugin's recommended settings to a role; every flag ships **off** and no

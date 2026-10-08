@@ -397,6 +397,18 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **A config whose empty managed collection is spelled the way omp writes it no
+  longer refuses the whole run** — `parseConfig` read `task.disabledAgents: null`
+  (and a serializer's indented `[]` / `{}` line under `modelRoles` or
+  `retry.fallbackChains`) as a structural surprise, so `patchConfig` aborted with
+  `config edit refused: disabledAgents: inline value is not supported (block
+  sequence expected)` and **no role was ever refreshed** — on every session
+  start, for a config that is valid YAML and means "no disabled agents". omp
+  re-serializes `config.yml` through Bun's `YAML.stringify`, which spells an empty
+  collection exactly that way, so those spellings now read as the empty
+  collection and the patch path rewrites the placeholder line into the block form
+  (`disabledAgents:` + `- "designer"`). Any other inline value on a managed key
+  line (`disabledAgents: ["x"]`) still throws. (issue #54)
 - **The prefilled-URL path no longer loses a report when the 8 KB truncation
   would split a surrogate pair** — the URL body was cut on UTF-16 code units, so
   a non-BMP character (an emoji in a stack) straddling the cut left a lone

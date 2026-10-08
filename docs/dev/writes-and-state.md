@@ -39,7 +39,17 @@ Rules the algorithm enforces:
   documents; `findTopLevel` rejects inline values, indented-only blocks and
   duplicates; `chainEntries` rejects odd indents, duplicate chain keys and
   unexpected lines. Any surprise throws `ConfigEditError` and the caller aborts
-  without writing.
+  without writing. **Exception — an empty managed collection is not a
+  surprise.** omp re-serializes `config.yml` through its own writer (Bun's
+  `YAML.stringify` via `stringifyYamlConfig`), which spells an empty collection
+  either as a null token on the key line (`task.disabledAgents: null`) or as a
+  flow collection on its own indented line (`fallbackChains:` then `    {}`,
+  `task.disabledAgents:` then `    []`). Both read as the empty collection, and
+  the patch path rewrites that placeholder line into the block form
+  (`disabledAgents:` + `- "designer"`) instead of refusing the run — a user's
+  `disabledAgents: null` used to abort every session start with `config edit
+  refused` (issue #54). Any *other* inline value on a managed key line
+  (`disabledAgents: ["x"]`) still throws.
 - **Read-back self-check.** After patching, `patchConfig` re-reads the patched
   text through the same line-oriented reader and asserts it equals the intended
   state (every upserted role, every removal, the exact chain-key set, every
