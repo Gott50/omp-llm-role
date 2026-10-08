@@ -16,6 +16,7 @@ After your work is done — every time, no exceptions:
    | the explorer surface (server, explain layer, SPA) | `docs/dev/explorer.md` |
    | the dated numbers (matched/priced/eligible counts, per-role leaders) | `docs/dev/current-state.md` |
    | a release (version bump, npm/git/marketplace channels) | `docs/dev/releasing.md` |
+   | the CI workflow, the release script, or the tag→publish contract | `docs/dev/ci.md` |
    | the agent `.md` contract (frontmatter, routing, read-only rules) | `docs/dev/agent-authoring.md` |
    | the test suite or a verification scenario | `docs/dev/testing.md` |
    | a debugging-only oddity (a quirk, not a contract) | `docs/dev/quirks.md` |

@@ -27,6 +27,7 @@ regenerated on every run) and runs the test suite (`node --test tests/`).
 | the explorer surface (server, explain layer, SPA) | [explorer.md](explorer.md) |
 | the dated numbers (matched/priced/eligible counts, per-role leaders) | [current-state.md](current-state.md) |
 | a release (version bump, SemVer, CHANGELOG rules, npm/git/marketplace channels) | [releasing.md](releasing.md) |
+| the CI workflow, the release script, or the tag→publish contract | [ci.md](ci.md) |
 | the agent `.md` contract (frontmatter, routing, read-only rules) | [agent-authoring.md](agent-authoring.md) |
 | the test suite or a verification scenario | [testing.md](testing.md) |
 | a debugging-only oddity (a quirk, not a contract) | [quirks.md](quirks.md) |
@@ -57,6 +58,10 @@ regenerated on every run) and runs the test suite (`node --test tests/`).
   `package.json` release switch, the SemVer surface), how to cut a release,
   the CHANGELOG entry rules, the npm/git/marketplace channels, the tarball
   `files` whitelist, and the install-route verification.
+- **[ci.md](ci.md)** — the GitHub Actions pipeline: the `test`/`release` jobs
+  and their triggers, the tag→publish contract, the one-time trusted-publisher
+  registration, the `scripts/release.ts` subcommands and refusals, and how to
+  verify the pipeline.
 - **[agent-authoring.md](agent-authoring.md)** — the agent `.md` contract:
   frontmatter (`model: "@<role>, @default"`, `tools:`), the routing
   description, read-only classification, and where agents are discovered.

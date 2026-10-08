@@ -8,6 +8,18 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **Releases are cut by `scripts/release.ts` and delivered by the tag push** —
+  `due` says whether `## [Unreleased]` owes a release, `notes <tag>` verifies a
+  tag against the tree and prints its CHANGELOG section, and
+  `cut <patch|minor|major>` bumps the four lockstep version fields, cuts the
+  CHANGELOG, regenerates the rankings report, commits, pushes and tags in one
+  step (with `--dry-run`). A `v*` tag push now publishes to npm over GitHub OIDC
+  trusted publishing — no long-lived token — and creates the GitHub Release from
+  the CHANGELOG section, and every pull request and `main` push runs the suite on
+  GitHub with the same command the pre-commit hook runs. (issue #56)
+
 ## [1.1.0] - 2026-10-08
 
 ### Added

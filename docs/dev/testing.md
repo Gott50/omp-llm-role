@@ -166,6 +166,17 @@ passing.
     aborts under one label differ; the in-process guard; and a ledger that
     tolerates junk and truncates a pathological stack — including a multi-byte
     one — to the 64 KB **byte** budget.
+29. **CI/CD** (`ci.test.ts`) — the workflow parses and declares both jobs with
+    `release` needing `test`; the `test` job's command is identical to the
+    pre-commit hook's; the tag trigger covers every CHANGELOG tag link and the
+    package version; `.node-version` is the file the workflow reads; the release
+    job declares `id-token: write` and references no npm token; the four
+    lockstep version fields agree; no tracked file lives under `cache/`; and
+    `scripts/release.ts` against fixture repos — `due`'s exit codes, `notes`'s
+    five refusals and its exact section body, `cut --dry-run` writing nothing,
+    and `cut` bumping the four fields, cutting the changelog, committing and
+    tagging while refusing a dirty tree, an existing tag, an empty
+    `## [Unreleased]` and a HEAD that is not `origin/main`.
 
 ## Live checks
 
@@ -186,3 +197,10 @@ passing.
   derived metadata.
 - **Agent removal** — `/remove-agent --name <n>` in a session deletes both
   artifacts and the updater pass removes the config entries.
+- **CI/CD** — push a branch and open a PR (or push to `main`) and `gh run watch`
+  the `test` job green; push a tag that disagrees with the package version and
+  confirm the `release` job fails in the `notes` guard *before* any publish;
+  run the release job against an already-cut tag
+  (`gh workflow run ci.yml --ref v<version>`) and confirm npm's `gitHead` equals
+  the tag commit, `dist-tags.latest` moved, and the GitHub Release body is that
+  version's CHANGELOG section. See [`ci.md`](ci.md).

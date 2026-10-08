@@ -38,19 +38,21 @@ flags, the shipped roles/agents, and the three install channels.
 
 ## How to cut a release
 
-1. Pick the number from the `## [Unreleased]` scope (above).
-2. Bump `version` in `package.json` **and** `plugins[0].version` in
-   `.omp-plugin/marketplace.json` in the same commit — lockstep, never one
-   without the other.
-3. In `CHANGELOG.md`: rename `## [Unreleased]` to `## [<version>] - <YYYY-MM-DD>`,
-   add a fresh empty `## [Unreleased]` above it, and update the link refs at the
-   bottom (`[Unreleased]` → `compare/v<version>...HEAD`; add
-   `[<version>]: …/releases/tag/v<version>`).
-4. Regenerate the committed report:
-   `node src/cli/llm-role-rank.ts --all --out docs/llm-role-rankings.md`.
-5. Commit the bump + changelog + report together, push, `npm publish`, then tag
-   `v<version>` at the published commit (npm's `gitHead`) so pinned git refs
-   resolve. Verify the channels per "Install-route verification".
+The cut is one command, `scripts/release.ts` — its subcommands, the lockstep
+set, the refusals and the tag→publish contract are in [`ci.md`](ci.md). The
+policy above decides the number; the script applies it:
+
+```sh
+node scripts/release.ts due                 # is a release owed? (exit 1 = no)
+node scripts/release.ts cut minor --dry-run # review the target version + changelog diff
+node scripts/release.ts cut minor           # bump, cut, commit, push, tag
+```
+
+`cut` bumps the four lockstep version fields, renames `## [Unreleased]` and
+inserts a fresh one, rewrites the footer link refs, regenerates the committed
+report, commits, pushes `main` and pushes the tag. The tag push publishes to npm
+over OIDC and creates the GitHub Release — there is no local `npm publish` step
+and no token. Verify the channels per "Install-route verification".
 
 ## Channels
 
@@ -82,8 +84,8 @@ src, web, agents, skills,
 docs/dev, docs/llm-role-rankings.md
 ```
 
-Caches, tests and `.githooks` stay out. Gate: `node --test tests/` (also run by
-the pre-commit hook — see `docs/dev/README.md`).
+Caches, tests and `.githooks` stay out. Gate: `node --test tests/` (the
+pre-commit hook and CI both run it — see [`ci.md`](ci.md)).
 
 ## Changelog rules
 

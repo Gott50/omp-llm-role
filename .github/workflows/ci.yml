@@ -1,0 +1,65 @@
+name: CI
+
+# One workflow, two jobs: `test` is the gate (the same command the local
+# pre-commit hook runs), `release` publishes a tag to npm over OIDC and creates
+# the GitHub Release. The npm trusted-publisher registration names this file, so
+# a second workflow file would need a second registration. See docs/dev/ci.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/
+
+  release:
+    name: release
+    needs: test
+    # Keyed on the ref, not the event, so `workflow_dispatch` can re-run this
+    # job against an existing tag (the recovery path for a failed publish).
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      # The guard runs before anything is published: tag ↔ package version ↔
+      # lockstep ↔ CHANGELOG section. It also writes the release notes.
+      - name: Verify the tag and write the release notes
+        run: node scripts/release.ts notes "$GITHUB_REF_NAME" > release-notes.md
+      - name: Ensure npm >= 11.5.1 (trusted-publishing floor)
+        run: npm install --global npm@11
+      - name: Publish to npm (OIDC trusted publishing)
+        run: npm publish
+      - name: Create the GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
