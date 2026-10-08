@@ -236,6 +236,11 @@ export type ResolvedSettings = {
   fallbackChainDepth: number;
   roles: Record<string, RoleDef>;
   activateDefaultOnEmptySession: boolean;
+  /** Opt-in reporting of unexpected plugin errors as GitHub issues on the
+   *  plugin's own tracker: `off` (default) never files, `ask` shows the exact
+   *  payload and files on confirmation (degrading to a prefilled URL when the
+   *  session has no UI), `auto` files without asking. */
+  errorReporting: "off" | "ask" | "auto";
   /** Global capability flags (`features.<id>`); a role's `features.<id>` overrides
    * the global in either direction. Expanded per role by `resolveSettings`. */
   features: Record<string, boolean>;
@@ -248,6 +253,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   fallbackChainDepth: 2,
   roles: DEFAULT_ROLES,
   activateDefaultOnEmptySession: true,
+  errorReporting: "off",
   features: {},
 };
 
@@ -299,6 +305,12 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       type: "boolean",
       description: "Reapply the new default selector to an empty session's active model",
       default: DEFAULT_SETTINGS.activateDefaultOnEmptySession,
+    },
+    errorReporting: {
+      type: "enum",
+      description: "File unexpected plugin errors as GitHub issues (off, ask, auto)",
+      default: DEFAULT_SETTINGS.errorReporting,
+      values: ["off", "ask", "auto"],
     },
   };
   for (const row of FEATURES) {
@@ -550,6 +562,9 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
     errors.push(
       `${ACTIVATE_DEFAULT_KEY}: must be a boolean, got ${JSON.stringify(merged.activateDefaultOnEmptySession)}`,
     );
+  }
+  if (merged.errorReporting !== "off" && merged.errorReporting !== "ask" && merged.errorReporting !== "auto") {
+    errors.push(`errorReporting: must be one of off, ask, auto, got ${JSON.stringify(merged.errorReporting)}`);
   }
 
   // Global capability flags (`features.<id>`): an unknown id or a non-boolean

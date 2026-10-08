@@ -198,6 +198,19 @@ test("expandFeatures never mutates its input and strips features", () => {
   assert.equal(out.cacheHitRate, 0.5);
 });
 
+test("errorReporting defaults to off and accepts only off/ask/auto", () => {
+  assert.equal(DEFAULT_SETTINGS.errorReporting, "off");
+  assert.equal(resolveSettings({}).settings.errorReporting, "off");
+  for (const value of ["off", "ask", "auto"]) {
+    const { settings, errors } = resolveSettings({ errorReporting: value });
+    assert.deepEqual(errors, []);
+    assert.equal(settings.errorReporting, value);
+  }
+  const { errors } = resolveSettings({ errorReporting: "sometimes" });
+  assert.equal(errors.length, 1);
+  assert.ok(errors[0].startsWith("errorReporting:"), `got ${errors[0]}`);
+});
+
 test("feature bundles are pairwise leaf-disjoint", () => {
   const leaves = (rec: (typeof FEATURES)[number]["recommended"]): string[] => {
     const out: string[] = [];

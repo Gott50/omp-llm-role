@@ -68,6 +68,16 @@
         "description": "Reapply the new default selector to an empty session's active model",
         "default": true
       },
+      "errorReporting": {
+        "type": "enum",
+        "description": "File unexpected plugin errors as GitHub issues (off, ask, auto)",
+        "default": "off",
+        "values": [
+          "off",
+          "ask",
+          "auto"
+        ]
+      },
       "features.endpointCeilings": {
         "type": "boolean",
         "description": "Drop routes that cannot call tools and routes whose output ceiling is below 16 384 tokens",
