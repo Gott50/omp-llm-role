@@ -116,6 +116,13 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 
 ## Status
 
+- **CI/CD landed 2026-10-08** (`fa7e546`): every pull request and every `main`
+  push runs the suite on GitHub (verified green on PR #57 and on the `main`
+  push), and a `v*` tag push publishes to npm over OIDC and creates the GitHub
+  Release. The guard was verified with a negative control — tag `v0.0.1`
+  against version `1.1.0` failed in `notes` before any publish. The first real
+  CD run still needs the one-time trusted-publisher registration and a route
+  for the legacy `v1.1.0` tag; see [`ci.md`](ci.md).
 - **1.1.0 cut 2026-10-08** (`c013918`, tagged `v1.1.0`). `package.json` and
   `.omp-plugin/marketplace.json` bumped in lockstep (plus `package-lock.json`
   via `npm install --package-lock-only` — the repo keeps it in lockstep, see
@@ -148,11 +155,12 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   2026-07-31 GAT restriction, which covers account/org/package-management
   actions and not `whoami`, and not direct publish either (that loss is
   targeted January 2027). `npm ping` and `npm owner ls` still succeed because
-  they are unauthenticated reads. Fix: `npm login` (or a fresh granular token
-  in `~/.npmrc`), then publish **from the tag** so npm's `gitHead` matches it —
-  `git checkout v1.1.0 && npm publish && git checkout main`. The tag was cut
-  before the publish (the documented order is publish-then-tag) precisely so
-  the pinned git ref and the changelog link resolve meanwhile.
+  they are unauthenticated reads. Fix: the release workflow — OIDC trusted
+  publishing, no token — once the trusted publisher is registered (see
+  [`ci.md`](ci.md)). The tag was cut before the publish (the documented order is
+  publish-then-tag) precisely so the pinned git ref and the changelog link
+  resolve meanwhile; that also means the tag's commit predates the workflow
+  file, so the workflow cannot be dispatched against it.
 - **1.0.0 on all three channels** (2026-10-03): `omp-llm-role@1.0.0` on npm
   (`dist-tags.latest` = `1.0.0`), tagged `v1.0.0` at `fe98b76` (npm's
   `gitHead`); all three routes verified end-to-end against the real URLs
@@ -163,5 +171,5 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   version ("Temporary package placeholder for staged publishing", 334 B,
   published 2026-10-03). It is not from this tree; `latest` still points at
   `1.0.0`, so it does not affect installs.
-- **Next release: none owed.** `## [Unreleased]` is empty; the number comes
-  from the Unreleased scope, not from the open issues.
+- **Next release: one owed.** `## [Unreleased]` carries the CI/CD entry; the
+  number comes from the Unreleased scope, not from the open issues.

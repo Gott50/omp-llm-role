@@ -141,6 +141,11 @@ exit 1, so the command is safe to run unattended.
   is that version's CHANGELOG section. This is also the recovery path for a
   failed publish: the tag exists, so no new version is needed.
 
+  The dispatch resolves the workflow **from the ref**, so the tag's commit must
+  contain `.github/workflows/ci.yml`. A tag cut before this workflow existed
+  cannot be dispatched (`HTTP 422: Workflow does not have 'workflow_dispatch'
+  trigger`) — the recovery path only works for tags cut after it landed.
+
 `tests/ci.test.ts` asserts the offline half: the workflow's structure (jobs,
 triggers, permissions, the command it runs), the hook/workflow command parity,
 the tag-trigger ↔ CHANGELOG-link agreement, the lockstep fields, and the
