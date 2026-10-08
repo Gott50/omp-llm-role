@@ -3,7 +3,7 @@ Value ranking per role: each metric is cardinal-normalized with fixed anchors
 (no ranks): llm-stats index_* affine (v+20)/80 (interval scale, observed −16..+60),
 benchmarks chance-anchored pass rates, throughput log-anchored 10..300 tok/s.
 q = Σ weight × metric over the quality metrics (weights renormalized excluding
-price); value = q − λ·$/M sorts each role. λ = price-weight share ÷ $20, per-role
+price); value = q − λ·$/M sorts each role. λ = w/(1−w) ÷ $20 (w = price weight), per-role
 override via plugin settings roles.<role>.lambda. Metric columns show weighted
 contributions and sum to q; — = metric missing (contributes 0).
 Roles with a thinking level rank on the thinking-adjusted price: the billed

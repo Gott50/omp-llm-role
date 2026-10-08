@@ -372,6 +372,12 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **The ranking report states the λ formula correctly** — the CLI banner (and the
+  `docs/llm-role-rankings.md` header it generates) read `λ = price-weight share ÷
+  $20`, which is wrong by a factor `1/(1−w_price)`: `roleLambda` derives
+  `w_price/(1−w_price)/P_REF_USD` (`P_REF_USD = 20`, `src/engine.ts:888`), so the
+  `default` role's `w_price` 0.1 gives λ 0.00556, not 0.005. The header now reads
+  `λ = w/(1−w) ÷ $20 (w = price weight)`. Prose-only: no ranking number moves.
 - **The benchmark-scores cache shape guard now covers the payload meta** — a
   `cache/bench-<id>-fetched-data.json` written before the payload-meta fields
   (#34/#35/#37/#38) lacks the `meta` key, and `readScoresCache` accepted it, so
