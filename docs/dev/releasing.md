@@ -114,28 +114,35 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 
 ## Status
 
-- **Released 1.0.0 on all three channels.** Repo public since 2026-10-02;
-  `omp-llm-role@1.0.0` published to npm 2026-10-03
-  (`npm view omp-llm-role version` → `1.0.0`, `dist-tags.latest` = `1.0.0`);
-  `main` is pushed and the git + marketplace URLs resolve. Tagged `v1.0.0` at
-  `fe98b76` (the published commit — npm's `gitHead`), so the changelog link and
-  pinned git refs (`omp plugin install github:Gott50/omp-llm-role#v1.0.0`)
-  resolve.
-- **All three routes verified against the real URLs** (2026-10-03, omp
-  18.4.12, throwaway `HOME`s, cwd outside the real home tree): npm
-  (`omp plugin install omp-llm-role`), git
-  (`omp plugin install github:Gott50/omp-llm-role`) and marketplace
-  (`omp plugin marketplace add Gott50/omp-llm-role` +
-  `omp plugin install omp-llm-role@gott50-plugins`) each installed 1.0.0, and
-  each post-install session run wrote `modelRoles` + `retry.fallbackChains`
-  into that HOME's `config.yml` and landed the three daily caches in the
-  installed copy.
+- **1.1.0 cut 2026-10-08** (`c013918`, tagged `v1.1.0`). `package.json` and
+  `.omp-plugin/marketplace.json` bumped in lockstep, `## [Unreleased]` renamed
+  to `## [1.1.0] - 2026-10-08`, and the report regenerated (407 models, matched
+  155/407, priced 153; `docs/dev/current-state.md` refreshed to the same
+  measurement).
+- **git + marketplace channels live and verified** (2026-10-08, omp 18.4.12,
+  throwaway `HOME`s, cwd outside the real home tree):
+  `omp plugin install github:Gott50/omp-llm-role` installed 1.1.0
+  (`omp plugin doctor`: 4 ok, 0 warnings, 0 errors), and
+  `omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins` installed 1.1.0 into
+  `…/cache/plugins/gott50-plugins___omp-llm-role___1.1.0`.
+- **npm publish pending a valid token.** The `~/.npmrc` token is rejected
+  (`npm whoami` → 401, `npm publish` → 404 on `PUT /omp-llm-role`), so
+  `omp-llm-role@1.1.0` is not on the registry yet and `dist-tags.latest` still
+  points at `1.0.0`. Fix: `npm login` (or a fresh granular token in
+  `~/.npmrc`), then publish **from the tag** so npm's `gitHead` matches it —
+  `git checkout v1.1.0 && npm publish && git checkout main`. The tag was cut
+  before the publish (the documented order is publish-then-tag) precisely so
+  the pinned git ref and the changelog link resolve meanwhile.
+- **1.0.0 on all three channels** (2026-10-03): `omp-llm-role@1.0.0` on npm
+  (`dist-tags.latest` = `1.0.0`), tagged `v1.0.0` at `fe98b76` (npm's
+  `gitHead`); all three routes verified end-to-end against the real URLs
+  (omp 18.4.12, throwaway `HOME`s) — each post-install session run wrote
+  `modelRoles` + `retry.fallbackChains` into that HOME's `config.yml` and
+  landed the three daily caches in the installed copy.
 - **Stray registry placeholder.** The registry also carries a `0.0.0-stage`
   version ("Temporary package placeholder for staged publishing", 334 B,
   published 2026-10-03). It is not from this tree; `latest` still points at
   `1.0.0`, so it does not affect installs.
-- **Next release: `1.1.0`.** `## [Unreleased]` already holds a full feature
-  batch (explorer key-availability marking, the nine-axis discovery gate, the
-  endpoint capability filters, `/project-roles`, the role weight rebalances), so
-  a minor release is owed — see "How to cut a release". Do not bump per commit;
-  the number comes from the Unreleased scope, not from the open issues.
+- **Next release: none owed.** `## [Unreleased]` is empty; the number comes
+  from the Unreleased scope, not from the open issues.
