@@ -115,22 +115,39 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 ## Status
 
 - **1.1.0 cut 2026-10-08** (`c013918`, tagged `v1.1.0`). `package.json` and
-  `.omp-plugin/marketplace.json` bumped in lockstep, `## [Unreleased]` renamed
-  to `## [1.1.0] - 2026-10-08`, and the report regenerated (407 models, matched
-  155/407, priced 153; `docs/dev/current-state.md` refreshed to the same
-  measurement).
+  `.omp-plugin/marketplace.json` bumped in lockstep (plus `package-lock.json`
+  via `npm install --package-lock-only` — the repo keeps it in lockstep, see
+  `8811309`), `## [Unreleased]` renamed to `## [1.1.0] - 2026-10-08`, and the
+  report regenerated (407 models, matched 155/407, priced 153;
+  `docs/dev/current-state.md` refreshed to the same measurement).
 - **git + marketplace channels live and verified** (2026-10-08, omp 18.4.12,
   throwaway `HOME`s, cwd outside the real home tree):
   `omp plugin install github:Gott50/omp-llm-role` installed 1.1.0
   (`omp plugin doctor`: 4 ok, 0 warnings, 0 errors), and
   `omp plugin marketplace add Gott50/omp-llm-role` +
   `omp plugin install omp-llm-role@gott50-plugins` installed 1.1.0 into
-  `…/cache/plugins/gott50-plugins___omp-llm-role___1.1.0`.
+  `…/cache/plugins/gott50-plugins___omp-llm-role___1.1.0`. Both routes then
+  passed the post-install session smoke (`omp -p "say ok"` with
+  `OPENROUTER_API_KEY` from `omp token openrouter`): the installed 1.1.0 wrote
+  `modelRoles` (9 roles), `retry.fallbackChains` and
+  `task.disabledAgents: [designer]` into that HOME's `config.yml`, landed
+  `llm-role-state.json` + `llm-role-history.jsonl`, and the session answered.
+  The npm route has **not** been smoke-tested for 1.1.0 — it is still serving
+  1.0.0.
 - **npm publish pending a valid token.** The `~/.npmrc` token is rejected
-  (`npm whoami` → 401, `npm publish` → 404 on `PUT /omp-llm-role`), so
-  `omp-llm-role@1.1.0` is not on the registry yet and `dist-tags.latest` still
-  points at `1.0.0`. Fix: `npm login` (or a fresh granular token in
-  `~/.npmrc`), then publish **from the tag** so npm's `gitHead` matches it —
+  (`npm whoami` → 401 "your authentication token seems to be invalid",
+  `npm publish` → 404 on `PUT /omp-llm-role`), so `omp-llm-role@1.1.0` is not
+  on the registry yet, `dist-tags.latest` still points at `1.0.0`, and **npm's
+  `gitHead` for 1.1.0 does not exist yet** — the tag currently stands on its
+  own. The token is the only credential source (no repo `.npmrc`, no
+  `/opt/homebrew/etc/npmrc`, no `NPM_TOKEN` in the environment or the shell
+  profiles, no keychain entry) and it is a literal value, not a `${NPM_TOKEN}`
+  indirection, so the cause is a rejected/revoked/expired token — **not** the
+  2026-07-31 GAT restriction, which covers account/org/package-management
+  actions and not `whoami`, and not direct publish either (that loss is
+  targeted January 2027). `npm ping` and `npm owner ls` still succeed because
+  they are unauthenticated reads. Fix: `npm login` (or a fresh granular token
+  in `~/.npmrc`), then publish **from the tag** so npm's `gitHead` matches it —
   `git checkout v1.1.0 && npm publish && git checkout main`. The tag was cut
   before the publish (the documented order is publish-then-tag) precisely so
   the pinned git ref and the changelog link resolve meanwhile.
