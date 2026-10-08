@@ -74,8 +74,10 @@ export type ErrorReportOutcome = {
   reason?: string;
 };
 
-/** The action vocabulary, shared by the outcome and the ledger entry. */
-type ReportAction = ErrorReportOutcome["action"];
+/** The ledger's action vocabulary — what a ledger entry records. Narrower than
+ *  `ErrorReportOutcome["action"]`: `off` and `failed` are outcomes, never
+ *  ledgered. */
+type ReportAction = "created" | "commented" | "offered" | "suppressed";
 
 type Report = {
   fingerprint: string;
@@ -96,7 +98,10 @@ type LedgerEntry = {
   createdDay?: string;
   offeredDay?: string;
   count: number;
-  action: ReportAction;
+  /** Untrusted on read — a hand-edited or corrupt file may hold anything, so
+   *  the read path preserves the raw string; `recordLedger`'s patch is the
+   *  typed write path. */
+  action: string;
   issueNumber?: number;
   issueUrl?: string;
 };
@@ -492,7 +497,7 @@ function readLedger(dir: string): Ledger {
         createdDay: typeof entry.createdDay === "string" ? entry.createdDay : undefined,
         offeredDay: typeof entry.offeredDay === "string" ? entry.offeredDay : undefined,
         count: typeof entry.count === "number" ? entry.count : 0,
-        action: typeof entry.action === "string" ? (entry.action as ReportAction) : "failed",
+        action: typeof entry.action === "string" ? entry.action : "",
         issueNumber: typeof entry.issueNumber === "number" ? entry.issueNumber : undefined,
         issueUrl: typeof entry.issueUrl === "string" ? entry.issueUrl : undefined,
       });
