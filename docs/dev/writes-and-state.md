@@ -49,7 +49,12 @@ Rules the algorithm enforces:
   (`disabledAgents:` + `- "designer"`) instead of refusing the run — a user's
   `disabledAgents: null` used to abort every session start with `config edit
   refused` (issue #54). Any *other* inline value on a managed key line
-  (`disabledAgents: ["x"]`) still throws.
+  (`disabledAgents: ["x"]`) still throws. The rule applies at both levels: a
+  managed key's own placeholder (`task.disabledAgents:` + `    []`) **and** an
+  empty **parent** block (`task:` + `  {}`, `retry:` + `  {}`), where the new
+  child key replaces the `{}` line — inserting *after* it emits YAML no parser
+  accepts, while the read-back self-check still passes, so that corruption was
+  silent. A prune-only patch creates no key at all.
 - **Read-back self-check.** After patching, `patchConfig` re-reads the patched
   text through the same line-oriented reader and asserts it equals the intended
   state (every upserted role, every removal, the exact chain-key set, every

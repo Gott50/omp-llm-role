@@ -250,6 +250,41 @@ test("modelRoles: the serializer's {} placeholder takes the first role", () => {
   assert.ok(out.includes("tail: true"));
 });
 
+// The same empty spellings one level up: an *empty parent block* (`task:` +
+// `  {}`, `retry:` + `  {}`). Inserting a child key after the placeholder line
+// used to emit YAML that no parser accepts (the patch self-check still read it
+// back, so the corruption was silent).
+test("an empty parent block (`task:` + `{}`) takes disabledAgents instead of leaving invalid YAML", () => {
+  const out = patchConfig("modelRoles:\n  default: a\ntask:\n  {}\n", {
+    roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [],
+    agentDisableAdds: ["designer"],
+  });
+  const doc = parseYaml(out) as { task: { disabledAgents: string[] } };
+  assert.deepEqual(doc.task.disabledAgents, ["designer"]);
+  assert.ok(!out.includes("{}"));
+  assert.deepEqual(parseConfig(out).disabledAgents, ["designer"]);
+});
+
+test("an empty parent block (`retry:` + `{}`) takes fallbackChains instead of leaving invalid YAML", () => {
+  const out = patchConfig("modelRoles:\n  default: a\nretry:\n  {}\n", {
+    roleSelectors: {}, roleRemovals: [],
+    chainUpserts: { "openrouter/org/a": ["openrouter/org/b"] },
+    chainPrunes: [],
+  });
+  const doc = parseYaml(out) as { retry: { fallbackChains: Record<string, string[]> } };
+  assert.deepEqual(doc.retry.fallbackChains, { "openrouter/org/a": ["openrouter/org/b"] });
+  assert.ok(!out.includes("{}"));
+  assert.deepEqual(parseConfig(out).chainKeys, ["openrouter/org/a"]);
+});
+
+test("a prune-only patch does not create fallbackChains inside an empty retry block", () => {
+  const config = "modelRoles:\n  default: a\nretry:\n  {}\n";
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: ["openrouter/org/a"],
+  });
+  assert.equal(out, config);
+});
+
 test("the serializer's empty spellings read as empty through parseConfig", () => {
   assert.deepEqual(parseConfig(SERIALIZER_EMPTY), { modelRoles: {}, chainKeys: [], disabledAgents: [] });
 });

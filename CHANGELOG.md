@@ -409,6 +409,12 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   collection and the patch path rewrites the placeholder line into the block form
   (`disabledAgents:` + `- "designer"`). Any other inline value on a managed key
   line (`disabledAgents: ["x"]`) still throws. (issue #54)
+- **An empty parent block no longer produces YAML no parser accepts** — inserting
+  a managed child key into `task:` + `  {}` / `retry:` + `  {}` (the spelling
+  omp's writer emits for an empty block) put it *after* the `{}` line, producing
+  YAML no parser accepts while the read-back self-check still passed: silent
+  corruption. The child key now replaces the `{}` line, and a prune-only patch
+  creates nothing. (issue #54)
 - **The prefilled-URL path no longer loses a report when the 8 KB truncation
   would split a surrogate pair** — the URL body was cut on UTF-16 code units, so
   a non-BMP character (an emoji in a stack) straddling the cut left a lone

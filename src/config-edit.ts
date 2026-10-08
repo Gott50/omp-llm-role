@@ -377,23 +377,33 @@ function patchFallbackChains(out: string[], chainUpserts: Record<string, string[
   if (upserts.length === 0 && prunes.length === 0) return;
 
   const retryIdx = findTopLevel(out, "retry");
-  if (retryIdx === -1) {
-    if (upserts.length === 0) return;
-    const block: string[] = ["retry:", "  fallbackChains:"];
-    for (const [key, values] of upserts) {
+  const chainLines = (chainEntriesToWrite: [string, string[]][], indent: number): string[] => {
+    const block: string[] = [];
+    for (const [key, values] of chainEntriesToWrite) {
       if (values.length === 0) continue;
-      block.push(`    ${key}:`);
-      for (const v of values) block.push(`      - ${quote(v)}`);
+      block.push(`${" ".repeat(indent)}${key}:`);
+      for (const v of values) block.push(`${" ".repeat(indent + 2)}- ${quote(v)}`);
     }
+    return block;
+  };
+  if (retryIdx === -1) {
+    const block = chainLines(upserts, 4);
+    if (block.length === 0) return;
     const at = out.length > 0 && out[out.length - 1] === "" ? out.length - 1 : out.length;
-    out.splice(at, 0, ...block);
+    out.splice(at, 0, "retry:", "  fallbackChains:", ...block);
     return;
   }
 
-  let fc = findFallbackChains(out, retryIdx);
+  const fc = findFallbackChains(out, retryIdx);
   if (fc.keyLine === -1) {
-    out.splice(retryIdx + 1, 0, "  fallbackChains:");
-    fc = { keyLine: retryIdx + 1, emptyLine: -1 };
+    const block = chainLines(upserts, 4);
+    if (block.length === 0) return; // a prune-only patch has nothing to create
+    // An empty retry block (`retry:` + `  {}`) becomes the fallbackChains header;
+    // otherwise the key is inserted first in the block, ahead of any sibling key.
+    const placeholder = emptyFlowLine(out, retryIdx, "{}");
+    if (placeholder === -1) out.splice(retryIdx + 1, 0, "  fallbackChains:", ...block);
+    else out.splice(placeholder, 1, "  fallbackChains:", ...block);
+    return;
   }
   const fcEnd = blockEnd(out, fc.keyLine);
   const entries = chainEntries(out, fc.keyLine, fcEnd);
@@ -427,12 +437,7 @@ function patchFallbackChains(out: string[], chainUpserts: Record<string, string[
   }
   const appended = upserts.filter(([key, values]) => !(key in entries) && values.length > 0);
   if (appended.length > 0) {
-    const siblingIndent = Object.values(entries)[0]?.indent ?? 4;
-    const block: string[] = [];
-    for (const [key, values] of appended) {
-      block.push(`${" ".repeat(siblingIndent)}${key}:`);
-      for (const v of values) block.push(`${" ".repeat(siblingIndent + 2)}- ${quote(v)}`);
-    }
+    const block = chainLines(appended, Object.values(entries)[0]?.indent ?? 4);
     if (fc.emptyLine === -1) {
       edits.push({ start: fcEnd, deleteCount: 0, insert: block });
     } else if (fc.emptyLine === fc.keyLine) {
@@ -507,7 +512,12 @@ function patchDisabledAgents(out: string[], adds: string[], removes: string[]): 
   const body = disabledAgentsBody(out, taskIdx);
   if (body.keyLine === -1) {
     if (adds.length === 0) return;
-    out.splice(taskIdx + 1, 0, "  disabledAgents:", ...adds.map((name) => `    - ${quote(name)}`));
+    const block = ["  disabledAgents:", ...adds.map((name) => `    - ${quote(name)}`)];
+    // An empty task block (`task:` + `  {}`) becomes the disabledAgents header;
+    // otherwise the key is inserted first in the block, ahead of any sibling key.
+    const placeholder = emptyFlowLine(out, taskIdx, "{}");
+    if (placeholder === -1) out.splice(taskIdx + 1, 0, ...block);
+    else out.splice(placeholder, 1, ...block);
     return;
   }
   const removeSet: Record<string, true> = {};
