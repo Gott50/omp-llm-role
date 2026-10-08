@@ -19,6 +19,7 @@ test("schema covers every global knob and every shipped role field", () => {
     "writeFallbackChains",
     "fallbackChainDepth",
     "activateDefaultOnEmptySession",
+    "errorReporting",
   ]) {
     assert.ok(key in schema, `missing global ${key}`);
   }
@@ -39,6 +40,9 @@ test("schema rows carry the shipped defaults", () => {
   assert.equal(schema.writeFallbackChains.default, DEFAULT_SETTINGS.writeFallbackChains);
   assert.equal(schema.fallbackChainDepth.default, DEFAULT_SETTINGS.fallbackChainDepth);
   assert.equal(schema.activateDefaultOnEmptySession.default, DEFAULT_SETTINGS.activateDefaultOnEmptySession);
+  assert.equal(schema.errorReporting.type, "enum");
+  assert.deepEqual(schema.errorReporting.values, ["off", "ask", "auto"]);
+  assert.equal(schema.errorReporting.default, DEFAULT_SETTINGS.errorReporting);
   for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
     assert.equal(schema[`roles.${name}.enabled`].default, def.enabled ?? true);
     assert.equal(schema[`roles.${name}.thinking`].default, def.thinking);
