@@ -116,14 +116,21 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 
 ## Status
 
-- **CI/CD landed 2026-10-08** (`fa7e546`): every pull request and every `main`
-  push runs the suite on GitHub (verified green on PR #57 and on the `main`
-  push), and a `v*` tag push publishes to npm over OIDC and creates the GitHub
-  Release. The guard was verified with a negative control — tag `v0.0.1`
-  against version `1.1.0` failed in `notes` before any publish. The first real
-  CD run still needs the one-time trusted-publisher registration and a route
-  for the legacy `v1.1.0` tag; see [`ci.md`](ci.md).
-- **1.1.0 cut 2026-10-08** (`c013918`, tagged `v1.1.0`). `package.json` and
+- **CI/CD landed 2026-10-08** (`fa7e546`, docs follow-up `4f78ce2`): every pull
+  request and every `main` push runs the suite on GitHub (verified green on PR
+  #57 and on the `main` push), and a `v*` tag push publishes to npm over OIDC
+  and creates the GitHub Release. The guard was verified with a negative control
+  — tag `v0.0.1` against version `1.1.0` failed in `notes` before any publish.
+  The `v1.1.0` tag was repointed to `4f78ce2` (its original commit predates the
+  workflow file, so the dispatch was rejected) and the release run then passed
+  the guard and the npm floor, packed `omp-llm-role-1.1.0.tgz` (56 files,
+  308.4 kB) and failed only at `npm publish` with `E404` — the trusted publisher
+  is not registered yet, so npm had no credential. The registry is untouched
+  (`latest` = `1.0.0`). Registering the publisher (with the direct-publish tick,
+  see [`ci.md`](ci.md)) is the only remaining step; re-running the workflow
+  against `v1.1.0` then completes the publish.
+- **1.1.0 cut 2026-10-08** (`c013918`, tagged `v1.1.0` — repointed to `4f78ce2`,
+  see the CI/CD bullet). `package.json` and
   `.omp-plugin/marketplace.json` bumped in lockstep (plus `package-lock.json`
   via `npm install --package-lock-only` — the repo keeps it in lockstep, see
   `8811309`), `## [Unreleased]` renamed to `## [1.1.0] - 2026-10-08`, and the
@@ -157,10 +164,10 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   targeted January 2027). `npm ping` and `npm owner ls` still succeed because
   they are unauthenticated reads. Fix: the release workflow — OIDC trusted
   publishing, no token — once the trusted publisher is registered (see
-  [`ci.md`](ci.md)). The tag was cut before the publish (the documented order is
-  publish-then-tag) precisely so the pinned git ref and the changelog link
-  resolve meanwhile; that also means the tag's commit predates the workflow
-  file, so the workflow cannot be dispatched against it.
+  [`ci.md`](ci.md)); the tag was repointed to `4f78ce2` so the workflow could be
+  dispatched against it. The tag was cut before the publish (the documented
+  order is publish-then-tag) precisely so the pinned git ref and the changelog
+  link resolve meanwhile.
 - **1.0.0 on all three channels** (2026-10-03): `omp-llm-role@1.0.0` on npm
   (`dist-tags.latest` = `1.0.0`), tagged `v1.0.0` at `fe98b76` (npm's
   `gitHead`); all three routes verified end-to-end against the real URLs

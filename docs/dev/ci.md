@@ -144,7 +144,9 @@ exit 1, so the command is safe to run unattended.
   The dispatch resolves the workflow **from the ref**, so the tag's commit must
   contain `.github/workflows/ci.yml`. A tag cut before this workflow existed
   cannot be dispatched (`HTTP 422: Workflow does not have 'workflow_dispatch'
-  trigger`) — the recovery path only works for tags cut after it landed.
+  trigger`) — the recovery path only works for tags cut after it landed. The
+  workaround is to repoint the tag at a commit that contains the workflow (done
+  once, for `v1.1.0` → `4f78ce2`).
 
 `tests/ci.test.ts` asserts the offline half: the workflow's structure (jobs,
 triggers, permissions, the command it runs), the hook/workflow command parity,
