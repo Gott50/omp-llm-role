@@ -170,8 +170,10 @@ passing.
     `release` needing `test`; the `test` job's command is identical to the
     pre-commit hook's; the tag trigger covers every CHANGELOG tag link and the
     package version; `.node-version` is the file the workflow reads; the release
-    job declares `id-token: write` and references no npm token; the four
-    lockstep version fields agree; no tracked file lives under `cache/`; and
+    job declares `id-token: write` and references no npm token; the release job
+    runs the `notes` guard before `npm publish` and both steps name the same
+    notes file; the four lockstep version fields agree; no tracked file lives
+    under `cache/`; and
     `scripts/release.ts` against fixture repos — `due`'s exit codes, `notes`'s
     five refusals and its exact section body, `cut --dry-run` writing nothing,
     and `cut` bumping the four fields, cutting the changelog, committing and

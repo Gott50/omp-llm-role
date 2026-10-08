@@ -184,6 +184,26 @@ test("the release job publishes over OIDC and references no npm token", () => {
   assert.ok(!text.includes("secrets."), "the workflow references a repository secret");
 });
 
+test("the release job runs the notes guard before publishing", () => {
+  const wf = parseYaml(readFileSync(WORKFLOW, "utf8")) as Workflow;
+  const runs = wf.jobs.release.steps
+    .map((step) => step.run)
+    .filter((command): command is string => typeof command === "string");
+  const guard = runs.findIndex((command) => command.includes("scripts/release.ts notes"));
+  const publish = runs.findIndex((command) => command.trim() === "npm publish");
+  assert.ok(guard !== -1, "the release job does not run the notes guard");
+  assert.ok(publish !== -1, "the release job does not publish");
+  assert.ok(guard < publish, "the notes guard must run before npm publish");
+
+  // The guard's output is the release body: both steps must name the same file.
+  const notes = /release-notes\.md/.exec(runs[guard])?.[0];
+  assert.ok(notes, "the guard does not write a notes file");
+  assert.ok(
+    runs.some((command) => command.includes(`--notes-file ${notes}`)),
+    "gh release create does not read the guard's notes file",
+  );
+});
+
 test("the four lockstep version fields agree", () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { version: string };
   const lock = JSON.parse(readFileSync(join(ROOT, "package-lock.json"), "utf8")) as {
