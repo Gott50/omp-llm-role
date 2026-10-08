@@ -30,9 +30,9 @@ bullets) and are not re-derived on read.
   or suppressed is `llm-role-error-reports.json` under the agent dir. The ranking
   numbers are unchanged — reporting is a side channel, not a ranking input.
 
-- Empty-collection spellings accepted (2026-10-08, issue #54): a config whose
-  `task.disabledAgents` is spelled `null` — or whose `retry.fallbackChains` /
-  `modelRoles` body is the serializer's own indented `{}` / `[]` line — used to
+- Empty-collection spellings accepted (2026-10-08, issues #54 + #55): a config
+  whose `task.disabledAgents` is spelled `null` — or whose `retry.fallbackChains`
+  / `modelRoles` body is the serializer's own indented `{}` / `[]` line — used to
   throw inside `parseConfig`, so **every session start aborted with `config edit
   refused: disabledAgents: inline value is not supported (block sequence
   expected)` and no role was ever refreshed**. omp re-serializes `config.yml`
@@ -42,12 +42,17 @@ bullets) and are not re-derived on read.
   form (`disabledAgents:` + `- "designer"`); any other inline value on a managed
   key line still throws. Verified against a copy of the real
   `~/.omp/agent/config.yml` (which carries `disabledAgents: null`): the run wrote
-  and reported 8 decisions instead of aborting. The same probe turned up the
-  parent-block variant of this class: an empty `task:` + `  {}` / `retry:` + `  {}`
-  used to take the new child key *after* the `{}` line — YAML no parser accepts,
-  with the read-back self-check still passing, i.e. **silent corruption** — and
-  the child key now replaces the `{}` line, with a prune-only patch creating
-  nothing. Ranking numbers unchanged.
+  and reported 8 decisions instead of aborting. The same probe turned up two more
+  defects, one of them tracked as its own issue (#55 — a different error-report
+  fingerprint): the parent-block variant of this class — an empty `task:` + `  {}`
+  / `retry:` + `  {}` used to take the new child key *after* the `{}` line, YAML
+  no parser accepts, with the read-back self-check still passing, i.e. **silent
+  corruption** — now has the child key replace the `{}` line, and a prune-only
+  patch creates nothing; and #55's block-bound bug (`chainEntries` scanned to the
+  end of `retry:` instead of to the end of `fallbackChains:`, so any sibling
+  `retry.*` key aborted every run with `unexpected line in fallbackChains block`)
+  is fixed by bounding the scan at the key's own indent. Ranking numbers
+  unchanged.
 
 - Capability presets (2026-10-07, issue #40): one opt-in flag per capability
   (`features.<id>` global, `roles.<role>.features.<id>` per role) applies the

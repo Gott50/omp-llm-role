@@ -119,7 +119,8 @@ export function parseConfig(text: string): { modelRoles: Record<string, string>;
   if (retryIdx !== -1) {
     const fc = findFallbackChains(lines, retryIdx);
     if (fc.keyLine !== -1) {
-      for (const key of Object.keys(chainEntries(lines, fc.keyLine, blockEnd(lines, fc.keyLine)))) chainKeys.push(key);
+      const fcEnd = blockEnd(lines, fc.keyLine, indentOf(lines[fc.keyLine]));
+      for (const key of Object.keys(chainEntries(lines, fc.keyLine, fcEnd))) chainKeys.push(key);
     }
   }
   const disabledAgents: string[] = [];
@@ -167,10 +168,15 @@ function assertTopLevelBlockStyle(lines: string[]): void {
   }
 }
 
-/** First index after `start` whose line is non-empty at indent 0 (the block terminator). */
-function blockEnd(lines: string[], start: number): number {
+/**
+ * First index after `start` whose line is non-empty at an indent <= `indent` (the
+ * block terminator): 0 for a top-level block, or the key's own indent for a nested
+ * one, so a sibling key of the key being read ends its block rather than landing
+ * inside it.
+ */
+function blockEnd(lines: string[], start: number, indent = 0): number {
   for (let i = start + 1; i < lines.length; i++) {
-    if (lines[i].length > 0 && indentOf(lines[i]) === 0) return i;
+    if (lines[i].length > 0 && indentOf(lines[i]) <= indent) return i;
   }
   return lines.length;
 }
@@ -333,8 +339,8 @@ function findFallbackChains(lines: string[], retryIdx: number): KeyBody {
  * empty collection — or -1 when the body starts with a real entry (or is empty).
  */
 function emptyFlowLine(lines: string[], keyLine: number, flow: "[]" | "{}"): number {
-  const end = blockEnd(lines, keyLine);
   const keyIndent = indentOf(lines[keyLine]);
+  const end = blockEnd(lines, keyLine, keyIndent);
   for (let i = keyLine + 1; i < end; i++) {
     const line = lines[i];
     if (line.trim().length === 0 || line.trim().startsWith("#")) continue;
@@ -405,7 +411,7 @@ function patchFallbackChains(out: string[], chainUpserts: Record<string, string[
     else out.splice(placeholder, 1, "  fallbackChains:", ...block);
     return;
   }
-  const fcEnd = blockEnd(out, fc.keyLine);
+  const fcEnd = blockEnd(out, fc.keyLine, indentOf(out[fc.keyLine]));
   const entries = chainEntries(out, fc.keyLine, fcEnd);
 
   // Collect disjoint edits on original coordinates: prunes delete; upserts replace an

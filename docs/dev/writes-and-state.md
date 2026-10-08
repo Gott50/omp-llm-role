@@ -55,6 +55,13 @@ Rules the algorithm enforces:
   child key replaces the `{}` line — inserting *after* it emits YAML no parser
   accepts, while the read-back self-check still passes, so that corruption was
   silent. A prune-only patch creates no key at all.
+- **Blocks are bounded by their own indent.** `blockEnd(lines, key, indent)`
+  stops at the first line at or above the key's indent, so `chainEntries` sees
+  only the `fallbackChains` block. A sibling `retry.<other>` key — omp ships ten
+  (`retry.maxRetries`, `retry.enabled`, `retry.baseDelayMs`, …) and writes them
+  into the same `retry:` block — therefore ends the block instead of throwing
+  `unexpected line in fallbackChains block`, and a new chain key is appended
+  inside the block rather than after it.
 - **Read-back self-check.** After patching, `patchConfig` re-reads the patched
   text through the same line-oriented reader and asserts it equals the intended
   state (every upserted role, every removal, the exact chain-key set, every

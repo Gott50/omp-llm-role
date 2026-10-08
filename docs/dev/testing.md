@@ -27,7 +27,8 @@ passing.
    on the key line, a flow `[]`/`{}` on its own indented line — and an empty
    *parent* block, `task:`/`retry:` + `  {}`) read as empty and are normalized
    into the block form on write, with a prune-only patch creating nothing (issue
-   #54); the patched output parses as real YAML.
+   #54); a sibling `retry.*` key neither aborts the chain scan nor swallows an
+   appended chain key (issue #55); the patched output parses as real YAML.
 5. **Hysteresis** (`hysteresis.test.ts`) — no-current adopt; ineligible current
    switch; margin-below keep; margin-above switch; `switchMargin: 0` always takes
    best; cost override (`switched-cost`); `priceSwitchFraction: 0` keeps the

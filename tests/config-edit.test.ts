@@ -253,7 +253,8 @@ test("modelRoles: the serializer's {} placeholder takes the first role", () => {
 // The same empty spellings one level up: an *empty parent block* (`task:` +
 // `  {}`, `retry:` + `  {}`). Inserting a child key after the placeholder line
 // used to emit YAML that no parser accepts (the patch self-check still read it
-// back, so the corruption was silent).
+// back, so the corruption was silent), and a sibling key under `retry:` made the
+// chain scan throw.
 test("an empty parent block (`task:` + `{}`) takes disabledAgents instead of leaving invalid YAML", () => {
   const out = patchConfig("modelRoles:\n  default: a\ntask:\n  {}\n", {
     roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [],
@@ -283,6 +284,32 @@ test("a prune-only patch does not create fallbackChains inside an empty retry bl
     roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: ["openrouter/org/a"],
   });
   assert.equal(out, config);
+});
+
+test("a retry sibling key neither throws nor swallows the new chain keys", () => {
+  const config = "modelRoles:\n  default: a\nretry:\n  maxRetries: 3\ntail: true\n";
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [],
+    chainUpserts: { "openrouter/org/a": ["openrouter/org/b"] },
+    chainPrunes: [],
+  });
+  const doc = parseYaml(out) as { retry: { maxRetries: number; fallbackChains: Record<string, string[]> } };
+  assert.equal(doc.retry.maxRetries, 3);
+  assert.deepEqual(doc.retry.fallbackChains, { "openrouter/org/a": ["openrouter/org/b"] });
+  assert.deepEqual(parseConfig(out).chainKeys, ["openrouter/org/a"]);
+});
+
+test("a chain upsert appends inside the block, before a retry sibling key", () => {
+  const config = "retry:\n  fallbackChains:\n    openrouter/org/a:\n      - openrouter/org/b\n  maxRetries: 3\n";
+  const out = patchConfig(config, {
+    roleSelectors: {}, roleRemovals: [],
+    chainUpserts: { "openrouter/org/c": ["openrouter/org/d"] },
+    chainPrunes: [],
+  });
+  const doc = parseYaml(out) as { retry: { maxRetries: number; fallbackChains: Record<string, string[]> } };
+  assert.equal(doc.retry.maxRetries, 3);
+  assert.deepEqual(Object.keys(doc.retry.fallbackChains), ["openrouter/org/a", "openrouter/org/c"]);
+  assert.deepEqual(parseConfig(out).chainKeys, ["openrouter/org/a", "openrouter/org/c"]);
 });
 
 test("the serializer's empty spellings read as empty through parseConfig", () => {

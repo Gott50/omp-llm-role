@@ -415,6 +415,14 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   YAML no parser accepts while the read-back self-check still passed: silent
   corruption. The child key now replaces the `{}` line, and a prune-only patch
   creates nothing. (issue #54)
+- **A sibling key under `retry:` no longer aborts the run** — `chainEntries`
+  scanned to the end of the `retry:` block instead of to the end of
+  `retry.fallbackChains:`, so any other `retry.*` key (omp ships `retry.enabled`,
+  `retry.maxRetries`, `retry.baseDelayMs`, …) threw `unexpected line in
+  fallbackChains block` at read time — aborting every run with no write — and an
+  appended chain key landed *after* the block. `blockEnd(lines, start, indent)`
+  now stops at the key's own indent, so a sibling ends the block and a new chain
+  key is written inside it. (issue #55)
 - **The prefilled-URL path no longer loses a report when the 8 KB truncation
   would split a surrogate pair** — the URL body was cut on UTF-16 code units, so
   a non-BMP character (an emoji in a stack) straddling the cut left a lone
