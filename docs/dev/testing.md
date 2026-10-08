@@ -155,8 +155,12 @@ passing.
     message with the same first stack frame dedupes, a different label does not);
     `ask` (a `confirm(true)` surfaces the payload and files exactly once, a
     `confirm(false)` or a headless session sends nothing and offers the URL — it
-    never silently falls back to `auto`); the in-process guard; and a ledger that
-    tolerates junk and truncates a pathological stack under 64 KB.
+    never silently falls back to `auto`); an unrecognized `errorReporting` value
+    fails closed (no fetch, no ledger, `action: "off"`); a defect **string** (as
+    `reportDefect` passes it) is fingerprinted by its message, so two distinct
+    aborts under one label differ; the in-process guard; and a ledger that
+    tolerates junk and truncates a pathological stack — including a multi-byte
+    one — to the 64 KB **byte** budget.
 
 ## Live checks
 
