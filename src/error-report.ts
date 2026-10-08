@@ -74,6 +74,9 @@ export type ErrorReportOutcome = {
   reason?: string;
 };
 
+/** The action vocabulary, shared by the outcome and the ledger entry. */
+type ReportAction = ErrorReportOutcome["action"];
+
 type Report = {
   fingerprint: string;
   label: string;
@@ -93,14 +96,14 @@ type LedgerEntry = {
   createdDay?: string;
   offeredDay?: string;
   count: number;
-  action: string;
+  action: ReportAction;
   issueNumber?: number;
   issueUrl?: string;
 };
 
 type Ledger = { reports: LedgerEntry[]; dayCount: { day: string; count: number } };
 
-type GhResult = { kind: "ok"; data: unknown } | { kind: "permission"; status: number } | { kind: "error"; reason: string };
+type GhResult = { kind: "ok"; data: unknown } | { kind: "denied"; status: number } | { kind: "error"; reason: string };
 
 /**
  * Per-process guard: a crash loop in one session must not fire N requests.
@@ -175,13 +178,13 @@ async function dispatch(report: Report, input: ErrorReportInput, deps: ErrorRepo
 async function tokenPath(report: Report, input: ErrorReportInput, deps: ErrorReportDeps, token: string): Promise<ErrorReportOutcome> {
   const query = `repo:${REPO} in:body "omp-llm-role-error-report: ${report.fingerprint}"`;
   const search = await ghRequest(deps, token, "GET", `/search/issues?q=${encodeURIComponent(query)}`);
-  if (search.kind === "permission") return offerUrl(report, input, deps);
+  if (search.kind === "denied") return offerUrl(report, input, deps);
   if (search.kind === "error") return failed(input, search.reason);
   const items = searchItems(search.data);
   const open = items.find((item) => item.state === "open");
   if (open) {
     const comment = await ghRequest(deps, token, "POST", `/repos/${REPO}/issues/${open.number}/comments`, { body: commentBody(report) });
-    if (comment.kind === "permission") return offerUrl(report, input, deps);
+    if (comment.kind === "denied") return offerUrl(report, input, deps);
     if (comment.kind === "error") return failed(input, comment.reason);
     recordLedger(deps, report, { action: "commented", issueNumber: open.number, issueUrl: open.html_url });
     input.notify(`llm-role: commented on ${open.html_url}`, "info");
@@ -191,7 +194,7 @@ async function tokenPath(report: Report, input: ErrorReportInput, deps: ErrorRep
   const closed = items.filter((item) => item.state === "closed");
   const today = dayKey(deps.now());
   const ledger = readLedger(deps.agentDir());
-  const entry = ledger.reports.find((e) => e.fingerprint === report.fingerprint);
+  const entry = ledgerEntry(ledger, report.fingerprint);
   if (entry?.createdDay === today) {
     recordLedger(deps, report, { action: "suppressed" });
     return { action: "suppressed", reason: "already created today" };
@@ -203,9 +206,10 @@ async function tokenPath(report: Report, input: ErrorReportInput, deps: ErrorRep
 
   const body = closed.length > 0 ? `${report.body}\n\n---\nReappearance of ${closed.map((c) => `#${c.number}`).join(", ")}.` : report.body;
   const create = await ghRequest(deps, token, "POST", `/repos/${REPO}/issues`, { title: report.title, body, labels: ["bug", "needs-triage"] });
-  if (create.kind === "permission") return offerUrl(report, input, deps);
+  if (create.kind === "denied") return offerUrl(report, input, deps);
   if (create.kind === "error") return failed(input, create.reason);
   const issue = createIssue(create.data);
+  if (!issue) return failed(input, "malformed create response");
   recordLedger(deps, report, { action: "created", issueNumber: issue.number, issueUrl: issue.html_url, createdDay: today, incrementDay: true });
   input.notify(`llm-role: filed ${issue.html_url}`, "info");
   return { action: "created", url: issue.html_url };
@@ -213,8 +217,7 @@ async function tokenPath(report: Report, input: ErrorReportInput, deps: ErrorRep
 
 function offerUrl(report: Report, input: ErrorReportInput, deps: ErrorReportDeps): ErrorReportOutcome {
   const today = dayKey(deps.now());
-  const ledger = readLedger(deps.agentDir());
-  const entry = ledger.reports.find((e) => e.fingerprint === report.fingerprint);
+  const entry = ledgerEntry(readLedger(deps.agentDir()), report.fingerprint);
   if (entry?.offeredDay === today) {
     return { action: "suppressed", reason: "already offered today" };
   }
@@ -293,14 +296,23 @@ function commentBody(report: Report): string {
   return `Another occurrence of this error (fingerprint \`${report.fingerprint}\`).\n\n\`\`\`\n${report.stack || report.message}\n\`\`\``;
 }
 
+/** Replace lone surrogates with U+FFFD so `encodeURIComponent` cannot throw. */
+function toWellFormed(s: string): string {
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
+}
+
 function buildIssueUrl(report: Report): string {
   const base = `${WEB_BASE}/${REPO}/issues/new`;
   const labels = "bug,needs-triage";
-  const make = (body: string): string => `${base}?title=${encodeURIComponent(report.title)}&body=${encodeURIComponent(body)}&labels=${labels}`;
+  const title = toWellFormed(report.title);
+  const make = (body: string): string => `${base}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(toWellFormed(body))}&labels=${labels}`;
   let body = report.body;
   let url = make(body);
   while (url.length > MAX_URL_BYTES && body.length > 0) {
-    body = body.slice(0, Math.floor(body.length * 0.8));
+    // Truncate on code points, not UTF-16 code units: a code-unit cut can split
+    // a surrogate pair, and `encodeURIComponent` then throws on the lone half.
+    const points = Array.from(body);
+    body = points.slice(0, Math.floor(points.length * 0.8)).join("");
     url = make(body);
   }
   return url;
@@ -373,7 +385,9 @@ async function ghRequest(deps: ErrorReportDeps, token: string, method: string, p
   } catch (err) {
     return { kind: "error", reason: errText(err) };
   }
-  if (res.status === 401 || res.status === 403 || res.status === 404) return { kind: "permission", status: res.status };
+  // 401/403/404 all mean "this token cannot write here" (a fine-grained PAT
+  // without Issues:write answers 404): fall through to the prefilled URL.
+  if (res.status === 401 || res.status === 403 || res.status === 404) return { kind: "denied", status: res.status };
   if (!res.ok) return { kind: "error", reason: `HTTP ${res.status}` };
   try {
     return { kind: "ok", data: await res.json() };
@@ -398,11 +412,11 @@ function searchItems(data: unknown): SearchItem[] {
   return out;
 }
 
-function createIssue(data: unknown): { number: number; html_url: string } {
+function createIssue(data: unknown): { number: number; html_url: string } | null {
   if (isRecord(data) && typeof data.number === "number") {
     return { number: data.number, html_url: typeof data.html_url === "string" ? data.html_url : "" };
   }
-  return { number: 0, html_url: "" };
+  return null;
 }
 
 // --- token resolution ------------------------------------------------------
@@ -478,7 +492,7 @@ function readLedger(dir: string): Ledger {
         createdDay: typeof entry.createdDay === "string" ? entry.createdDay : undefined,
         offeredDay: typeof entry.offeredDay === "string" ? entry.offeredDay : undefined,
         count: typeof entry.count === "number" ? entry.count : 0,
-        action: typeof entry.action === "string" ? entry.action : "",
+        action: typeof entry.action === "string" ? (entry.action as ReportAction) : "failed",
         issueNumber: typeof entry.issueNumber === "number" ? entry.issueNumber : undefined,
         issueUrl: typeof entry.issueUrl === "string" ? entry.issueUrl : undefined,
       });
@@ -489,6 +503,12 @@ function readLedger(dir: string): Ledger {
     reports,
     dayCount: { day: typeof dayCount.day === "string" ? dayCount.day : "", count: typeof dayCount.count === "number" ? dayCount.count : 0 },
   };
+}
+
+/** The ledger entry for a fingerprint, or undefined. The one lookup both the
+ *  token path and the URL path use. */
+function ledgerEntry(ledger: Ledger, fingerprint: string): LedgerEntry | undefined {
+  return ledger.reports.find((e) => e.fingerprint === fingerprint);
 }
 
 /** Atomic replace (temp + rename) so concurrent writers cannot corrupt the file. */
@@ -503,7 +523,7 @@ function writeLedger(ledger: Ledger, dir: string): void {
 function recordLedger(
   deps: ErrorReportDeps,
   report: Report,
-  patch: { action: string; issueNumber?: number; issueUrl?: string; createdDay?: string; offeredDay?: string; incrementDay?: boolean },
+  patch: { action: ReportAction; issueNumber?: number; issueUrl?: string; createdDay?: string; offeredDay?: string; incrementDay?: boolean },
 ): void {
   try {
     const dir = deps.agentDir();

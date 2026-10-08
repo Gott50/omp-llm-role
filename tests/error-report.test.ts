@@ -528,3 +528,38 @@ test("the prefilled URL stays under ~8 KB even for a pathological stack", async 
   assert.ok(h.opened[0].length <= 8 * 1024 + 256);
   assert.match(new URL(h.opened[0]).searchParams.get("body") ?? "", /omp-llm-role-error-report: [0-9a-f]{64}/);
 });
+
+test("a non-BMP character at the 8 KB URL cut is offered, never failed", async () => {
+  // Learn the exact body prefix length (metadata + error header) by filing once
+  // with a token; the prefix is independent of the stack, so the same offset
+  // holds for the crafted stack below.
+  const probe = makeHarness({ respond: creates(noMatch) });
+  const probeErr = new Error("boom");
+  probeErr.stack = "STACKMARKER\n    at frame (/x/y.ts:1:1)";
+  await reportUnexpectedError(probe.input({ error: probeErr }), probe.deps);
+  const probeBody = String(probe.requests.find(isCreate)?.body.body);
+  const prefixLen = probeBody.indexOf("STACKMARKER");
+  assert.ok(prefixLen > 0, "probe body must contain the stack marker");
+
+  // Place an emoji so the 80% code-unit cut lands between its two surrogates.
+  // The body is prefix + "a"*head + emoji + "a"*tail + "\n```" (4-char suffix),
+  // so head = 8019 - prefix makes floor(0.8 * body.length) === prefix + head + 1
+  // (the low surrogate) for any prefix length.
+  const tail = 2000;
+  const head = 8019 - prefixLen;
+  const h = makeHarness({ env: {}, ghToken: () => null });
+  const err = new Error("boom");
+  err.stack = `${"a".repeat(head)}😀${"a".repeat(tail)}`;
+  const outcome = await reportUnexpectedError(h.input({ error: err }), h.deps);
+  assert.equal(outcome.action, "offered");
+  assert.ok(outcome.url);
+  assert.equal(h.opened.length, 1);
+});
+
+test("a lone surrogate in the message is sanitized, not a failed report", async () => {
+  const h = makeHarness({ env: {}, ghToken: () => null });
+  const outcome = await reportUnexpectedError(h.input({ error: new Error("boom \uD800 end") }), h.deps);
+  assert.equal(outcome.action, "offered");
+  assert.ok(outcome.url);
+  assert.equal(h.opened.length, 1);
+});

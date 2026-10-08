@@ -397,6 +397,12 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **The prefilled-URL path no longer loses a report when the 8 KB truncation
+  would split a surrogate pair** — the URL body was cut on UTF-16 code units, so
+  a non-BMP character (an emoji in a stack) straddling the cut left a lone
+  surrogate and `encodeURIComponent` threw, turning the occurrence into a silent
+  `failed` on the no-token path. It now truncates on code points and sanitizes
+  lone surrogates to U+FFFD before encoding.
 - **The ranking report states the λ formula correctly** — the CLI banner (and the
   `docs/llm-role-rankings.md` header it generates) read `λ = price-weight share ÷
   $20`, which is wrong by a factor `1/(1−w_price)`: `roleLambda` derives
