@@ -147,4 +147,6 @@ test("a rejecting getKeyAvailability never throws out of the run", async () => {
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
   assert.ok(result.aborted);
   assert.deepEqual(result.decisions, []);
+  // A throw escaping the run is a defect, not an enumerated environment abort.
+  assert.equal(result.defect, "boom");
 });

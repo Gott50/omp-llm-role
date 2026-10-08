@@ -10,6 +10,31 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **Opt-in error reporting: an unexpected plugin error becomes a GitHub issue**
+  — a new `errorReporting` setting (`off` — the default — `ask`, `auto`) turns a
+  genuinely unexpected failure into one structured report (plugin version,
+  runtime, platform, the command that failed, error name/message/stack and a
+  timestamp) filed on `Gott50/omp-llm-role`. `ask` shows the exact payload and
+  files on confirmation, degrading to a notified prefilled `…/issues/new` URL in
+  a session with no UI so it never uploads without asking; `auto` files without
+  asking; `off` never files and is byte-identical to today's behaviour. A token
+  (`GITHUB_TOKEN` → `GH_TOKEN` → `gh auth token`, never stored) uses the API,
+  while no token — or a token that cannot write issues here — falls through to
+  the prefilled-URL path. The payload is redacted (home directory → `~`,
+  token-shaped strings → `<redacted>`) and never contains config contents, model
+  selectors, prompts or history rows. A repeat occurrence comments on the
+  existing **open** issue (a fingerprint marker dedupes it), a reappearance
+  after the issue was closed opens a fresh one that links the old, and the path
+  is capped (one open issue per fingerprint, one creation per fingerprint per
+  UTC day, 3 creations per UTC day) so a crash loop cannot spam the tracker. The
+  whole path is best-effort — wrapped, bounded by a timeout, and unable to
+  affect the run it reports on. Only *exception* aborts are reported:
+  `RunResult` now carries `defect`, set by the `ConfigEditError`/catch-all throw
+  sites and left unset by the enumerated environment aborts (invalid settings,
+  ranking data unavailable, tier `none`, lock, conflict, key-fetch failure), so
+  those expected conditions stay notify-only. The ledger of what was filed,
+  offered or suppressed lives in `llm-role-error-reports.json` under the agent
+  dir. (issue #48)
 - **Capability presets: one opt-in flag per capability** — a role can now turn on
   a whole capability with one named flag instead of hand-tuning its knobs. Four
   flags ship: `endpointCeilings` (`filters.tools: true`,
@@ -372,6 +397,12 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Fixed
 
+- **The prefilled-URL path no longer loses a report when the 8 KB truncation
+  would split a surrogate pair** — the URL body was cut on UTF-16 code units, so
+  a non-BMP character (an emoji in a stack) straddling the cut left a lone
+  surrogate and `encodeURIComponent` threw, turning the occurrence into a silent
+  `failed` on the no-token path. It now truncates on code points and sanitizes
+  lone surrogates to U+FFFD before encoding.
 - **The ranking report states the λ formula correctly** — the CLI banner (and the
   `docs/llm-role-rankings.md` header it generates) read `λ = price-weight share ÷
   $20`, which is wrong by a factor `1/(1−w_price)`: `roleLambda` derives

@@ -110,6 +110,7 @@ Global knobs:
 | `writeFallbackChains` | `true` | Write per-role fallback chains into `config.yml` |
 | `fallbackChainDepth` | `2` | Fallback models per role chain |
 | `activateDefaultOnEmptySession` | `true` | Reapply the new `default` selector to an empty session's active model |
+| `errorReporting` | `off` | Opt-in reporting of **unexpected** plugin errors as GitHub issues on `Gott50/omp-llm-role`; one of `off`, `ask`, `auto` (see below) |
 
 Per-role knobs (`roles.<name>.*`):
 
@@ -169,6 +170,35 @@ The flags are settable from every role-authoring surface: `--feature <id,...>`
 explorer's Features panel. An
 unknown flag id or a non-boolean value aborts the run with the offending key and
 no write.
+
+**Error reporting (`errorReporting`).** This knob ships **`off`** — installing
+or upgrading the plugin never starts uploading anything. When something
+*genuinely unexpected* happens (a `/refresh-roles` or authoring command throws,
+or the updater hits an internal error), the plugin can file one structured
+report — the plugin version, runtime, platform, the command that failed, the
+error name/message/stack and a timestamp — as a GitHub issue on
+`Gott50/omp-llm-role`. The three values:
+
+- **`off`** — never files; behaviour is exactly today's (one warning line).
+- **`ask`** — shows you the exact text and files it only if you confirm. In a
+  session with no UI (`omp -p`, RPC, a subagent) it never uploads: it notifies a
+  prefilled new-issue URL instead, so you can submit it yourself.
+- **`auto`** — files without asking.
+
+The payload is redacted before it leaves the machine (your home directory → `~`,
+token-shaped strings → `<redacted>`) and carries **no** config contents, model
+selectors, prompts or history rows. Filing goes through the GitHub API when a
+token is available (`GITHUB_TOKEN` → `GH_TOKEN` → `gh auth token` — the token is
+never stored in a settings file); a token that cannot write issues here, or no
+token at all, falls through to a prefilled `…/issues/new` URL (opened in your
+browser, or printed). A repeated crash comments on the existing open issue
+instead of opening a new one, and the path is capped (one open issue per
+fingerprint, one creation per fingerprint per UTC day, 3 per day) so a crash
+loop cannot spam the tracker. Reporting is **best-effort**: a failure in it only
+adds one notification line and never affects the run it reports on. Expected
+environment conditions (no key budget, a concurrent refresh holding the lock,
+write conflicts, unavailable ranking data, invalid settings) are **never**
+reported. In project mode the project lock file's value applies.
 
 **Validation.** A run aborts (notify, no write) on: a weight ≤ 0, or a role's
 weights not summing to 1.0 ± 0.01; a `required` entry or a weighted metric

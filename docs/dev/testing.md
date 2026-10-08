@@ -133,6 +133,34 @@ passing.
     response is retried once and the parsed spec returned; an always-malformed
     run throws carrying the raw output; a `run()` failure propagates with no
     retry.
+28. **Error reporting** (`error-report.test.ts`) — `reportUnexpectedError`
+    through its one entry point with fully injected deps: `off` → no fetch, no
+    ledger write, `action: "off"`; `auto` + token → exactly one create whose body
+    carries the fingerprint marker, plugin version, runtime, platform, label and
+    stack, with the `bug`/`needs-triage` labels; redaction (home dir → `~`,
+    `node_modules` prefix → `<pkg>/`, `sk-…`/`ghp_…`/`Bearer …` → `<redacted>`)
+    leaves nothing token-shaped in the title, body or URL; dedupe (an open match
+    is commented on, never a second create; a closed match on a later day
+    creates a fresh issue linking the old one); caps (the 4th distinct
+    fingerprint in one UTC day, and a fingerprint already created earlier the
+    same day even when its issue is closed, are both `suppressed` with no
+    request; a later UTC day re-creates the regression); permission fall-through
+    (`401`/`403`/`404` from the search or the create → `offered`, the creation
+    counters untouched); no token → no HTTP at all, an `issues/new` URL whose
+    query carries the title, body and labels opened exactly once; token
+    resolution (`GITHUB_TOKEN` → `GH_TOKEN` → the injected `gh` executor, with a
+    throwing or empty `gh` falling through to the URL path); containment (a
+    rejected fetch, a 500, a timeout and a malformed JSON body each → `failed`,
+    one notify line, no throw); fingerprint stability (a varying id inside the
+    message with the same first stack frame dedupes, a different label does not);
+    `ask` (a `confirm(true)` surfaces the payload and files exactly once, a
+    `confirm(false)` or a headless session sends nothing and offers the URL — it
+    never silently falls back to `auto`); an unrecognized `errorReporting` value
+    fails closed (no fetch, no ledger, `action: "off"`); a defect **string** (as
+    `reportDefect` passes it) is fingerprinted by its message, so two distinct
+    aborts under one label differ; the in-process guard; and a ledger that
+    tolerates junk and truncates a pathological stack — including a multi-byte
+    one — to the 64 KB **byte** budget.
 
 ## Live checks
 

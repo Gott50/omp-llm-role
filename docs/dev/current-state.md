@@ -1,13 +1,34 @@
-# Current state (2026-10-07)
+# Current state (2026-10-08)
 
-Dated snapshot of the ranking as of the date in the heading — matched/priced/
-eligible counts, per-role leaders, and the open defects. It is refreshed by
+Dated snapshot of the ranking and the landed work as of the date in the heading —
+matched/priced/eligible counts, per-role leaders, the open defects, and the
+per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The ranking numbers
 below are the 2026-10-07 measurement (the input-price blend basis #21, the
 #17/#18/#19/#20 wave and the #34–#40 focus-axis/capability-flag work; see the top
 bullets) and are not re-derived on read.
+
+- Opt-in error reporting (2026-10-08, issue #48): a new `errorReporting` setting
+  (`off` — the default — `ask`, `auto`) turns a genuinely unexpected failure — a
+  command handler throwing, or a `runUpdater` abort whose `RunResult.defect` is
+  set (a `ConfigEditError`/self-check mismatch or the catch-all throw; the
+  enumerated environment aborts stay notify-only) — into one structured report
+  (plugin version, runtime, platform, the failing command, error
+  name/message/stack, timestamp) filed on `Gott50/omp-llm-role`. `ask` surfaces
+  the exact payload and files on confirmation, degrading to a notified prefilled
+  `…/issues/new` URL in a session with no UI; `auto` files without asking; `off`
+  is byte-identical to the pre-#48 behaviour. A token (`GITHUB_TOKEN` → `GH_TOKEN`
+  → `gh auth token`, never stored) uses the API; no token, or a 401/403/404 (a
+  fine-grained PAT without Issues:write answers 404), falls through to the
+  prefilled URL. The payload is redacted (home dir → `~`, token-shaped strings →
+  `<redacted>`) and carries no config contents, model selectors, prompts or
+  history rows. A fingerprint marker dedupes a repeat onto the existing open
+  issue, and the path is capped (one open issue per fingerprint, one creation per
+  fingerprint per UTC day, 3 per UTC day). The ledger of what was filed, offered
+  or suppressed is `llm-role-error-reports.json` under the agent dir. The ranking
+  numbers are unchanged — reporting is a side channel, not a ranking input.
 
 - Capability presets (2026-10-07, issue #40): one opt-in flag per capability
   (`features.<id>` global, `roles.<role>.features.<id>` per role) applies the
