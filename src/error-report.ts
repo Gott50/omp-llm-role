@@ -69,7 +69,7 @@ export type ErrorReportDeps = {
 };
 
 export type ErrorReportOutcome = {
-  action: "off" | "asked" | "created" | "commented" | "offered" | "suppressed" | "failed";
+  action: "off" | "created" | "commented" | "offered" | "suppressed" | "failed";
   url?: string;
   reason?: string;
 };
@@ -120,7 +120,11 @@ export function resetErrorReportGuard(): void {
  */
 export async function reportUnexpectedError(input: ErrorReportInput, deps: ErrorReportDeps): Promise<ErrorReportOutcome> {
   try {
-    if (deps.settings.errorReporting === "off") return { action: "off" };
+    // Fail closed: only the two explicit opt-ins report. Anything else — `off`,
+    // a typo, a value from a hand-edited lock file — is a no-op, so a privacy
+    // setting can never fail open into filing an issue.
+    const posture = deps.settings.errorReporting;
+    if (posture !== "ask" && posture !== "auto") return { action: "off" };
     const report = buildReport(input, deps);
     if (reportedFingerprints.has(report.fingerprint)) {
       return { action: "suppressed", reason: "already reported in this process" };
@@ -278,7 +282,11 @@ function buildBody(report: { fingerprint: string; label: string; errorName: stri
     "```",
   ];
   const body = sections.join("\n");
-  return body.length > MAX_BODY_BYTES ? `${body.slice(0, MAX_BODY_BYTES)}\n${TRUNCATION_MARKER}` : body;
+  // The cap is a byte budget: `body.length` counts UTF-16 code units, so a
+  // non-ASCII stack could otherwise exceed 64 KB by up to ~4×.
+  if (Buffer.byteLength(body, "utf8") <= MAX_BODY_BYTES) return body;
+  const truncated = Buffer.from(body, "utf8").subarray(0, MAX_BODY_BYTES).toString("utf8");
+  return `${truncated}\n${TRUNCATION_MARKER}`;
 }
 
 function commentBody(report: Report): string {

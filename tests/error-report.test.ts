@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import {
   type ErrorReportDeps,
   type ErrorReportInput,
 } from "../src/error-report.ts";
-import { DEFAULT_SETTINGS } from "../src/settings.ts";
+import { DEFAULT_SETTINGS, type ResolvedSettings } from "../src/settings.ts";
 
 type CapturedBody = { title?: string; body?: string; labels?: string[] };
 type CapturedRequest = { url: string; method: string; headers: Record<string, string>; body: CapturedBody | undefined };
@@ -52,7 +53,9 @@ function creates(respond: (req: CapturedRequest) => Response): (req: CapturedReq
 }
 
 function makeHarness(opts: {
-  posture?: "off" | "ask" | "auto";
+  /** Deliberately `string`: the harness must be able to express a value the
+   *  settings resolver would reject (a hand-edited lock file). */
+  posture?: string;
   respond?: (req: CapturedRequest) => Response | Promise<Response>;
   env?: Record<string, string | undefined>;
   ghToken?: () => string | null;
@@ -65,7 +68,7 @@ function makeHarness(opts: {
   const notifies: { line: string; level: string }[] = [];
   const respond = opts.respond ?? noMatch;
   const deps: ErrorReportDeps = {
-    settings: { ...DEFAULT_SETTINGS, errorReporting: opts.posture ?? "auto" },
+    settings: { ...DEFAULT_SETTINGS, errorReporting: (opts.posture ?? "auto") as ResolvedSettings["errorReporting"] },
     fetch: async (input, init) => {
       const request: CapturedRequest = {
         url: String(input),
@@ -118,6 +121,19 @@ test("errorReporting off is a no-op: no request, no ledger, action off", async (
   assert.deepEqual(outcome, { action: "off" });
   assert.equal(h.requests.length, 0);
   assert.equal(existsSync(join(h.dir, ERROR_REPORT_LEDGER_FILE)), false);
+});
+
+test("an invalid errorReporting value fails closed: no request, no ledger, action off", async () => {
+  // A typo (`sometimes`, `Auto`) or a hand-edited lock file must not fall
+  // through to the token path and file an issue without asking.
+  for (const posture of ["sometimes", "Auto", "on", ""]) {
+    const h = makeHarness({ posture, respond: () => jsonResponse({}) });
+    const outcome = await reportUnexpectedError(h.input(), h.deps);
+    assert.deepEqual(outcome, { action: "off" }, `posture ${JSON.stringify(posture)}`);
+    assert.equal(h.requests.length, 0, `posture ${JSON.stringify(posture)}`);
+    assert.equal(h.opened.length, 0, `posture ${JSON.stringify(posture)}`);
+    assert.equal(existsSync(join(h.dir, ERROR_REPORT_LEDGER_FILE)), false, `posture ${JSON.stringify(posture)}`);
+  }
 });
 
 test("auto + token files exactly one issue carrying marker, metadata, stack and labels", async () => {
@@ -400,6 +416,28 @@ test("fingerprint stability: a varying id inside the message does not change it;
   assert.notEqual(m1, m3);
 });
 
+test("a defect string is fingerprinted by its message, so distinct aborts differ", async () => {
+  // `reportDefect` passes the updater's abort string as `error` (not wrapped in
+  // an `Error`), so the module's failure site is the message: two different
+  // aborts under one command label must not collapse onto one fingerprint.
+  const h1 = makeHarness({ respond: creates(noMatch) });
+  const h2 = makeHarness({ respond: creates(noMatch) });
+  const h3 = makeHarness({ respond: creates(noMatch) });
+  await reportUnexpectedError(h1.input({ error: "config edit refused: flow style" }), h1.deps);
+  resetErrorReportGuard();
+  await reportUnexpectedError(h2.input({ error: "boom" }), h2.deps);
+  resetErrorReportGuard();
+  await reportUnexpectedError(h3.input({ error: "config edit refused: flow style" }), h3.deps);
+  const m1 = markerOf(h1.requests.find(isCreate)!);
+  const m2 = markerOf(h2.requests.find(isCreate)!);
+  const m3 = markerOf(h3.requests.find(isCreate)!);
+  assert.match(m1, /^[0-9a-f]{64}$/);
+  assert.notEqual(m1, m2);
+  assert.equal(m1, m3);
+  // The failure site is the whitespace-collapsed message (a string error has no stack).
+  assert.equal(m1, createHash("sha256").update("refresh-roles\nError\nconfig edit refused: flow style").digest("hex"));
+});
+
 test("ask: a confirm resolving true surfaces the payload and files exactly once", async () => {
   const h = makeHarness({ posture: "ask", respond: creates(noMatch) });
   const surfaced: { title: string; payload: string }[] = [];
@@ -468,6 +506,17 @@ test("a long stack is truncated with a visible marker under 64 KB", async () => 
   const body = String(h.requests.find(isCreate)?.body.body);
   assert.ok(body.length <= 64 * 1024 + 64);
   assert.match(body, /… truncated/);
+});
+
+test("a multi-byte stack is truncated to the byte budget, not the code-unit count", async () => {
+  const h = makeHarness({ respond: creates(noMatch) });
+  const err = new Error("boom");
+  err.stack = `Error: boom\n${"    at 帧 (/x/日本語のファイル.ts:1:1)\n".repeat(5000)}`;
+  await reportUnexpectedError(h.input({ error: err }), h.deps);
+  const body = String(h.requests.find(isCreate)?.body.body);
+  assert.match(body, /… truncated/);
+  const bytes = Buffer.byteLength(body, "utf8");
+  assert.ok(bytes <= 64 * 1024 + 64, `body was ${bytes} bytes`);
 });
 
 test("the prefilled URL stays under ~8 KB even for a pathological stack", async () => {
