@@ -53,6 +53,14 @@ export type RunResult = {
   /** Final selector the run chose for the `default` role, when that role was decided. */
   defaultSelector?: string;
   aborted?: string;
+  /**
+   * Set only on an unexpected exception abort (a bug): the `ConfigEditError` /
+   * catch-all path. Unset on every enumerated environment abort (settings
+   * invalid, ranking data unavailable, tier `none`, lock, conflict, key-fetch
+   * failure) — those are conditions, not defects. The extension reads this to
+   * decide whether to file a report.
+   */
+  defect?: string;
 };
 
 export type Trigger = "session-start" | "manual";
@@ -257,8 +265,17 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       return abort([`omp-llm-role: ranking data unavailable, no write: ${err instanceof Error ? err.message : err}`]);
     }
 
-    const token = await deps.getToken();
-    const keyMeta = (await deps.getKeyMeta?.(token)) ?? (await fetchKeyMeta(token));
+    // A key-fetch failure (a missing/expired token, an OpenRouter outage) is an
+    // enumerated environment abort, not a defect: notify-only, `defect` unset.
+    // The message text is unchanged from the catch-all it used to reach.
+    let token: string;
+    let keyMeta: KeyMeta;
+    try {
+      token = await deps.getToken();
+      keyMeta = (await deps.getKeyMeta?.(token)) ?? (await fetchKeyMeta(token));
+    } catch (err) {
+      return abort([`omp-llm-role: aborted, no write: ${err instanceof Error ? err.message : String(err)}`]);
+    }
     const tier = tierGate(keyMeta);
     if (tier === "none") {
       return abort([
@@ -566,7 +583,9 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
   } catch (err) {
     const message = err instanceof ConfigEditError ? `config edit refused: ${err.message}` : err instanceof Error ? err.message : String(err);
     deps.notify([`omp-llm-role: aborted, no write: ${message}`]);
-    return { decisions: [], wrote: false, aborted: message };
+    // An exception escaping the run is a defect (a bug), unlike the enumerated
+    // environment aborts above: mark it so the extension can report it.
+    return { decisions: [], wrote: false, aborted: message, defect: message };
   }
 }
 
