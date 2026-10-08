@@ -133,6 +133,7 @@ settings entry the global behavior is unchanged.
 | `llm-role-history.jsonl` | one JSON row per completed run: `{ ts, trigger, keyMeta{isFreeTier, limitRemaining, creditsRemaining}, decisions[] }` | append-only decision log |
 | `llm-role-projects.json` | `{ projects: [{ root, lastUsed }] }` | the plugin's memory of the projects where `/project-roles` was used (the explorer's scope list) |
 | `.llm-role-refresh.lock` | `O_EXCL` create, holds `"<pid> <iso>"` | serializes concurrent session starts; stale (> 60 s) locks are unlinked and retried once |
+| `llm-role-error-reports.json` | `{ reports: [{ fingerprint, label, title, firstSeen, lastSeen, createdDay?, offeredDay?, count, action, issueNumber?, issueUrl? }], dayCount: { day, count } }` | what the opt-in `errorReporting` path filed, offered or suppressed |
 
 - `llm-role-projects.json` (issue #28) is **global knowledge** and lives in the
   agent dir, never a project's `.omp`. `registerProject(root)` (`src/project-registry.ts`)
@@ -147,6 +148,20 @@ settings entry the global behavior is unchanged.
   `--dry-run`/cancelled `/project-roles` registers nothing. A write failure is
   logged, never thrown: the registry is a convenience index, not a run
   prerequisite.
+
+- `llm-role-error-reports.json` is the ledger of the opt-in error-reporting path
+  (`src/error-report.ts`, `ERROR_REPORT_LEDGER_FILE`) — the plugin's memory of
+  what it filed, offered or suppressed. Like `llm-role-projects.json` it is
+  **global knowledge** and lives in the agent dir, never a project's `.omp`; the
+  write point is `writeLedger` (temp file + `rename`, so two sessions cannot
+  interleave into a corrupt file) and reading is pure and tolerant — missing,
+  unparseable or unexpected-shape content yields an empty ledger, so a corrupt
+  ledger never blocks reporting or the run. Each `reports[]` row remembers one
+  fingerprint's `action` (`created`/`commented`/`offered`/`suppressed`), its
+  `issueNumber`/`issueUrl`, the `createdDay`/`offeredDay` that gate re-creation
+  and re-offering, and a `count`; `dayCount` tracks the UTC-day creation total
+  that feeds the 3-creations-per-day cap. Nothing is written when
+  `errorReporting` is `off`.
 
 - `previousModelRoles` is the full snapshot of the last `modelRoles` block
   **before** the plugin changed it — a manual rollback aid; there is no rollback
@@ -222,21 +237,35 @@ session, not the next day. Two consequences a maintainer must know:
 ## Error handling
 
 `runUpdater` wraps the whole run; `ConfigEditError` and any other throw become
-`omp-llm-role: aborted, no write: <message>`. Abort paths and what each leaves
-untouched:
+`omp-llm-role: aborted, no write: <message>`. The aborts split into two classes,
+and the `defect` column below marks which ones `RunResult` flags: an **exception
+abort** (a bug this plugin should fix) carries `defect` and, when the opt-in
+`errorReporting` setting is on, is reported through `src/error-report.ts`; an
+**enumerated environment abort** (an expected condition) leaves `defect` unset
+and is notify-only. Abort paths and what each leaves untouched:
 
-| Failure | Behavior | State / config |
-|---|---|---|
-| Settings validation fails | abort, notify the offending role/key | no write, no state change |
-| Ranking data unavailable (fetch fails, no fresh cache) | abort, notify | no write, no state change |
-| Key fetch (`omp token`/registry) or `/api/v1/key`, `/api/v1/credits` fails | abort, notify | no write, no state change |
-| Catalog fetch fails | abort, notify | no write, no state change |
-| Both tier branches false (no budget, no free quota) | abort, notify | no write, no state change |
-| Lock not acquired | abort (`LOCK_ABORT`) | no write, no state change |
-| Write conflict after 3 retries | abort (`CONFLICT_ABORT`) | no write, state file untouched |
-| `patchConfig` structural surprise / self-check mismatch | abort (`config edit refused: …`) | no write, no state change |
-| Zero decisions changed | no write at all (config mtime untouched) | history row appended (full run) |
-| Dry run | decisions reported, nothing written | no day-gate stamp, no history row |
+| Failure | Behavior | State / config | `defect` |
+|---|---|---|---|
+| Settings validation fails | abort, notify the offending role/key | no write, no state change | — |
+| Ranking data unavailable (fetch fails, no fresh cache) | abort, notify | no write, no state change | — |
+| Key fetch (`omp token`/registry) or `/api/v1/key`, `/api/v1/credits` fails | abort, notify | no write, no state change | — |
+| Catalog fetch fails | abort, notify | no write, no state change | yes |
+| Both tier branches false (no budget, no free quota) | abort, notify | no write, no state change | — |
+| Lock not acquired | abort (`LOCK_ABORT`) | no write, no state change | — |
+| Write conflict after 3 retries | abort (`CONFLICT_ABORT`) | no write, state file untouched | — |
+| `patchConfig` structural surprise / self-check mismatch | abort (`config edit refused: …`) | no write, no state change | yes |
+| Any other throw inside the run (the catch-all) | abort, notify | no write, no state change | yes |
+| Zero decisions changed | no write at all (config mtime untouched) | history row appended (full run) | — |
+| Dry run | decisions reported, nothing written | no day-gate stamp, no history row | — |
+
+- **`defect` vs the enumerated aborts.** The enumerated environment aborts —
+  settings invalid, ranking data unavailable, tier `none`, lock, write conflict
+  and the key-fetch failure — are conditions of the user's machine or account,
+  not plugin defects, so `runUpdater` returns them without `defect` and the
+  extension does not report them. Only the exception aborts carry `defect` (the
+  message), and the extension's `reportDefect` helper routes it to
+  `reportUnexpectedError`. A command handler that throws *outside* `runUpdater`
+  (the six catch sites) is reported the same way via `reportCommandError`.
 
 - The day-gated agent sync's lock/conflict failures are handled separately: a
   lock it cannot acquire is benign (`{ decisions: [], wrote: false }`); a
