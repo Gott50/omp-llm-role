@@ -116,21 +116,32 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 
 ## Status
 
-- **CI/CD landed 2026-10-08** (`fa7e546`, docs follow-up `4f78ce2`): every pull
-  request and every `main` push runs the suite on GitHub (verified green on PR
-  #57 and on the `main` push), and a `v*` tag push publishes to npm over OIDC
-  and creates the GitHub Release. The guard was verified with a negative control
-  — tag `v0.0.1` against version `1.1.0` failed in `notes` before any publish.
-  The `v1.1.0` tag was repointed to `4f78ce2` (its original commit predates the
-  workflow file, so the dispatch was rejected) and the release run then passed
-  the guard and the npm floor, packed `omp-llm-role-1.1.0.tgz` (56 files,
-  308.4 kB) and failed only at `npm publish` with `E404` — the trusted publisher
-  is not registered yet, so npm had no credential. The registry is untouched
-  (`latest` = `1.0.0`). Registering the publisher (with the direct-publish tick,
-  see [`ci.md`](ci.md)) is the only remaining step; re-running the workflow
-  against `v1.1.0` then completes the publish.
+- **CI/CD landed 2026-10-08** (`fa7e546`, docs follow-ups `4f78ce2`, `1d20ef9`,
+  `9244fdc`, `3c0125a`): every pull request and every `main` push runs the suite
+  on GitHub (verified green on PR #57 and on the `main` pushes), and a `v*` tag
+  push publishes to npm over OIDC and creates the GitHub Release. The guard was
+  verified with a negative control — tag `v0.0.1` against version `1.1.0` failed
+  in `notes` before any publish.
+- **1.1.0 published by CD 2026-10-09** (run 37897647817,
+  `gh workflow run ci.yml --ref v1.1.0`): the guard and the npm floor passed,
+  `npm publish` completed over OIDC trusted publishing with a provenance
+  attestation (`npm audit signatures`: 0 invalid, 0 missing), and the GitHub
+  Release was created with the 1.1.0 CHANGELOG section as its body. Verified:
+  `dist-tags.latest` = `1.1.0`, npm's `gitHead` = `4f78ce2` (the tag's commit),
+  `_npmUser` = `GitHub Actions` carrying the trusted-publisher OIDC config, and
+  the tarball is 56 files / 308.4 kB. The `v1.1.0` tag was repointed to
+  `4f78ce2` first — its original commit predates the workflow file, so the
+  dispatch was rejected (see [`ci.md`](ci.md)).
+- **npm route smoke-tested for 1.1.0** (2026-10-09, omp 18.8.6, throwaway
+  `HOME`, cwd outside the real home tree): `omp plugin install omp-llm-role`
+  installed 1.1.0 from the registry (`omp plugin doctor`: 4 ok, 0 warnings,
+  0 errors) and the post-install session run (`omp -p "say ok"` with
+  `OPENROUTER_API_KEY` from `omp token openrouter`) wrote `modelRoles`
+  (9 roles), `retry.fallbackChains` and `task.disabledAgents: [designer]` into
+  that HOME's `config.yml`, landed `llm-role-state.json` +
+  `llm-role-history.jsonl`, and answered.
 - **1.1.0 cut 2026-10-08** (`c013918`, tagged `v1.1.0` — repointed to `4f78ce2`,
-  see the CI/CD bullet). `package.json` and
+  see the publish bullet). `package.json` and
   `.omp-plugin/marketplace.json` bumped in lockstep (plus `package-lock.json`
   via `npm install --package-lock-only` — the repo keeps it in lockstep, see
   `8811309`), `## [Unreleased]` renamed to `## [1.1.0] - 2026-10-08`, and the
@@ -148,26 +159,6 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   `modelRoles` (9 roles), `retry.fallbackChains` and
   `task.disabledAgents: [designer]` into that HOME's `config.yml`, landed
   `llm-role-state.json` + `llm-role-history.jsonl`, and the session answered.
-  The npm route has **not** been smoke-tested for 1.1.0 — it is still serving
-  1.0.0.
-- **npm publish pending a valid token.** The `~/.npmrc` token is rejected
-  (`npm whoami` → 401 "your authentication token seems to be invalid",
-  `npm publish` → 404 on `PUT /omp-llm-role`), so `omp-llm-role@1.1.0` is not
-  on the registry yet, `dist-tags.latest` still points at `1.0.0`, and **npm's
-  `gitHead` for 1.1.0 does not exist yet** — the tag currently stands on its
-  own. The token is the only credential source (no repo `.npmrc`, no
-  `/opt/homebrew/etc/npmrc`, no `NPM_TOKEN` in the environment or the shell
-  profiles, no keychain entry) and it is a literal value, not a `${NPM_TOKEN}`
-  indirection, so the cause is a rejected/revoked/expired token — **not** the
-  2026-07-31 GAT restriction, which covers account/org/package-management
-  actions and not `whoami`, and not direct publish either (that loss is
-  targeted January 2027). `npm ping` and `npm owner ls` still succeed because
-  they are unauthenticated reads. Fix: the release workflow — OIDC trusted
-  publishing, no token — once the trusted publisher is registered (see
-  [`ci.md`](ci.md)); the tag was repointed to `4f78ce2` so the workflow could be
-  dispatched against it. The tag was cut before the publish (the documented
-  order is publish-then-tag) precisely so the pinned git ref and the changelog
-  link resolve meanwhile.
 - **1.0.0 on all three channels** (2026-10-03): `omp-llm-role@1.0.0` on npm
   (`dist-tags.latest` = `1.0.0`), tagged `v1.0.0` at `fe98b76` (npm's
   `gitHead`); all three routes verified end-to-end against the real URLs
@@ -176,7 +167,7 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   landed the three daily caches in the installed copy.
 - **Stray registry placeholder.** The registry also carries a `0.0.0-stage`
   version ("Temporary package placeholder for staged publishing", 334 B,
-  published 2026-10-03). It is not from this tree; `latest` still points at
-  `1.0.0`, so it does not affect installs.
+  published 2026-10-03). It is not from this tree and does not affect installs
+  (`latest` is `1.1.0`).
 - **Next release: one owed.** `## [Unreleased]` carries the CI/CD entry; the
   number comes from the Unreleased scope, not from the open issues.
