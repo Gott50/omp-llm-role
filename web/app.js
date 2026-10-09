@@ -154,6 +154,7 @@ const TIPS = {
   focusProvenance: "Provenance: the benchmark's owner (the catalog row's dataset_org_id, falling back to dataset_slug) and the source's own per-entry org mix (the dominant lab and its share). A cross-check on the pool-derived composition axis: agree/disagree records whether the two concur. An annotation, never a gate — a vendor-populated source is warned but never drops a candidate; unknown means there is neither an owner nor a payload org mix.",
   focusCrossSource: "Cross-source: the zeroeval per-entry price/context compared against the plugin's own price/context for the models carrying the metric (the median relative divergence, within a 0.5 tolerance). The speed figure is informational only (rps vs tok/s). An annotation, never a gate — it never feeds the 1/price² blend; unknown means no model joined or the payload carried none of the four fields.",
   imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
+  providerPin: "Hard provider pin: the OpenRouter provider slug this role's requests are routed to (a tiered slug like deepinfra/fp8 is accepted verbatim). Setting it opts the role out of the automatic best-route pin; empty = default OpenRouter routing.",
   features: "Opt-in capability presets (issue #40). Each flag applies the plugin's recommended settings for that capability to this role; an explicit knob value always wins. Export writes the flag, not the expanded values, so a future change to the recommendation keeps reaching the role.",
   featureState: "inherit = use the global flag (features.<id> in the lock file); on/off = a per-role override (roles.<role>.features.<id>) that beats the global in either direction.",
   featureKnob: "An individual knob the capability's recommended bundle fills. Leave it at inherit to take the recommendation; set a value to override it (an explicit value always wins over the flag).",
@@ -507,6 +508,15 @@ function renderExplain() {
   if (ex.keyReason !== "active") keyLine += " (reason: " + ex.keyReason + ")";
   panel.append(el("p", { class: "sub key-line", "data-tip": TIPS.key, text: keyLine }));
 
+  // The pin basis: a manual pin (from the edited def) overrides the automatic
+  // best-route pin the updater would write. Read-only here.
+  const manualPin = state.defs[state.role] ? state.defs[state.role].providerPin : undefined;
+  if (manualPin) {
+    panel.append(el("p", { class: "sub pin-line", "data-tip": TIPS.providerPin, text: "pin: " + manualPin + " (manual)" }));
+  } else if (ex.autoPin) {
+    panel.append(el("p", { class: "sub pin-line", "data-tip": TIPS.providerPin, text: "auto pin: " + ex.autoPin }));
+  }
+
   panel.append(el("h3", { "data-tip": TIPS.composition, text: "Value composition" }));
   const comp = el("table", { class: "comp" });
   comp.append(
@@ -549,7 +559,7 @@ function renderExplain() {
   panel.append(el("p", { class: "cost", "data-tip": TIPS.lambda, text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = " + LAMBDA_DERIVATION + ")" : " (override)") }));
   const thinkNote = ex.role.thinking === undefined ? "bare" : ":" + ex.role.thinking;
   const cacheNote = ex.role.cacheHitRate > 0 ? " · cache " + ex.role.cacheHitRate : "";
-  const ownNote = ex.ownProvider ? " · own lab" : "";
+  const ownNote = ex.ownProvider ? " · best route" : "";
   panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × " + thinkNote + ")" : " (" + thinkNote + ")") + cacheNote + ownNote + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
 
   panel.append(el("h3", { "data-tip": TIPS.whyNotHigher, text: "Why not higher" }));
@@ -1010,6 +1020,19 @@ function renderEditor() {
     scheduleRecompute();
   });
   panel.append(el("label", { class: "check" }, [imgCb, el("span", { "data-tip": TIPS.imageFilter, text: "requires image input (filters.image)" })]));
+
+  panel.append(el("h3", { "data-tip": TIPS.providerPin, text: "Provider pin" }));
+  const pin = el("input", { type: "text", class: "desc", "data-tip": TIPS.providerPin, value: def.providerPin || "", placeholder: "provider slug, e.g. deepinfra/fp8" });
+  pin.addEventListener("change", () => {
+    // Empty clears the key (default routing); a tiered slug is kept verbatim.
+    const value = pin.value.trim();
+    if (value === "") delete def.providerPin;
+    else def.providerPin = value;
+    renderEditor();
+    renderRoles();
+    scheduleRecompute();
+  });
+  panel.append(el("div", { class: "row-controls" }, [pin]));
 
   renderFeatures(panel);
 
