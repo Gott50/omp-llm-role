@@ -140,6 +140,13 @@ test("each global flag applies its recommended bundle", () => {
   }
 });
 
+test("providerPinning's buys describes the auto-pin, not only own-lab pricing", () => {
+  const row = FEATURES.find((f) => f.id === "providerPinning");
+  assert.ok(row, "providerPinning row exists");
+  assert.match(row.buys, /@<slug>|pin|route/i, `buys should name the route binding:\n${row.buys}`);
+  assert.deepEqual(row.recommended, { preferOwnProvider: true });
+});
+
 test("an explicit knob beats the flag", () => {
   const { settings, errors } = resolveSettings({ "features.cachePricing": true, "roles.default.cacheHitRate": 0.2 });
   assert.deepEqual(errors, []);

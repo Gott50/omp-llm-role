@@ -44,11 +44,11 @@ export const FEATURES: readonly FeatureRow[] = [
     label: "Prefer the model's own lab endpoint",
     // Per-model policy, not a scalar slug: the sensible pin differs per model,
     // so the bundle carries `preferOwnProvider` (evaluated against the model's
-    // own routes at rank time). It changes no eligibility — a model with no
-    // own-lab route keeps the default 1/price² blend.
+    // best route at rank time). It changes no eligibility — a model with no
+    // candidate route keeps the default 1/price² blend.
     description: "Price a model on its own lab's route where one exists (per-model policy; never drops a model)",
     recommended: { preferOwnProvider: true },
-    buys: "a model is priced on its own lab's route where one exists (DeepSeek's own endpoint, 94.5 % cache hit), falling back to the default blend otherwise",
+    buys: "each request is bound to the model's best provider route — the selector gains @<slug> — and the fallback chain carries the same model on its next-best providers plus each fallback model on its best providers, so a down route fails over within the model's own routes",
   },
   {
     id: "costCap",
