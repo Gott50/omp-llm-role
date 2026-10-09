@@ -99,8 +99,12 @@ Endpoints:
   expansion the preview would omit the preset the baseline includes and every
   row's Δ would be a lie. The posted def is the **authored** def (flags + explicit
   keys); the expansion is applied only for the ranking call, never persisted.
-- `handleExport` calls `writeRoleSettings(activeScope.lockPath, body.roles)` and
-  returns its result verbatim plus the written `lockPath`.
+- `handleExport` validates every dirty role first — `validateRole` plus a
+  **provider-pin check**: a `providerPin` that matches no route in the loaded
+  dataset is rejected (`role "<name>": provider pin "<slug>" matches no route in
+  the loaded dataset`) before any write, so an exported role cannot carry an
+  unroutable pin. It then calls `writeRoleSettings(activeScope.lockPath,
+  body.roles)` and returns its result verbatim plus the written `lockPath`.
 - Unknown `/api/*` → 404; wrong method → 405; non-API non-GET → 405.
 - `readBody` caps at `MAX_BODY = 1 MiB` (413); `readJson` → 400 on invalid JSON.
 - `serveStatic` resolves against `webDir` and rejects traversal (`full` must be
@@ -144,7 +148,11 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   `gapAbove`/`gapToTop`/`above`, `closing` (the
   per-metric raw target that would close the gap, via `inverseCardinal`, with
   unreachable/extrapolated notes), `dominators` (models both cheaper and at
-  least as good on `q`, top 3), and the availability overlay `key`/`keyReason`
+  least as good on `q`, top 3), `ownProvider` (true when the model was priced on
+  the soft best route rather than the blend), `autoPin` (the provider slug the
+  updater would write — `bestRoute(model, def)?.providerSlug` when the role sets
+  `preferOwnProvider` and carries no manual `providerPin`, else `null`), and the
+  availability overlay `key`/`keyReason`
   (the same verdict as `rankRows`, plus the reason it reads that way). It mirrors
   `rankRole`'s capability fill so the contributions sum exactly to `q`.
 
@@ -277,7 +285,16 @@ a scraped third-party site, so the DOM is built with
   changes call `scheduleRecompute()` (120 ms debounce).
 - **Explain**: `selectModel(id)` → `POST /api/explain {role, def, modelId}` →
   `renderExplain()` (composition table, cost line, "why not higher",
-  dominators, and the availability line).
+  dominators, and the availability line). The cost line appends `· best route`
+  when the model was priced on the soft best route (`ownProvider`), and a
+  **pin line** shows the pin in force: `pin: <slug> (manual)` when the edited def
+  carries a `providerPin`, else `auto pin: <slug>` from the explanation's
+  `autoPin` (read-only — the manual field is the only way to set one).
+- **Provider pin field**: the editor renders a text input for
+  `roles.<role>.providerPin` (a tiered slug like `deepinfra/fp8` is kept
+  verbatim; empty clears the key, resuming the automatic choice). It is the
+  manual override of the auto-pin; Export rejects a slug that matches no route in
+  the loaded dataset (see *Export path*).
 - **Availability overlay**: each row's `key` renders as a three-state badge in
   the `key` column; the **hide key-blocked** checkbox beside the filter/top-n
   controls drops `blocked` rows from the table (a client-side filter — the

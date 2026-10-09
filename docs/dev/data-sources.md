@@ -159,8 +159,11 @@ probability proportional to `1/price²`). The weight basis is the **input
 
 A role with a `providerPin` does **not** use this blend: it prices the
 model's matching route directly — the route's billed 3:1 price and its p50
-throughput (scoring.md, *Route-aware pricing*). The blend is the unpinned
-default.
+throughput (scoring.md, *Route-aware pricing*). A role with the soft
+`preferOwnProvider` policy (the `providerPinning` capability) likewise prices
+each model on its **best route** rather than the blend, falling back to the blend
+only when the model has no candidate route (scoring.md, *Capability presets*).
+The blend is the default for every other model.
 
 ## OpenRouter — key metadata (tier gate)
 

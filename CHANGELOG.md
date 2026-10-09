@@ -8,6 +8,26 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`providerPinning` now auto-configures the provider pin** — enabling the
+  capability (`preferOwnProvider: true`) makes the daily updater bind each role's
+  requests to its chosen model's **best provider route**: the selector gains the
+  `@<slug>` suffix (`openrouter/<id>@<slug>:<level>`, which omp applies as
+  `compat.openRouterRouting = { only: [slug] }`) and the fallback chain carries
+  the same model on its next-best providers plus each fallback model on its best
+  providers, so a down route fails over within the model's own routes. The route
+  basis is the model's **best route** by the role's own value (the value-max
+  route among the filter-passing, non-degraded, priced routes, cap-respecting;
+  ties by slug then id) — replacing the old own-lab slug-prefix match — and it
+  stays **soft**: a model with no candidate route keeps the `1/price²` blend and
+  is never dropped, so enabling the capability cannot shrink the eligible pool.
+  A hand-set `roles.<role>.providerPin` overrides the automatic choice and stays
+  a hard gate. The explorer gains a manual pin field and a read-only auto-pin
+  indicator, and Export rejects a pin that matches no route in the loaded
+  dataset. Every flag still ships off, so a stock config is byte-identical.
+  (spec #58)
+
 ### Changed
 
 - **Releases are cut by `scripts/release.ts` and delivered by the tag push** —

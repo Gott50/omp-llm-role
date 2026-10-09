@@ -1,4 +1,4 @@
-# Current state (2026-10-08)
+# Current state (2026-10-09)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
@@ -6,7 +6,7 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The ranking numbers
-below are the 2026-10-08 measurement (the input-price blend basis #21, the
+below are the 2026-10-09 measurement (the input-price blend basis #21, the
 #17/#18/#19/#20 wave and the #34–#40 focus-axis/capability-flag work; see the top
 bullets) and are not re-derived on read.
 
@@ -73,26 +73,31 @@ bullets) and are not re-derived on read.
   `src/features.ts`) is the single source of truth and `expandFeatures` the
   single precedence implementation (`effective def = shipped default ⊕
   preset(enabled flags) ⊕ explicit user keys`; a per-role `false` beats a global
-  `true`; an explicit knob always wins). Grounding on the 2026-10-07 cache
-  (`default` role, 142 eligible):
+  `true`; an explicit knob always wins). Grounding on the 2026-10-09 cache
+  (`default` role, 146 eligible):
 
   | Flag | Recommended settings | Measured effect |
   |---|---|---|
-  | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | 142 → 132 eligible, leader unchanged (`deepseek-v4.1-flash`, 0.579 $/M) |
-  | `cachePricing` | `cacheHitRate: 0.5` | 142 eligible, leader unchanged, its `priceEff` 0.579 → 0.508 (−12 %) |
-  | `providerPinning` | `preferOwnProvider: true` | per-model policy, never changes eligibility; 51 of 149 routed models match under a slug-prefix rule (33 exact, 17 prefix, 1 display-org), 10 of 25 orgs match for no model |
-  | `costCap` | `filters.maxPriceUsdPerM: 10` | 142 → 135 eligible (the top ≈5 %), leader unchanged; pool p90 7.8, p95 8.9 $/M, every leader 0.58–0.85 $/M |
+  | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | 146 → 135 eligible, leader unchanged (`deepseek-v4.1-flash`, 0.37 $/M) |
+  | `cachePricing` | `cacheHitRate: 0.5` | 146 eligible, leader unchanged, its `priceEff` 0.3732 → 0.3522 (−5.6 %) |
+  | `providerPinning` | `preferOwnProvider: true` | per-model policy, never changes eligibility; prices each model on its **best route** (value-max among the filter-passing, non-degraded, priced routes, cap-respecting; ties by slug then id) — 151 of 151 routed models have a candidate route, so the soft basis covers the whole routed field |
+  | `costCap` | `filters.maxPriceUsdPerM: 10` | 146 → 137 eligible (the top ≈6 %), leader unchanged; pool p90 7.8, p95 11.1 $/M, every leader 0.20–3.71 $/M |
 
   `providerPinning`'s recommended setting is a **soft per-model policy**
   (`preferOwnProvider`), not a hard `providerPin`: a hard pin would make a model
-  with no matching route ineligible and empty ~2/3 of a role's pool, so the
-  policy re-prices a model on its own lab's route where one exists and falls back
-  to the `1/price²` blend otherwise. `minContextTokens` is deliberately not in
-  the `endpointCeilings` bundle (an absolute floor cannot express the video's
-  fraction-of-the-model's-own-window complaint). The flags are settable from
-  `create-role.ts`, `/create-agent`, `/project-roles` (`--feature`/
-  `--list-features`) and the explorer's Features panel; the ranking numbers are
-  unchanged until a flag is turned on.
+  with no matching route ineligible and empty most of a role's pool, so the
+  policy prices a model on its **best route** — the value-max route among the
+  filter-passing, non-degraded, priced routes (thinking-adjusted price ≤
+  `maxPriceUsdPerM`; ties by slug then id) — and falls back to the `1/price²`
+  blend only when the model has no candidate route. The basis is soft: it never
+  changes eligibility, and on the 2026-10-09 cache every one of the 151 routed
+  models has a candidate route, so the capability covers the whole routed field
+  (the old own-lab slug-prefix rule matched only 51 of 149). `minContextTokens`
+  is deliberately not in the `endpointCeilings` bundle (an absolute floor cannot
+  express the video's fraction-of-the-model's-own-window complaint). The flags
+  are settable from `create-role.ts`, `/create-agent`, `/project-roles`
+  (`--feature`/`--list-features`) and the explorer's Features panel; the ranking
+  numbers are unchanged until a flag is turned on.
 
 - Cross-source axis (2026-10-07, issue #38): the focus-metric gate gained the
   cross-source axis — the zeroeval per-benchmark payload's **second, independent**
@@ -616,18 +621,18 @@ bullets) and are not re-derived on read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 407 llm-stats models; OpenRouter matched 155/407 (throughput), 153 priced (the
-  2026-10-07 snapshot read 150/400 — the daily cache moved, not the code; the
+- 408 llm-stats models; OpenRouter matched 155/408 (throughput), 153 priced (the
+  2026-10-08 snapshot read 155/407 — the daily cache moved, not the code; the
   #34–#40 axes and flags leave every ranking byte-identical until a flag is
   turned on).
 - Eligible per role: 146 (vision 75, designer 89, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.808), `smol` Muse Spark 1.1 (0.687),
-  `slow` Muse Spark 1.3 (0.832), `vision` Qwen3.8 Flash (0.731), `plan`
-  Muse Spark 1.3 (0.795), `commit` Muse Spark 1.1 (0.725), `tiny`
-  Mercury 2 (0.797), `task` DeepSeek-V4.1-Flash (0.749), `advisor`
-  Muse Spark 1.3 (0.786), `designer` DeepSeek-V4.1-Flash (0.761).
+  `default` DeepSeek-V4.1-Flash (0.810), `smol` DeepSeek-V4.1-Flash (0.729),
+  `slow` DeepSeek-V4.1-Flash (0.832), `vision` DeepSeek-V4.1-Flash (0.730),
+  `plan` Muse Spark 1.3 (0.793), `commit` DeepSeek-V4.1-Flash (0.762), `tiny`
+  Muse Spark 1.1 (0.791), `task` DeepSeek-V4.1-Flash (0.754), `advisor`
+  Muse Spark 1.3 (0.787), `designer` DeepSeek-V4.1-Flash (0.787).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)

@@ -134,6 +134,52 @@ gating — that this plugin never reads (zero occurrences in `src/`, `web/`,
 `tests/`). The plugin's `features.<id>` keys are plugin settings, not omp
 feature flags; do not merge the two.
 
+## The provider-pin auto-configuration (spec #58)
+
+When a role's **expanded** def sets `preferOwnProvider: true` (the
+`providerPinning` capability's recommended bundle) and carries **no** manual
+`providerPin`, the updater binds the role's requests to the chosen model's best
+route by writing that route's provider slug as the selector's `@<slug>` suffix:
+
+```
+openrouter/<id>@<slug>:<level>
+```
+
+omp's `splitUpstreamRouting` parses the trailing `@<slug>` and applies
+`compat.openRouterRouting = { only: [slug] }`, so the price the ranking assumed
+is the price the request pays. The slug is `bestRoute(chosenModel, def)`'s
+`providerSlug` — the value-max candidate route (see scoring.md, *Capability
+presets*). The pin is re-derived on every run, so it follows the ranking when the
+chosen model changes. A manual `roles.<role>.providerPin` **wins** over the
+automatic choice and stays a **hard** gate (a model with no matching route is
+ineligible); clearing it resumes the automatic choice.
+
+**Chain shape.** The primary's chain key is the selector minus the trailing
+`:level` — so it **includes** the pin (`openrouter/<id>@<slug>`). Its values, in
+order:
+
+1. the same model on its 2nd-best route,
+2. the same model on its 3rd-best route,
+3. then, for each of the `fallbackChainDepth` fallback models, that model on its
+   own top-3 routes (best, 2nd, 3rd).
+
+Length = `2 + 3·fallbackChainDepth` (8 at the shipped depth 2). Every entry
+carries the same `@<slug>` suffix (and the role's thinking level where the target
+advertises it). A model with fewer than 3 candidate routes contributes only the
+routes it has (0 → 0 entries). The probe walk target is unchanged
+(`1 + fallbackChainDepth` — it counts models, not routes).
+
+**Prune on a pin change.** Because the chain key includes the pin, a pin change
+changes the key; the updater's chain prune (`state.pluginWrittenChainKeys`) drops
+the old key so a stale pinned chain does not linger.
+
+**No-ops.** The auto-pin writes nothing when: the capability is off
+(`preferOwnProvider` not `true`); a manual `providerPin` is set; the role is
+locked or disabled; the selector is not an OpenRouter selector; the model has no
+route data; no route passes the role's endpoint filters; or the best route has no
+usable billed price. With the capability off the written config is byte-identical
+to before.
+
 ## State, history, lock
 
 All under the agent dir (`agentDir()` in `src/state.ts`), next to the config
