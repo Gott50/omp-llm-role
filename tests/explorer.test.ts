@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -790,4 +790,149 @@ test("the focus table's unassessed row points at Export before reload", () => {
   const src = readFileSync(join(process.cwd(), "web", "app.js"), "utf8");
   assert.match(src, /not assessed — Export, then reload to assess the edited definition/);
   assert.doesNotMatch(src, /not assessed — reload to assess the edited definition/);
+});
+
+// ---------------------------------------------------------------------------
+// Manual provider pin (issue #62)
+// ---------------------------------------------------------------------------
+
+/** The bound port of a listening server (the tests bind to an ephemeral port). */
+function listenPort(server: Server): number {
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("expected a TCP address");
+  return address.port;
+}
+
+/** One standard-tier route with a distinct provider slug, for the pin tests. */
+function endpoint(id: string, providerSlug: string, price: number, tput: number): OpenRouterEndpointRecord {
+  return { id, providerSlug, serviceTier: null, status: 0, free: false, variant: "standard", price, weightPrice: price, cacheReadPrice: price, tput, latency: null, contextLength: 200000, maxCompletionTokens: 100000, supportsTools: true };
+}
+
+// `alpha` carries a cheap and a pricey route; `beta` only the cheap one. A role
+// pinned to the pricey slug prices alpha there and drops beta (no such route).
+const PIN_MODELS: Model[] = [
+  { ...makeModel("alpha", 80, 5, 100), routes: [endpoint("alpha-cheap", "cheapco/fp8", 1, 100), endpoint("alpha-pricey", "priceyco/fp8", 9, 100)] },
+  { ...makeModel("beta", 60, 3, 100), routes: [endpoint("beta-cheap", "cheapco/fp8", 1, 100)] },
+];
+const PIN_RANK: RankData = { models: PIN_MODELS, fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+const PIN_DEF = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+
+test("a manual providerPin prices the pinned route in the preview", async () => {
+  const handle = await bootWithState(() => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  try {
+    const res = await fetch(`${handle.url}/api/rank`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "pinned", def: { ...PIN_DEF, providerPin: "priceyco/fp8" } }),
+    });
+    const body: unknown = await res.json();
+    assert.ok(isRecord(body));
+    assert.deepEqual(body.errors, []);
+    const rows = body.rows;
+    assert.ok(Array.isArray(rows));
+    const alpha = rows.find((r) => isRecord(r) && r.id === "alpha");
+    assert.ok(alpha);
+    assert.equal(alpha.priceEff, 9); // the pinned route's price, not the blend
+    // beta has no priceyco route, so the pin drops it.
+    assert.equal(rows.some((r) => isRecord(r) && r.id === "beta"), false);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("export writes a valid tiered providerPin and the preview reflects it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-pin-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} })));
+  const { promise, resolve } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", resolve);
+  await promise;
+  const port = listenPort(server);
+  try {
+    const def = { ...PIN_DEF, providerPin: "priceyco/fp8" };
+    const expRes = await fetch(`http://127.0.0.1:${port}/api/export`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roles: { pinned: def } }),
+    });
+    const expBody: unknown = await expRes.json();
+    assert.ok(isRecord(expBody));
+    assert.equal(expBody.ok, true);
+
+    const written = JSON.parse(readFileSync(lockPath, "utf8")) as { settings: { "omp-llm-role": Record<string, unknown> } };
+    assert.equal(written.settings["omp-llm-role"]["roles.pinned.providerPin"], "priceyco/fp8");
+
+    const rankRes = await fetch(`http://127.0.0.1:${port}/api/rank`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "pinned", def }),
+    });
+    const rankBody: unknown = await rankRes.json();
+    assert.ok(isRecord(rankBody));
+    const rows = rankBody.rows;
+    assert.ok(Array.isArray(rows));
+    const alpha = rows.find((r) => isRecord(r) && r.id === "alpha");
+    assert.ok(alpha);
+    assert.equal(alpha.priceEff, 9);
+  } finally {
+    server.close();
+  }
+});
+
+test("export rejects a providerPin that matches no route without writing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-pin-bad-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const before = readFileSync(lockPath, "utf8");
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} })));
+  const { promise, resolve } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", resolve);
+  await promise;
+  const port = listenPort(server);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/export`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roles: { pinned: { ...PIN_DEF, providerPin: "ghostco/fp8" } } }),
+    });
+    const body: unknown = await res.json();
+    assert.ok(isRecord(body));
+    assert.equal(body.ok, false);
+    const errors = body.errors;
+    assert.ok(Array.isArray(errors));
+    assert.ok(errors.some((e) => typeof e === "string" && e.includes("ghostco/fp8")));
+    // No write: the lock file is byte-identical.
+    assert.equal(readFileSync(lockPath, "utf8"), before);
+  } finally {
+    server.close();
+  }
+});
+
+test("explain returns the automatic pin only when preferOwnProvider is on and no manual pin", async () => {
+  const handle = await bootWithState(() => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  try {
+    const explain = async (def: unknown): Promise<Record<string, unknown>> => {
+      const res = await fetch(`${handle.url}/api/explain`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "auto", def, modelId: "alpha" }),
+      });
+      const body: unknown = await res.json();
+      assert.ok(isRecord(body));
+      return body;
+    };
+    // preferOwnProvider on, no manual pin: the best route (cheapest by value) is the auto pin.
+    const auto = await explain({ ...PIN_DEF, preferOwnProvider: true });
+    assert.equal(auto.eligible, true);
+    assert.equal(auto.autoPin, "cheapco/fp8");
+    // A manual pin overrides the automatic one.
+    const manual = await explain({ ...PIN_DEF, preferOwnProvider: true, providerPin: "priceyco/fp8" });
+    assert.equal(manual.autoPin, null);
+    // The preference off: no automatic pin.
+    const off = await explain({ ...PIN_DEF, preferOwnProvider: false });
+    assert.equal(off.autoPin, null);
+  } finally {
+    await handle.close();
+  }
 });

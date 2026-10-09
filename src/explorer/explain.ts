@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { BENCHMARK_CHANCE, CAPABILITY_FILL, bestRoute, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -264,10 +264,14 @@ export type Explanation =
       value: number;
       q: number;
       priceEff: number;
-      /** true when the model was priced on its own lab's route (the soft
+      /** true when the model was priced on the soft best route (the
        * `preferOwnProvider` preference, no hard pin) rather than the 1/price²
        * blend — the panel shows WHY the price is what it is. */
       ownProvider: boolean;
+      /** the automatic pin: the model's best route's provider slug when the role
+       * prefers its own route and carries no manual pin, else null. Read-only in
+       * the UI; a manual `providerPin` overrides it. */
+      autoPin: string | null;
       role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
       contributions: Contribution[];
       cost: { priceEff: number; billedPrice: number; lambda: number; penalty: number; q: number; value: number };
@@ -298,8 +302,11 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   // prefers the model's own lab endpoint is priced on that route where one exists,
   // else on the blend. Never a gate — a model with no own-lab route keeps the blend.
   const route = roleRoute(model, def);
-  // The model is priced on its own lab's route (not a hard pin, not the blend).
+  // The model is priced on the soft best route (not a hard pin, not the blend).
   const ownProvider = pinRoute === null && route !== null;
+  // The automatic pin the updater would write: the model's best route's slug,
+  // only when the role prefers its own route and carries no manual pin.
+  const autoPin = def.providerPin === undefined && def.preferOwnProvider === true ? bestRoute(model, def)?.providerSlug ?? null : null;
   const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, pinRoute, cacheHitRate) == null);
   if (missingRequired.length > 0) reasons.push(`missing required metric(s): ${missingRequired.join(", ")}`);
   if (def.filters?.image && !model.multimodal) reasons.push("role requires image input; model is text-only");
@@ -403,6 +410,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     q: self.q,
     priceEff: self.priceEff,
     ownProvider,
+    autoPin,
     role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking, cacheHitRate },
     contributions,
     cost: { priceEff: self.priceEff, billedPrice: route !== null ? routeEffectivePrice(route, cacheHitRate) ?? eff.price : eff.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
