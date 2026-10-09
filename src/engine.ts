@@ -1060,39 +1060,123 @@ export function pinnedRoute(model: Model, providerPin: string | undefined): Open
   return (model.routes ?? []).find((r) => r.providerSlug === providerPin) ?? null;
 }
 
-/** The model's own-lab route (the soft `preferOwnProvider` basis): the first route
- * whose lowercased `providerSlug` equals the lowercased `orgId`, or starts with
- * `orgId.toLowerCase() + "/"` — route slugs are tiered (`xiaomi/fp8`), so a prefix
- * match is the lab's own endpoint. When the orgId prefix finds nothing, the
- * lowercased display `org` is tried the same way (`Meta` vs slug `meta`). First
- * match in the model's `routes` order; null when nothing matches. There is no
- * alias map in v1: an org whose lab slug differs (`zai-org` vs `z-ai`) falls back
- * to the blend rather than mis-pinning. */
-export function ownProviderRoute(model: Model, orgId: string, org: string): OpenRouterEndpointRecord | null {
-  const routes = model.routes ?? [];
-  const match = (key: string): OpenRouterEndpointRecord | null => {
-    const k = key.toLowerCase();
-    if (k.length === 0) return null;
-    return routes.find((r) => {
-      const slug = r.providerSlug.toLowerCase();
-      return slug === k || slug.startsWith(`${k}/`);
-    }) ?? null;
-  };
-  return match(orgId) ?? match(org);
+/** The role's thinking-adjusted billed price for a model at `basePrice`: the
+ * thinking factor applies only when the model actually runs the role's level
+ * (catalog `thinkingLevels` wins; without it the `supports_reasoning` flag
+ * gates). Mirrors the factor `rankRole` applies, so the route basis and the
+ * ranking can never disagree. */
+function thinkingAdjustedPrice(model: Model, def: RoleDef, basePrice: number): number {
+  const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
+  if (levelFactor === 1) return basePrice;
+  const levels = model.thinkingLevels;
+  const runsAtLevel = levels
+    ? levels.length > 0 && (def.thinking === undefined || META_LEVELS[def.thinking] === true || levels.includes(def.thinking))
+    : model.thinking;
+  return runsAtLevel ? basePrice * levelFactor : basePrice;
+}
+
+/** The role's value of a model priced on `route` (null = the 1/price² blend):
+ * the price-free quality composite q over the model's metrics with the route's
+ * p50 throughput and cache-adjusted billed price, minus λ·priceEff. Returns null
+ * when the model has no usable billed price. Shared by `rankRole` and
+ * `routeValue` so the two can never disagree. */
+function roleValueOnRoute(
+  em: Model,
+  def: RoleDef,
+  route: OpenRouterEndpointRecord | null,
+  cacheHitRate: number,
+  lambda: number,
+  levelFactor: number,
+  qW: number,
+): { q: number; priceEff: number; value: number; parts: Record<string, number> } | null {
+  const basePrice = route !== null ? routeEffectivePrice(route, cacheHitRate) : em.price;
+  if (basePrice == null) return null;
+  const priceEff = levelFactor === 1 ? basePrice : thinkingAdjustedPrice(em, def, basePrice);
+  let q = 0;
+  const parts: Record<string, number> = {};
+  for (const [metric, w] of Object.entries(def.weights)) {
+    if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
+    const raw = roleMetricValue(em, metric, route, cacheHitRate);
+    if (raw == null) {
+      // Sparse capability metrics are capability-filled (below-median, not 0)
+      // so absence is not a coverage penalty; every other metric contributes
+      // nothing when missing.
+      const fill = CAPABILITY_FILL[metric];
+      if (fill === undefined) continue;
+      const contrib = (w / qW) * fill;
+      parts[metric] = contrib;
+      q += contrib;
+      continue;
+    }
+    const contrib = (w / qW) * cardinalMetric(metric, raw);
+    parts[metric] = contrib;
+    q += contrib;
+  }
+  return { q, priceEff, value: q - lambda * priceEff, parts };
+}
+
+/** The model's routes that are candidates for the role's soft best-route basis:
+ * non-degraded (status === 0), passing `routePassesEndpointFilters(route, def.filters)`,
+ * with a usable billed price, and (when `filters.maxPriceUsdPerM > 0`) a
+ * thinking-adjusted price at or below the cap. Deterministic order: value desc,
+ * then providerSlug asc, then id asc. */
+export function candidateRoutes(model: Model, def: RoleDef): OpenRouterEndpointRecord[] {
+  const cacheHitRate = def.cacheHitRate ?? 0;
+  const cap = def.filters?.maxPriceUsdPerM ?? 0;
+  const out = (model.routes ?? []).filter((r) => {
+    if (r.status !== 0) return false;
+    if (!routePassesEndpointFilters(r, def.filters)) return false;
+    const p = routeEffectivePrice(r, cacheHitRate);
+    if (p === null || p <= 0) return false;
+    if (cap > 0 && thinkingAdjustedPrice(model, def, p) > cap) return false;
+    return true;
+  });
+  out.sort((a, b) => {
+    const va = routeValue(model, def, a);
+    const vb = routeValue(model, def, b);
+    if (va !== vb) return vb - va;
+    if (a.providerSlug !== b.providerSlug) return a.providerSlug < b.providerSlug ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  return out;
+}
+
+/** The role's value of one route: q over the model's metrics with the route's
+ * p50 throughput and cache-adjusted billed price, minus λ·priceEff_route
+ * (priceEff_route = routeEffectivePrice(route, cacheHitRate) × the role's
+ * thinking factor when the model runs the level). Exactly the value `rankRole`
+ * gives the model on that route; `-Infinity` for a route with no usable price. */
+export function routeValue(model: Model, def: RoleDef, route: OpenRouterEndpointRecord): number {
+  const cacheHitRate = def.cacheHitRate ?? 0;
+  const em = endpointFilteredModel(model, def.filters, cacheHitRate) ?? model;
+  const wPrice = def.weights.price ?? 0;
+  const qW = 1 - wPrice;
+  const lambda = roleLambda(def);
+  const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
+  const rv = roleValueOnRoute(em, def, route, cacheHitRate, lambda, levelFactor, qW);
+  return rv === null ? Number.NEGATIVE_INFINITY : rv.value;
+}
+
+/** `candidateRoutes` sorted by `routeValue` desc (ties: providerSlug asc, id asc). */
+export function rankedRoutes(model: Model, def: RoleDef): OpenRouterEndpointRecord[] {
+  return candidateRoutes(model, def);
+}
+
+/** `rankedRoutes(model, def)[0]` or null. The auto-pin slug and the soft basis. */
+export function bestRoute(model: Model, def: RoleDef): OpenRouterEndpointRecord | null {
+  return rankedRoutes(model, def)[0] ?? null;
 }
 
 /** The route a role prices a model on: the hard pin's route when the role is
- * pinned, else the model's own-lab route when the soft `preferOwnProvider`
- * preference is on and that route carries a usable billed price, else null (the
- * 1/price² blend). A preference never drops a model — an unmatched own route (or
- * one with no usable price) falls back to the blend. */
+ * pinned, else the model's best route by the role's own value when the soft
+ * `preferOwnProvider` preference is on, else null (the 1/price² blend). A
+ * preference never drops a model — a model with no candidate route keeps the
+ * blend. */
 export function roleRoute(model: Model, def: RoleDef): OpenRouterEndpointRecord | null {
   const pin = pinnedRoute(model, def.providerPin);
   if (pin !== null) return pin;
   if (def.providerPin !== undefined || def.preferOwnProvider !== true) return null;
-  const own = ownProviderRoute(model, model.orgId, model.org);
-  if (own === null) return null;
-  return routeEffectivePrice(own, def.cacheHitRate ?? 0) !== null ? own : null;
+  return bestRoute(model, def);
 }
 
 /** The metric value a role sees for a model. A pinned role's throughput is its
@@ -1142,12 +1226,11 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     // the pin and is ineligible (recorded by `providerPinDrops`).
     const pinRoute = pinnedRoute(m, def.providerPin);
     if (def.providerPin !== undefined && pinRoute === null) continue;
-    // Soft own-provider preference (issue #40): with no hard pin, a role that
-    // prefers the model's own lab endpoint is priced on that route where one
-    // exists (the same route basis a pin uses), else on the 1/price² blend. This
-    // is a preference, never a gate: a model with no own-lab route — or one whose
-    // route carries no usable billed price — keeps the blend, so the eligible
-    // count is unchanged. `providerPinDrops`/`pinUnmatched` key on
+    // Soft best-route preference (issue #40, re-based by #58): with no hard pin,
+    // a role that prefers a bound route is priced on the model's best route by
+    // the role's own value, else on the 1/price² blend. This is a preference,
+    // never a gate: a model with no candidate route keeps the blend, so the
+    // eligible count is unchanged. `providerPinDrops`/`pinUnmatched` key on
     // `def.providerPin` only, so the preference never drops a model.
     const route = roleRoute(m, def);
     // Endpoint capability gate: a role that declares endpoint filters is priced on
@@ -1160,49 +1243,17 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     const em = endpointFilteredModel(m, def.filters, cacheHitRate);
     if (em === null) continue;
     // The required-metric gate keys on the hard pin only (null when unpinned), so
-    // the soft own-provider preference can never change eligibility — it only
+    // the soft best-route preference can never change eligibility — it only
     // re-prices a model that already passes every gate.
     if (def.required.some((k) => roleMetricValue(em, k, pinRoute, cacheHitRate) == null)) continue;
-    // The billed price the role actually pays: the pinned route's cache-adjusted
-    // price, else the role's route-pool blend. Value needs one.
-    const basePrice = route !== null ? routeEffectivePrice(route, cacheHitRate) : em.price;
-    if (basePrice == null) continue;
-
-    // The factor assumes the model runs at the role's level. omp clamps
-    // unsupported levels, so a model whose catalog thinking[] excludes the
-    // level is priced bare — matching the updater, which appends no suffix in
-    // that case. Catalog data wins when present; without it (standalone
-    // ranking), the OR supports_reasoning flag gates.
-    const levels = m.thinkingLevels;
-    const runsAtLevel = levels
-      ? levels.length > 0 && (def.thinking === undefined || META_LEVELS[def.thinking] === true || levels.includes(def.thinking))
-      : m.thinking;
-    const priceEff = levelFactor === 1 || !runsAtLevel ? basePrice : basePrice * levelFactor;
+    // The role's value on its route basis (the pin's route, the soft best route,
+    // or the 1/price² blend). Null when the model has no usable billed price.
+    const rv = roleValueOnRoute(em, def, route, cacheHitRate, lambda, levelFactor, qW);
+    if (rv === null) continue;
     // maxPriceUsdPerM caps the role-priced price (the thinking-adjusted price the
     // role actually pays — the pinned route's price when pinned); 0 = off.
-    if ((def.filters?.maxPriceUsdPerM ?? 0) > 0 && priceEff > (def.filters?.maxPriceUsdPerM as number)) continue;
-
-    let q = 0;
-    const parts: Record<string, number> = {};
-    for (const [metric, w] of Object.entries(def.weights)) {
-      if (metric === "price") continue; // cost enters as the λ·$ penalty, not the blend
-      const raw = roleMetricValue(em, metric, route, cacheHitRate);
-      if (raw == null) {
-        // Sparse capability metrics are capability-filled (below-median, not 0)
-        // so absence is not a coverage penalty; every other metric contributes
-        // nothing when missing.
-        const fill = CAPABILITY_FILL[metric];
-        if (fill === undefined) continue;
-        const contrib = (w / qW) * fill;
-        parts[metric] = contrib;
-        q += contrib;
-        continue;
-      }
-      const contrib = (w / qW) * cardinalMetric(metric, raw);
-      parts[metric] = contrib;
-      q += contrib;
-    }
-    ranked.push({ model: em, value: q - lambda * priceEff, q, priceEff, parts });
+    if ((def.filters?.maxPriceUsdPerM ?? 0) > 0 && rv.priceEff > (def.filters?.maxPriceUsdPerM as number)) continue;
+    ranked.push({ model: em, value: rv.value, q: rv.q, priceEff: rv.priceEff, parts: rv.parts });
   }
   ranked.sort((a, b) => b.value - a.value);
   return ranked;
