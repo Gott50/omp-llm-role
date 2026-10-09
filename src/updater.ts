@@ -15,7 +15,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, type Ranked, type RankData } from "./engine.ts";
+import { bestRoute, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
 import { currentRankingId, enrichThinkingLevels, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
@@ -320,8 +320,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       );
     }
     const poolByRole: Record<string, Candidate[]> = {};
-    /** Per managed role: its bare chain key, role suffix, provider pin, and the pool it was chosen from. */
-    const chainPlanByRole: Record<string, { key: string; suffix: string | undefined; pin: string; pool: Candidate[]; chosenIdx: number }> = {};
+    /** Per managed role: its bare chain key, role suffix, provider pin, the pool it was chosen from, and the inputs the auto-pin chain builder needs (the expanded def for `rankedRoutes`, and whether the pin was auto-derived). */
+    const chainPlanByRole: Record<string, { key: string; suffix: string | undefined; pin: string; pool: Candidate[]; chosenIdx: number; def: RoleDef; autoPin: boolean }> = {};
     /** Roles whose `providerPin` matched no route: left unchanged, their current chain preserved. */
     const pinUnmatched: string[] = [];
     const probe = deps.probeModel ?? probeModel;
@@ -436,7 +436,16 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // thinking level (`openrouter/<id>@<slug>:<level>`) — omp's
       // `splitUpstreamRouting` parses the trailing `@<slug>` and applies
       // `compat.openRouterRouting = { only: [slug] }`.
-      const pin = def.providerPin !== undefined ? `@${def.providerPin}` : "";
+      //
+      // Auto-pin (spec #58): with the soft `preferOwnProvider` capability on and
+      // no manual pin, the chosen model's best route by the role's own value
+      // rides as that suffix, so the price the ranking assumed is the price the
+      // request pays. A manual `providerPin` is a hard gate and always wins; a
+      // model with no candidate route keeps default routing (bare selector).
+      const manualPin = def.providerPin;
+      const autoRoute = manualPin === undefined && def.preferOwnProvider === true ? bestRoute(chosen.ranked.model, def) : null;
+      const pinSlug = manualPin ?? autoRoute?.providerSlug;
+      const pin = pinSlug !== undefined ? `@${pinSlug}` : "";
       const chosenRow = rowById.get(chosen.catalogId);
       // Append only a level the model's catalog thinking[] actually supports —
       // omp clamps unsupported levels, so an unsupported pin would run at a
@@ -463,7 +472,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // came from. Values are built after the loop, once every key claim is known.
       if (settings.writeFallbackChains) {
         const key = suffix !== undefined && finalSelector.endsWith(`:${suffix}`) ? finalSelector.slice(0, -(suffix.length + 1)) : finalSelector;
-        chainPlanByRole[role] = { key, suffix, pin, pool, chosenIdx: pool.indexOf(chosen) };
+        chainPlanByRole[role] = { key, suffix, pin, pool, chosenIdx: pool.indexOf(chosen), def, autoPin: autoRoute !== null };
       }
     }
 
@@ -492,13 +501,34 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         const cheaper = after.filter((p) => p.ranked.priceEff <= chosenPrice);
         const pricier = after.filter((p) => p.ranked.priceEff > chosenPrice);
         const chainPool = [...cheaper, ...pricier].slice(0, settings.fallbackChainDepth);
-        chainUpserts[plan.key] = [
-          ...new Set(chainPool.map((p) => {
-            const row = rowById.get(p.catalogId);
-            const level = suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix)) ? `:${suffix}` : "";
-            return `openrouter/${p.catalogId}${plan.pin}${level}`;
-          })),
-        ].filter((v) => v !== plan.key);
+        // A chain value's thinking level is appended only when the target's
+        // catalog entry advertises support (or the level is a meta level).
+        const levelFor = (catalogId: string): string => {
+          const row = rowById.get(catalogId);
+          return suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix)) ? `:${suffix}` : "";
+        };
+        const values: string[] = [];
+        if (plan.autoPin) {
+          // Auto-pin chain (spec #58): the primary model on its 2nd/3rd-best
+          // routes, then each fallback model on its own top-3 routes — every
+          // entry bound to its route's provider, so a down primary provider
+          // falls back to the same model on another provider rather than a
+          // different model. A model with fewer than 3 candidate routes
+          // contributes only the routes it has (0 → 0 entries).
+          const chosenCandidate = plan.pool[plan.chosenIdx];
+          for (const r of rankedRoutes(chosenCandidate.ranked.model, plan.def).slice(1, 3)) {
+            values.push(`openrouter/${chosenCandidate.catalogId}@${r.providerSlug}${levelFor(chosenCandidate.catalogId)}`);
+          }
+          for (const p of chainPool) {
+            for (const r of rankedRoutes(p.ranked.model, plan.def).slice(0, 3)) {
+              values.push(`openrouter/${p.catalogId}@${r.providerSlug}${levelFor(p.catalogId)}`);
+            }
+          }
+        } else {
+          // Manual pin (every value carries it) or no pin (bare values).
+          for (const p of chainPool) values.push(`openrouter/${p.catalogId}${plan.pin}${levelFor(p.catalogId)}`);
+        }
+        chainUpserts[plan.key] = [...new Set(values)].filter((v) => v !== plan.key);
         referenced.add(plan.key);
       }
       // Locked roles keep their current chain: the plugin neither rewrites nor
