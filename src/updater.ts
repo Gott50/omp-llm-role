@@ -15,7 +15,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { bestRoute, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
+import { autoPinApplies, bestRoute, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
 import { currentRankingId, enrichThinkingLevels, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
@@ -67,6 +67,11 @@ export type Trigger = "session-start" | "manual";
 
 /** A ranked model resolved to a concrete catalog id. */
 type Candidate = { ranked: Ranked; catalogId: string };
+
+/** Per managed role: its bare chain key, role suffix, provider pin, the pool it
+ * was chosen from, and the inputs the auto-pin chain builder needs (the expanded
+ * def for `rankedRoutes`, and whether the pin was auto-derived). */
+type ChainPlan = { key: string; suffix: string | undefined; pin: string; pool: Candidate[]; chosenIdx: number; def: RoleDef; autoPin: boolean };
 
 export type Deps = {
   getToken(): Promise<string>;
@@ -320,8 +325,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       );
     }
     const poolByRole: Record<string, Candidate[]> = {};
-    /** Per managed role: its bare chain key, role suffix, provider pin, the pool it was chosen from, and the inputs the auto-pin chain builder needs (the expanded def for `rankedRoutes`, and whether the pin was auto-derived). */
-    const chainPlanByRole: Record<string, { key: string; suffix: string | undefined; pin: string; pool: Candidate[]; chosenIdx: number; def: RoleDef; autoPin: boolean }> = {};
+    const chainPlanByRole: Record<string, ChainPlan> = {};
     /** Roles whose `providerPin` matched no route: left unchanged, their current chain preserved. */
     const pinUnmatched: string[] = [];
     const probe = deps.probeModel ?? probeModel;
@@ -443,7 +447,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // request pays. A manual `providerPin` is a hard gate and always wins; a
       // model with no candidate route keeps default routing (bare selector).
       const manualPin = def.providerPin;
-      const autoRoute = manualPin === undefined && def.preferOwnProvider === true ? bestRoute(chosen.ranked.model, def) : null;
+      const autoRoute = autoPinApplies(def) ? bestRoute(chosen.ranked.model, def) : null;
       const pinSlug = manualPin ?? autoRoute?.providerSlug;
       const pin = pinSlug !== undefined ? `@${pinSlug}` : "";
       const chosenRow = rowById.get(chosen.catalogId);

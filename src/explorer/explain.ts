@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { BENCHMARK_CHANCE, CAPABILITY_FILL, bestRoute, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { autoPinApplies, BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, thinkingAdjustedPrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -269,7 +269,7 @@ export type Explanation =
        * blend — the panel shows WHY the price is what it is. */
       ownProvider: boolean;
       /** the automatic pin: the model's best route's provider slug when the role
-       * prefers its own route and carries no manual pin, else null. Read-only in
+       * prefers a bound route and carries no manual pin, else null. Read-only in
        * the UI; a manual `providerPin` overrides it. */
       autoPin: string | null;
       role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
@@ -298,21 +298,31 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   const cacheHitRate = def.cacheHitRate ?? 0;
   const em = endpointFilteredModel(model, def.filters, cacheHitRate);
   const eff = em ?? model;
-  // Soft own-provider preference (mirrors rankRole): with no hard pin, a role that
-  // prefers the model's own lab endpoint is priced on that route where one exists,
-  // else on the blend. Never a gate — a model with no own-lab route keeps the blend.
+  // Soft best-route preference (mirrors rankRole): with no hard pin, a role that
+  // prefers a bound route is priced on the model's best route by the role's own
+  // value, else on the blend. Never a gate — a model with no candidate route keeps
+  // the blend.
   const route = roleRoute(model, def);
   // The model is priced on the soft best route (not a hard pin, not the blend).
   const ownProvider = pinRoute === null && route !== null;
   // The automatic pin the updater would write: the model's best route's slug,
-  // only when the role prefers its own route and carries no manual pin.
-  const autoPin = def.providerPin === undefined && def.preferOwnProvider === true ? bestRoute(model, def)?.providerSlug ?? null : null;
+  // only when the role prefers a bound route and carries no manual pin. Reuses the
+  // already-computed `route` (the same best route) instead of recomputing it.
+  const autoPin = autoPinApplies(def) ? route?.providerSlug ?? null : null;
   const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, pinRoute, cacheHitRate) == null);
   if (missingRequired.length > 0) reasons.push(`missing required metric(s): ${missingRequired.join(", ")}`);
   if (def.filters?.image && !model.multimodal) reasons.push("role requires image input; model is text-only");
   if (def.providerPin !== undefined && pinRoute === null) reasons.push("no route matches the role's provider pin");
   if (em === null) reasons.push("no standard-tier route satisfies the role's endpoint filters");
   if (eff.price == null) reasons.push("no billed OpenRouter route");
+  // maxPriceUsdPerM caps the model's own price basis, never the soft best-route
+  // basis (mirrors rankRole): with no hard pin the gate uses the blend price, so
+  // the soft basis cannot change eligibility; a hard pin gates its route price.
+  const cap = def.filters?.maxPriceUsdPerM ?? 0;
+  if (cap > 0) {
+    const capBase = pinRoute !== null ? routeEffectivePrice(pinRoute, cacheHitRate) : eff.price;
+    if (capBase != null && thinkingAdjustedPrice(eff, def, capBase) > cap) reasons.push(`price exceeds the role's maxPriceUsdPerM cap (${cap})`);
+  }
   if (reasons.length > 0) return { eligible: false, reasons };
 
   const ranked = rankRole(def, models);

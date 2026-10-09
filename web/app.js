@@ -510,7 +510,7 @@ function renderExplain() {
 
   // The pin basis: a manual pin (from the edited def) overrides the automatic
   // best-route pin the updater would write. Read-only here.
-  const manualPin = state.defs[state.role] ? state.defs[state.role].providerPin : undefined;
+  const manualPin = state.defs[state.role]?.providerPin;
   if (manualPin) {
     panel.append(el("p", { class: "sub pin-line", "data-tip": TIPS.providerPin, text: "pin: " + manualPin + " (manual)" }));
   } else if (ex.autoPin) {

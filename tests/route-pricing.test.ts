@@ -5,7 +5,6 @@ import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import {
   bestRoute,
-  candidateRoutes,
   cardinalMetric,
   providerPinDrops,
   rankRole,
@@ -173,31 +172,31 @@ test("bestRoute breaks equal-value ties by providerSlug then id", () => {
   assert.equal(bestRoute(sameSlug, tputRole())?.id, "a");
 });
 
-test("candidateRoutes excludes a route over the role's maxPriceUsdPerM cap", () => {
+test("rankedRoutes excludes a route over the role's maxPriceUsdPerM cap", () => {
   const m = makeModel("m", 40, 5, 100);
   m.routes = [route({ providerSlug: "cheap", price: 1 }), route({ id: "r2", providerSlug: "pricey", price: 5 })];
   const def = roleWith({ filters: { maxPriceUsdPerM: 3 } });
-  assert.deepEqual(candidateRoutes(m, def).map((r) => r.providerSlug), ["cheap"]);
+  assert.deepEqual(rankedRoutes(m, def).map((r) => r.providerSlug), ["cheap"]);
   assert.equal(bestRoute(m, def)?.providerSlug, "cheap");
 });
 
-test("candidateRoutes excludes a degraded route", () => {
+test("rankedRoutes excludes a degraded route", () => {
   const m = makeModel("m", 40, 5, 100);
   m.routes = [route({ providerSlug: "down", status: 1, price: 1 }), route({ id: "r2", providerSlug: "up", price: 2 })];
-  assert.deepEqual(candidateRoutes(m, roleWith()).map((r) => r.providerSlug), ["up"]);
+  assert.deepEqual(rankedRoutes(m, roleWith()).map((r) => r.providerSlug), ["up"]);
 });
 
-test("candidateRoutes excludes an unpriced route", () => {
+test("rankedRoutes excludes an unpriced route", () => {
   const m = makeModel("m", 40, 5, 100);
   m.routes = [route({ providerSlug: "unpriced", price: null }), route({ id: "r2", providerSlug: "priced", price: 2 })];
-  assert.deepEqual(candidateRoutes(m, roleWith()).map((r) => r.providerSlug), ["priced"]);
+  assert.deepEqual(rankedRoutes(m, roleWith()).map((r) => r.providerSlug), ["priced"]);
 });
 
-test("candidateRoutes excludes a route failing the role's endpoint filters", () => {
+test("rankedRoutes excludes a route failing the role's endpoint filters", () => {
   const m = makeModel("m", 40, 5, 100);
   m.routes = [route({ providerSlug: "no-tools", supportsTools: false }), route({ id: "r2", providerSlug: "tools", supportsTools: true })];
   const def = roleWith({ filters: { tools: true } });
-  assert.deepEqual(candidateRoutes(m, def).map((r) => r.providerSlug), ["tools"]);
+  assert.deepEqual(rankedRoutes(m, def).map((r) => r.providerSlug), ["tools"]);
 });
 
 test("routeValue equals the value rankRole gives the model on that route", () => {
@@ -210,6 +209,40 @@ test("routeValue equals the value rankRole gives the model on that route", () =>
   assert.ok(best);
   assert.equal(rankedRoutes(m, def)[0].providerSlug, best.providerSlug);
   assert.equal(routeValue(m, def, best), ranked[0].value);
+});
+
+test("maxPriceUsdPerM gates the model's own price, not the soft best route", () => {
+  // Review counterexample: blend 5 > cap 3, routes [cheap 2, pricey 9]. Off, the
+  // blend is gated; on, the soft best route (cheap, 2) must NOT rescue the model —
+  // the cap is basis-independent, so both counts are 0.
+  const overCap = makeModel("overcap", 40, 5, 100);
+  overCap.routes = [route({ providerSlug: "cheap", price: 2 }), route({ id: "r2", providerSlug: "pricey", price: 9 })];
+  const def = roleWith({ filters: { maxPriceUsdPerM: 3 } });
+  const off = rankRole(def, [overCap]);
+  const on = rankRole({ ...def, preferOwnProvider: true }, [overCap]);
+  assert.equal(off.length, 0);
+  assert.equal(on.length, off.length);
+
+  // Blend ≤ cap with an over-cap value-best route: eligible both on and off, and
+  // the auto-pin route is under the cap.
+  const underCap = makeModel("undercap", 40, 2, 100);
+  underCap.routes = [route({ providerSlug: "cheap", price: 1, tput: 10 }), route({ id: "r2", providerSlug: "pricey", price: 9, tput: 1000 })];
+  const tdef = tputRole({ filters: { maxPriceUsdPerM: 3 } });
+  const off2 = rankRole(tdef, [underCap]);
+  const on2 = rankRole({ ...tdef, preferOwnProvider: true }, [underCap]);
+  assert.equal(off2.length, 1);
+  assert.equal(on2.length, off2.length);
+  const pin = bestRoute(underCap, { ...tdef, preferOwnProvider: true });
+  assert.ok(pin);
+  assert.ok(pin.price <= 3);
+});
+
+test("explainModel reports the maxPriceUsdPerM cap as an ineligibility reason", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [route({ providerSlug: "cheap", price: 2 })];
+  const ex = explainModel(roleWith({ filters: { maxPriceUsdPerM: 3 } }), [m], "m");
+  assert.equal(ex.eligible, false);
+  if (!ex.eligible) assert.ok(ex.reasons.some((r) => r.includes("maxPriceUsdPerM")));
 });
 
 test("preferOwnProvider never changes the eligible count", () => {
@@ -255,7 +288,7 @@ test("a hard providerPin wins over preferOwnProvider", () => {
   m.routes = [route({ providerSlug: "deepseek", price: 2 }), route({ id: "r2", providerSlug: "cerebras", price: 7 })];
   const ranked = rankRole(roleWith({ providerPin: "cerebras", preferOwnProvider: true }), [m]);
   assert.equal(ranked.length, 1);
-  assert.equal(ranked[0].priceEff, 7); // the pin's route, not the own-lab route
+  assert.equal(ranked[0].priceEff, 7); // the pin's route, not the soft best route
 });
 
 test("explainModel reports the soft best-route basis", () => {

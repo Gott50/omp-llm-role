@@ -41,12 +41,12 @@ export const FEATURES: readonly FeatureRow[] = [
   },
   {
     id: "providerPinning",
-    label: "Prefer the model's own lab endpoint",
+    label: "Best-route provider pinning",
     // Per-model policy, not a scalar slug: the sensible pin differs per model,
     // so the bundle carries `preferOwnProvider` (evaluated against the model's
     // best route at rank time). It changes no eligibility — a model with no
     // candidate route keeps the default 1/price² blend.
-    description: "Price a model on its own lab's route where one exists (per-model policy; never drops a model)",
+    description: "Bind each request to the model's best provider route (per-model policy; never drops a model)",
     recommended: { preferOwnProvider: true },
     buys: "each request is bound to the model's best provider route — the selector gains @<slug> — and the fallback chain carries the same model on its next-best providers plus each fallback model on its best providers, so a down route fails over within the model's own routes",
   },
