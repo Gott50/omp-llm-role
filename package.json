@@ -90,7 +90,7 @@
       },
       "features.providerPinning": {
         "type": "boolean",
-        "description": "Price a model on its own lab's route where one exists (per-model policy; never drops a model)",
+        "description": "Bind each request to the model's best provider route (per-model policy; never drops a model)",
         "default": false
       },
       "features.costCap": {
@@ -147,7 +147,7 @@
       },
       "roles.default.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the default role",
+        "description": "Enable the Best-route provider pinning capability for the default role",
         "default": false
       },
       "roles.default.features.costCap": {
@@ -157,7 +157,7 @@
       },
       "roles.default.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price default models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind default requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.default.required": {
@@ -295,7 +295,7 @@
       },
       "roles.smol.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the smol role",
+        "description": "Enable the Best-route provider pinning capability for the smol role",
         "default": false
       },
       "roles.smol.features.costCap": {
@@ -305,7 +305,7 @@
       },
       "roles.smol.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price smol models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind smol requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.smol.required": {
@@ -435,7 +435,7 @@
       },
       "roles.slow.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the slow role",
+        "description": "Enable the Best-route provider pinning capability for the slow role",
         "default": false
       },
       "roles.slow.features.costCap": {
@@ -445,7 +445,7 @@
       },
       "roles.slow.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price slow models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind slow requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.slow.required": {
@@ -575,7 +575,7 @@
       },
       "roles.vision.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the vision role",
+        "description": "Enable the Best-route provider pinning capability for the vision role",
         "default": false
       },
       "roles.vision.features.costCap": {
@@ -585,7 +585,7 @@
       },
       "roles.vision.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price vision models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind vision requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.vision.required": {
@@ -723,7 +723,7 @@
       },
       "roles.plan.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the plan role",
+        "description": "Enable the Best-route provider pinning capability for the plan role",
         "default": false
       },
       "roles.plan.features.costCap": {
@@ -733,7 +733,7 @@
       },
       "roles.plan.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price plan models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind plan requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.plan.required": {
@@ -855,7 +855,7 @@
       },
       "roles.commit.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the commit role",
+        "description": "Enable the Best-route provider pinning capability for the commit role",
         "default": false
       },
       "roles.commit.features.costCap": {
@@ -865,7 +865,7 @@
       },
       "roles.commit.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price commit models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind commit requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.commit.required": {
@@ -987,7 +987,7 @@
       },
       "roles.tiny.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the tiny role",
+        "description": "Enable the Best-route provider pinning capability for the tiny role",
         "default": false
       },
       "roles.tiny.features.costCap": {
@@ -997,7 +997,7 @@
       },
       "roles.tiny.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price tiny models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind tiny requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.tiny.required": {
@@ -1111,7 +1111,7 @@
       },
       "roles.task.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the task role",
+        "description": "Enable the Best-route provider pinning capability for the task role",
         "default": false
       },
       "roles.task.features.costCap": {
@@ -1121,7 +1121,7 @@
       },
       "roles.task.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price task models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind task requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.task.required": {
@@ -1259,7 +1259,7 @@
       },
       "roles.advisor.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the advisor role",
+        "description": "Enable the Best-route provider pinning capability for the advisor role",
         "default": false
       },
       "roles.advisor.features.costCap": {
@@ -1269,7 +1269,7 @@
       },
       "roles.advisor.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price advisor models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind advisor requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.advisor.required": {
@@ -1391,7 +1391,7 @@
       },
       "roles.designer.features.providerPinning": {
         "type": "boolean",
-        "description": "Enable the Prefer the model's own lab endpoint capability for the designer role",
+        "description": "Enable the Best-route provider pinning capability for the designer role",
         "default": false
       },
       "roles.designer.features.costCap": {
@@ -1401,7 +1401,7 @@
       },
       "roles.designer.preferOwnProvider": {
         "type": "boolean",
-        "description": "Price designer models on their own lab's route where one exists (soft preference; never drops a model)",
+        "description": "Bind designer requests to each model's best provider route (soft preference; never drops a model)",
         "default": false
       },
       "roles.designer.required": {

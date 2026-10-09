@@ -359,7 +359,7 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
     }
     schema[`${p}.preferOwnProvider`] = {
       type: "boolean",
-      description: `Price ${name} models on their own lab's route where one exists (soft preference; never drops a model)`,
+      description: `Bind ${name} requests to each model's best provider route (soft preference; never drops a model)`,
       default: false,
     };
     schema[`${p}.required`] = {

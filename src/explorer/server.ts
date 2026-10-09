@@ -26,7 +26,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, resolve, sep } from "node:path";
 import type { KeyAvailability } from "../availability.ts";
 import { loadDeclaredSources } from "../benchmark-sources.ts";
-import { SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { pinnedRoute, SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { expandFeatures, FEATURES } from "../features.ts";
 import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
@@ -269,7 +269,7 @@ async function handleExport(req: IncomingMessage, res: ServerResponse, opts: Exp
   for (const [name, def] of Object.entries(dirty)) {
     errors.push(...validateRole(name, def));
     if (def.providerPin === undefined) continue;
-    const known = state.rank.models.some((m) => (m.routes ?? []).some((r) => r.providerSlug === def.providerPin));
+    const known = state.rank.models.some((m) => pinnedRoute(m, def.providerPin) !== null);
     if (!known) errors.push(`role "${name}": provider pin "${def.providerPin}" matches no route in the loaded dataset`);
   }
   if (errors.length > 0) return sendJson(res, 200, { ok: false, errors });

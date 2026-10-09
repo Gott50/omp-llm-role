@@ -205,9 +205,9 @@ export type RoleDef = {
   /** Opt-in capability flags (`roles.<role>.features.<id>`); expanded by
    * `expandFeatures` before ranking. `true`/`false` overrides the global flag. */
   features?: Record<string, boolean>;
-  /** Soft provider preference (issue #40): price a model on its own lab's route
-   * when the role's `providerPinning` feature is on, else the 1/price² blend.
-   * Unlike `providerPin` this NEVER drops a model. */
+  /** Soft provider preference (issue #40, re-based by #58): price a model on its
+   * best route by the role's own value when the role's `providerPinning` feature
+   * is on, else the 1/price² blend. Unlike `providerPin` this NEVER drops a model. */
   preferOwnProvider?: boolean;
   /** Locked role: the plugin still ranks it (so it stays in the universe and its
    * sources are fetched) but never rewrites its `modelRoles` selector or fallback
@@ -1065,7 +1065,7 @@ export function pinnedRoute(model: Model, providerPin: string | undefined): Open
  * (catalog `thinkingLevels` wins; without it the `supports_reasoning` flag
  * gates). Mirrors the factor `rankRole` applies, so the route basis and the
  * ranking can never disagree. */
-function thinkingAdjustedPrice(model: Model, def: RoleDef, basePrice: number): number {
+export function thinkingAdjustedPrice(model: Model, def: RoleDef, basePrice: number): number {
   const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
   if (levelFactor === 1) return basePrice;
   const levels = model.thinkingLevels;
@@ -1115,12 +1115,12 @@ function roleValueOnRoute(
   return { q, priceEff, value: q - lambda * priceEff, parts };
 }
 
-/** The model's routes that are candidates for the role's soft best-route basis:
- * non-degraded (status === 0), passing `routePassesEndpointFilters(route, def.filters)`,
- * with a usable billed price, and (when `filters.maxPriceUsdPerM > 0`) a
- * thinking-adjusted price at or below the cap. Deterministic order: value desc,
- * then providerSlug asc, then id asc. */
-export function candidateRoutes(model: Model, def: RoleDef): OpenRouterEndpointRecord[] {
+/** The model's routes that are candidates for the role's soft best-route basis,
+ * sorted by `routeValue` desc (ties: providerSlug asc, id asc). A candidate is
+ * non-degraded (status === 0), passes `routePassesEndpointFilters(route, def.filters)`,
+ * has a usable billed price, and (when `filters.maxPriceUsdPerM > 0`) a
+ * thinking-adjusted price at or below the cap. */
+export function rankedRoutes(model: Model, def: RoleDef): OpenRouterEndpointRecord[] {
   const cacheHitRate = def.cacheHitRate ?? 0;
   const cap = def.filters?.maxPriceUsdPerM ?? 0;
   const out = (model.routes ?? []).filter((r) => {
@@ -1131,14 +1131,16 @@ export function candidateRoutes(model: Model, def: RoleDef): OpenRouterEndpointR
     if (cap > 0 && thinkingAdjustedPrice(model, def, p) > cap) return false;
     return true;
   });
-  out.sort((a, b) => {
-    const va = routeValue(model, def, a);
-    const vb = routeValue(model, def, b);
-    if (va !== vb) return vb - va;
-    if (a.providerSlug !== b.providerSlug) return a.providerSlug < b.providerSlug ? -1 : 1;
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  });
-  return out;
+  // Decorate-sort-undecorate: `routeValue` is not cheap, so compute each route's
+  // value once instead of twice per comparison.
+  return out
+    .map((route) => ({ route, value: routeValue(model, def, route) }))
+    .sort((a, b) => {
+      if (a.value !== b.value) return b.value - a.value;
+      if (a.route.providerSlug !== b.route.providerSlug) return a.route.providerSlug < b.route.providerSlug ? -1 : 1;
+      return a.route.id < b.route.id ? -1 : a.route.id > b.route.id ? 1 : 0;
+    })
+    .map((d) => d.route);
 }
 
 /** The role's value of one route: q over the model's metrics with the route's
@@ -1157,14 +1159,16 @@ export function routeValue(model: Model, def: RoleDef, route: OpenRouterEndpoint
   return rv === null ? Number.NEGATIVE_INFINITY : rv.value;
 }
 
-/** `candidateRoutes` sorted by `routeValue` desc (ties: providerSlug asc, id asc). */
-export function rankedRoutes(model: Model, def: RoleDef): OpenRouterEndpointRecord[] {
-  return candidateRoutes(model, def);
-}
-
 /** `rankedRoutes(model, def)[0]` or null. The auto-pin slug and the soft basis. */
 export function bestRoute(model: Model, def: RoleDef): OpenRouterEndpointRecord | null {
   return rankedRoutes(model, def)[0] ?? null;
+}
+
+/** True when the role's soft best-route basis applies: the `preferOwnProvider`
+ * capability is on and no manual `providerPin` overrides it. The soft basis the
+ * engine prices on and the auto-pin the updater writes share this predicate. */
+export function autoPinApplies(def: RoleDef): boolean {
+  return def.providerPin === undefined && def.preferOwnProvider === true;
 }
 
 /** The route a role prices a model on: the hard pin's route when the role is
@@ -1175,7 +1179,7 @@ export function bestRoute(model: Model, def: RoleDef): OpenRouterEndpointRecord 
 export function roleRoute(model: Model, def: RoleDef): OpenRouterEndpointRecord | null {
   const pin = pinnedRoute(model, def.providerPin);
   if (pin !== null) return pin;
-  if (def.providerPin !== undefined || def.preferOwnProvider !== true) return null;
+  if (!autoPinApplies(def)) return null;
   return bestRoute(model, def);
 }
 
@@ -1250,9 +1254,15 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     // or the 1/price² blend). Null when the model has no usable billed price.
     const rv = roleValueOnRoute(em, def, route, cacheHitRate, lambda, levelFactor, qW);
     if (rv === null) continue;
-    // maxPriceUsdPerM caps the role-priced price (the thinking-adjusted price the
-    // role actually pays — the pinned route's price when pinned); 0 = off.
-    if ((def.filters?.maxPriceUsdPerM ?? 0) > 0 && rv.priceEff > (def.filters?.maxPriceUsdPerM as number)) continue;
+    // maxPriceUsdPerM caps the model's own price basis, never the soft best-route
+    // basis: with no hard pin the gate uses the model's blend price (thinking-
+    // adjusted), so enabling `preferOwnProvider` cannot change eligibility. A hard
+    // pin keeps gating its route price — the price the request actually pays. 0 = off.
+    const cap = def.filters?.maxPriceUsdPerM ?? 0;
+    if (cap > 0) {
+      const capBase = pinRoute !== null ? routeEffectivePrice(pinRoute, cacheHitRate) : em.price;
+      if (capBase != null && thinkingAdjustedPrice(em, def, capBase) > cap) continue;
+    }
     ranked.push({ model: em, value: rv.value, q: rv.q, priceEff: rv.priceEff, parts: rv.parts });
   }
   ranked.sort((a, b) => b.value - a.value);

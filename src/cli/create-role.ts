@@ -50,7 +50,7 @@ const USAGE = [
   "  --lambda <n>           explicit λ override ($ per quality point)",
   "  --feature <id,...>     capability flag(s) to author on the role (see --list-features);",
   "                         repeatable, comma-separated, merged",
-  "  --prefer-own-provider  price the role on each model's own lab route where one exists",
+  "  --prefer-own-provider  bind the role to each model's best provider route where one exists",
   "  --list-features        print the capability flags and the settings each applies, then exit",
   "  --lock <path>          settings lock file (default ~/.omp/plugins/omp-plugins.lock.json)",
   "  --dry-run              validate and print without writing",

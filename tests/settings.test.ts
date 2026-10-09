@@ -140,7 +140,7 @@ test("each global flag applies its recommended bundle", () => {
   }
 });
 
-test("providerPinning's buys describes the auto-pin, not only own-lab pricing", () => {
+test("providerPinning's buys describes the auto-pin route binding", () => {
   const row = FEATURES.find((f) => f.id === "providerPinning");
   assert.ok(row, "providerPinning row exists");
   assert.match(row.buys, /@<slug>|pin|route/i, `buys should name the route binding:\n${row.buys}`);
