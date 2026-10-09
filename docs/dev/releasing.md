@@ -126,10 +126,13 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   `gh workflow run ci.yml --ref v1.1.0`): the guard and the npm floor passed,
   `npm publish` completed over OIDC trusted publishing with a provenance
   attestation (`npm audit signatures`: 0 invalid, 0 missing), and the GitHub
-  Release was created with the 1.1.0 CHANGELOG section as its body. Verified:
+  Release was created with the 1.1.0 CHANGELOG section as its body
+  (`https://github.com/Gott50/omp-llm-role/releases/tag/v1.1.0`). Verified:
   `dist-tags.latest` = `1.1.0`, npm's `gitHead` = `4f78ce2` (the tag's commit),
-  `_npmUser` = `GitHub Actions` carrying the trusted-publisher OIDC config, and
-  the tarball is 56 files / 308.4 kB. The `v1.1.0` tag was repointed to
+  `_npmUser` = `GitHub Actions` carrying the trusted-publisher OIDC config, the
+  provenance statement in the transparency log at
+  `https://search.sigstore.dev/?logIndex=3159690884`, and the tarball is 56
+  files / 308.4 kB. The `v1.1.0` tag was repointed to
   `4f78ce2` first — its original commit predates the workflow file, so the
   dispatch was rejected (see [`ci.md`](ci.md)).
 - **npm route smoke-tested for 1.1.0** (2026-10-09, omp 18.8.6, throwaway

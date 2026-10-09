@@ -141,6 +141,15 @@ exit 1, so the command is safe to run unattended.
   is that version's CHANGELOG section. This is also the recovery path for a
   failed publish: the tag exists, so no new version is needed.
 
+  A successful `npm publish` is **not** immediately visible: npm prints "Your
+  package is being processed and may take a few minutes to become available",
+  and registry reads can serve the pre-publish packument for several minutes
+  (third-party mirrors such as jsDelivr lag longer). The step's log is the
+  discriminator — a direct publish prints `publishing to
+  https://registry.npmjs.org/ with tag latest`, `Signed provenance statement`
+  and `+ <pkg>@<version>`; a staged publish is a separate `npm stage publish`
+  and prints none of those.
+
   The dispatch resolves the workflow **from the ref**, so the tag's commit must
   contain `.github/workflows/ci.yml`. A tag cut before this workflow existed
   cannot be dispatched (`HTTP 422: Workflow does not have 'workflow_dispatch'
