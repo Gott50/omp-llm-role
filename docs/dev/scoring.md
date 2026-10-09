@@ -137,7 +137,10 @@ route instead of the `1/price²` blend:
 - a model with **no matching route** is ineligible for that role
   (`providerPinDrops` → `Decision.pinBlocked`, rendered `; pin-blocked: …`);
   `explainModel` reports "no route matches the role's provider pin".
-- an **unpinned** role ignores `routes` entirely — the blend path is unchanged.
+- an **unpinned** role ignores `routes` entirely — the blend path is unchanged —
+  **unless** it sets the soft `preferOwnProvider` policy (the `providerPinning`
+  capability), which prices it on its **best route** (the value-max candidate
+  route; see *Capability presets*).
 
 The pin is a cost-and-throughput posture, not a quality edit: it moves the price
 axis to the route's billed price and the throughput axis to the route's p50,
@@ -164,44 +167,47 @@ no flags the resolved roles are byte-identical to `DEFAULT_ROLES`. The effective
 def is what `rankRole`/`explainModel` see; the authored def (flags + explicit
 keys) is what the explorer edits and exports.
 
-What each recommendation does to the ranking math (grounded on the 2026-10-07
-cache, `default` role, 142 eligible):
+What each recommendation does to the ranking math (grounded on the 2026-10-09
+cache, `default` role, 146 eligible):
 
 - **`endpointCeilings`** (`filters.tools: true`, `filters.minOutputTokens:
   16384`) drops tool-incapable routes and routes whose output ceiling is below
-  16 384 tokens from the priced pool (see *Endpoint filters*): 142 → 132
-  eligible, leader unchanged (`deepseek-v4.1-flash`, 0.579 $/M). 16 384 is the
+  16 384 tokens from the priced pool (see *Endpoint filters*): 146 → 135
+  eligible, leader unchanged (`deepseek-v4.1-flash`, 0.37 $/M). 16 384 is the
   video's own threshold (19 endpoints cap output at or below it).
 - **`cachePricing`** (`cacheHitRate: 0.5`) reprices the role on a cache-heavy
-  loop's invoice (see *Cache-read pricing*): 142 eligible, leader unchanged, its
-  `priceEff` 0.579 → 0.508 (−12 %). 0.5 is the low end of the measured
+  loop's invoice (see *Cache-read pricing*): 146 eligible, leader unchanged, its
+  `priceEff` 0.3732 → 0.3522 (−5.6 %). 0.5 is the low end of the measured
   third-party range (51–69 %), so the preset never over-credits a cache.
-- **`providerPinning`** (`preferOwnProvider: true`) prices a model on its own
-  lab's route where one exists, falling back to the default `1/price²` blend
-  otherwise. It is a **per-model policy, not a scalar** — the sensible pin
-  differs per model, so the bundle carries a policy field evaluated against the
-  model's own routes at rank time, not a slug baked into the lock file. The lab
-  match is a **slug prefix on the model's `orgId`** (exact, or `orgId` + `/`),
-  with the display `org` as a second try; there is no alias map in v1. Measured
-  coverage: 51 of the 149 routed models resolve to one of their own lab's routes
-  (33 on an exact slug match, 17 on an `orgId` prefix, 1 on the display-`org`
-  fallback), and 10 of 25 orgs match for no model (`zai-org` —
-  its lab route slug is `z-ai` — `google`, `qwen`, `inclusionai`, `nvidia`,
-  `microsoft`, `bytedance`, `thinking-machines`, `ibm`,
-  `gryphe`). An unmatched model keeps the blend, so the capability
-  **under-delivers rather than mis-pins**, and it **never changes eligibility**
-  (unlike the hard `providerPin`, which drops a model with no matching route).
-  The resolved route is the same basis a hard pin uses, so the preference moves
-  the **throughput** axis as well as the billed price — a role that routes to the
-  lab's endpoint gets that endpoint's p50 tok/s, not the blend's. Measured on the
-  2026-10-07 cache, the `default` leader's `priceEff` rises 0.579 → 0.975 while
-  its `value` *rises* 0.8132 → 0.8172, because its own lab route's p50 throughput
-  is higher than the blend's, so `q` moves too. That is deliberate (the pin path
-  has always priced and measured on the pinned route); a role that wants the
-  blend's throughput should leave the flag off.
+- **`providerPinning`** (`preferOwnProvider: true`) prices a model on its
+  **best route** — the route maximizing the role's own value (`q_route −
+  λ·priceEff_route`, with the route's p50 throughput and cache-adjusted billed
+  price) among the routes that pass the role's endpoint filters — falling back to
+  the default `1/price²` blend only when the model has no candidate route. It is
+  a **per-model policy, not a scalar** — the sensible pin differs per model, so
+  the bundle carries a policy field evaluated against the model's own routes at
+  rank time, not a slug baked into the lock file. `bestRoute` (`src/engine.ts`)
+  is `rankedRoutes(model, def)[0]`: the candidates are the model's routes that
+  are non-degraded (`status === 0`), pass `routePassesEndpointFilters`, carry a
+  usable billed price, and (when `filters.maxPriceUsdPerM > 0`) a
+  thinking-adjusted price at or below the cap; ties break by `providerSlug` then
+  `id`, so a re-run is deterministic. The basis is **soft**: a model with no
+  candidate route keeps the blend and is never dropped, so the capability
+  **never changes eligibility** (unlike the hard `providerPin`, which drops a
+  model with no matching route). Measured coverage on the 2026-10-09 cache: all
+  151 routed models have a candidate route (the old own-lab slug-prefix rule
+  matched only 51 of 149), so the capability covers the whole routed field. The
+  resolved route is the same basis a hard pin uses, so the preference moves the
+  **throughput** axis as well as the billed price — a role that routes to the
+  best endpoint gets that endpoint's p50 tok/s, not the blend's. Measured on the
+  2026-10-09 cache, the `default` leader's `priceEff` rises 0.3732 → 1.4625 while
+  its `value` *rises* 0.8100 → 0.8150, because its best route's p50 throughput is
+  higher than the blend's, so `q` moves too. That is deliberate (the pin path has
+  always priced and measured on the pinned route); a role that wants the blend's
+  throughput should leave the flag off.
 - **`costCap`** (`filters.maxPriceUsdPerM: 10`) drops the priciest tail of the
-  eligible pool: 142 → 135 (the top ≈5 %), leader unchanged. The pool's p90 is
-  7.8 and p95 8.9 $/M, and every role leader sits at 0.58–0.85 $/M, so the
+  eligible pool: 146 → 137 (the top ≈6 %), leader unchanged. The pool's p90 is
+  7.8 and p95 11.1 $/M, and every role leader sits at 0.20–3.71 $/M, so the
   preset never excludes today's leader.
 
 **Interaction with the switch hysteresis.** `switchMargin`/`priceSwitchFraction`

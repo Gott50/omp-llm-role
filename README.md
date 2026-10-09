@@ -126,7 +126,7 @@ Per-role knobs (`roles.<name>.*`):
 | `filters.minOutputTokens` | `0` (off) | Drop routes whose endpoint output ceiling is below this (tokens) |
 | `filters.maxPriceUsdPerM` | `0` (off) | Drop a model whose thinking-adjusted blend exceeds this ($/M) |
 | `thinking` | shipped level | Thinking level appended to the selector (`off`…`max`, `auto`) |
-| `providerPin` | `""` (unset) | Pin the role's requests to one OpenRouter provider route (`@<slug>`, may be tiered like `deepinfra/fp8`). The role is then priced and gated by that route — its billed price and p50 throughput, not the `1/price²` blend — and a model with no matching route is ineligible |
+| `providerPin` | `""` (unset) | Pin the role's requests to one OpenRouter provider route (`@<slug>`, may be tiered like `deepinfra/fp8`). The role is then priced and gated by that route — its billed price and p50 throughput, not the `1/price²` blend — and a model with no matching route is ineligible. A manual pin **overrides** the automatic pin the `providerPinning` capability would write |
 | `cacheHitRate` | `0` (off) | Assumed cache-hit rate (0–1) for the role's input tokens; each route's effective input price becomes `h·cacheRead + (1−h)·input` before the 3:1 billed blend and the thinking factor. The `1/price²` weight basis stays the **listed** input price (the router's sort key), so a cheap cache on a lightly-weighted route cannot dominate; a route with no cache-read price keeps its full input price. `0`/absent = off (byte-identical ranking) |
 | `lambda` | derived | Explicit λ ($ per quality point) override |
 | `locked` | `false` | Leave the role alone: rank it but never rewrite its selector or chain (explorer toggle) |
@@ -142,7 +142,7 @@ defaults.
 |---|---|---|
 | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | Routes that cannot call tools and routes whose output ceiling is below 16 384 tokens leave the pool — a reasoning model is not cut off mid-thought |
 | `cachePricing` | `cacheHitRate: 0.5` | The role is priced on a cache-heavy agent loop's invoice (the endpoint's `cacheReadPrice` blended in) rather than the sticker price |
-| `providerPinning` | `preferOwnProvider: true` | A model is priced **and measured** on its own lab's route where one exists (DeepSeek's own endpoint, 94.5 % cache hit) — the route's billed price and its p50 throughput, so `q` moves too — falling back to the default blend otherwise |
+| `providerPinning` | `preferOwnProvider: true` | Each request is bound to the model's **best provider route** — the selector gains `@<slug>` — and the fallback chain carries the same model on its next-best providers plus each fallback model on its best providers, so a down route fails over within the model's own routes. The model is priced **and measured** on that route (its billed price and p50 throughput, so `q` moves too), falling back to the default blend only when it has no candidate route |
 | `costCap` | `filters.maxPriceUsdPerM: 10` | The priciest tail of the eligible pool leaves it, so the pick cannot be an expensive outlier |
 
 Precedence is one rule:
@@ -156,10 +156,11 @@ and otherwise when the global `features.<id>` is `true` — so a per-role `false
 beats a global `true`. The preset fills only knobs the role does not already
 set, and an explicit key is merged last, so it always wins. `providerPinning`'s
 recommended setting is a **soft per-model policy** (`preferOwnProvider`), not a
-hard `providerPin`: it re-prices a model on its own lab's route where one exists
-(the route's billed price **and** its p50 throughput, so `q` moves as well as
-`priceEff`) and never makes a model ineligible (the hard `providerPin` stays
-available by hand). `minContextTokens` is deliberately **not** part of `endpointCeilings` —
+hard `providerPin`: it prices a model on its **best route** (the value-max route
+among the filter-passing, non-degraded, priced routes) — the route's billed price
+**and** its p50 throughput, so `q` moves as well as `priceEff` — and never makes
+a model ineligible (the hard `providerPin` stays available by hand, and overrides
+the automatic choice). `minContextTokens` is deliberately **not** part of `endpointCeilings` —
 the complaint it would answer is an endpoint advertising a *fraction of the
 model's own window*, which an absolute token floor cannot express, so it stays a
 hand-set knob.
@@ -486,7 +487,8 @@ The plugin keeps only models the OpenRouter key can actually run:
 - **Provider whitelist.** The account's allowed-providers whitelist blocks many
   models, so the report's #1 and the written selector can differ — judge weights
   on the reachable pool.
-- **Provider pinning opts out of auto-Exacto.** A `providerPin` writes a trailing
+- **Provider pinning opts out of auto-Exacto.** A `providerPin` — or the
+  automatic pin the `providerPinning` capability writes — puts a trailing
   `@<slug>` on the selector, which omp applies as OpenRouter
   `provider: { only: [slug] }` routing. `only` is exclusive, so a pinned role's
   requests bypass OpenRouter's automatic Exacto tool routing (which routes tool

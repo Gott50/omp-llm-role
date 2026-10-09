@@ -184,6 +184,14 @@ invoice proxy.
 
 ### 6. Provider pinning is the mitigation — and it opts out of auto-Exacto
 
+> **Update (2026-10-09, spec #58):** the pin is now **auto-derived** on every
+> daily run when a role enables the `providerPinning` capability
+> (`preferOwnProvider: true`): the updater writes the chosen model's best route
+> as the `@<slug>` suffix and fills the fallback chain with the same model on its
+> next-best providers plus each fallback model on its best providers. A hand-set
+> `roles.<role>.providerPin` is the **override** (and stays a hard gate). No
+> shipped role sets a pin or the flag, so a stock config is unchanged.
+>
 > **Update (2026-10-06):** the project now writes provider routing, opt-in: a
 > role may declare `roles.<role>.providerPin` (a provider slug, optionally
 > tiered like `deepinfra/fp8`), and the updater emits the `@<slug>` selector
