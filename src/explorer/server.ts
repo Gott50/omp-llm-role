@@ -260,7 +260,20 @@ async function handleExport(req: IncomingMessage, res: ServerResponse, opts: Exp
   const body = await readJson(req);
   if (!isRecord(body) || !isRecord(body.roles)) throw new HttpError(400, "expected { roles: object }");
   const scope = activeScope(opts, session);
-  const result = writeRoleSettings(scope.lockPath, body.roles as unknown as Record<string, RoleDef>);
+  const dirty = body.roles as unknown as Record<string, RoleDef>;
+  // A manual provider pin must name a route the loaded dataset actually has, or
+  // the exported role would be unroutable. Validate before any write; the
+  // plugin's own validator (empty/@/:) still runs, so both error sets surface.
+  const state = opts.getState(scope);
+  const errors: string[] = [];
+  for (const [name, def] of Object.entries(dirty)) {
+    errors.push(...validateRole(name, def));
+    if (def.providerPin === undefined) continue;
+    const known = state.rank.models.some((m) => (m.routes ?? []).some((r) => r.providerSlug === def.providerPin));
+    if (!known) errors.push(`role "${name}": provider pin "${def.providerPin}" matches no route in the loaded dataset`);
+  }
+  if (errors.length > 0) return sendJson(res, 200, { ok: false, errors });
+  const result = writeRoleSettings(scope.lockPath, dirty);
   if (!result.ok) return sendJson(res, 200, { ok: false, errors: result.errors });
   sendJson(res, 200, { ok: true, backupPath: result.backupPath, roles: result.roles, lockPath: scope.lockPath });
 }
