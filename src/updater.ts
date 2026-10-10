@@ -16,7 +16,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { autoPinApplies, bestRoute, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, providerAllowed, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
@@ -346,17 +346,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         ? null
         : await (deps.getAllowedProviders ? deps.getAllowedProviders(token, canaryModelId) : fetchAllowedProviders(token, canaryModelId));
     if (allowed !== null) {
-      const isAllowed = (slug: string): boolean => {
-        for (const entry of allowed) {
-          if (slug === entry || slug.startsWith(`${entry}/`)) return true;
-        }
-        return false;
-      };
       let prunedCount = 0;
       const pruned = rank.models.map((m) => {
         const routes = m.routes;
         if (routes === undefined) return m;
-        const kept = routes.filter((r) => isAllowed(r.providerSlug));
+        const kept = routes.filter((r) => providerAllowed(allowed, r.providerSlug));
         prunedCount += routes.length - kept.length;
         return { ...m, routes: kept };
       });
