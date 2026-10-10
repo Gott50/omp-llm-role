@@ -141,6 +141,7 @@ export function fakeDeps(models: Model[], settings: Record<string, unknown> = {}
     getCatalog: async () => makeCatalog(models.map((m) => m.id)),
     getKeyMeta: async () => PAID_KEY_META,
     getKeyAvailability: async () => NO_FILTER_AVAILABILITY,
+    getAllowedProviders: async () => null,
     probeModel: async () => "ok",
     getRankData: async () => rankData,
     getSettings: async () => settings,
