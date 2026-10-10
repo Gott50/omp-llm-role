@@ -88,6 +88,24 @@ export type ProbeVerdict = "ok" | "blocked" | "unknown";
 
 const OPENROUTER_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 
+/** POST a one-token completion to OpenRouter with the shared request skeleton
+ * (Bearer auth, JSON body, 20s timeout). Shared by `probeModel` and
+ * `fetchAllowedProviders`. */
+function completionRequest(token: string, body: unknown, fetchImpl: typeof fetch): Promise<Response> {
+  return fetchImpl(OPENROUTER_COMPLETIONS_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
+  });
+}
+
+/** Extract `error.message` from a parsed OpenRouter error body, or "" when the
+ * body does not carry one. */
+function errorMessage(body: unknown): string {
+  return isRecord(body) && isRecord(body.error) && typeof body.error.message === "string" ? body.error.message : "";
+}
+
 /** 404 body OpenRouter returns when the account's allowed-providers privacy
  * whitelist (or a data-policy toggle) leaves a model without a runnable endpoint. */
 const BLOCKED_RE = /no allowed providers/i;
@@ -102,16 +120,11 @@ const BLOCKED_RE = /no allowed providers/i;
  */
 export async function probeModel(token: string, catalogId: string, fetchImpl: typeof fetch = fetch): Promise<ProbeVerdict> {
   try {
-    const res = await fetchImpl(OPENROUTER_COMPLETIONS_URL, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: catalogId, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }),
-      signal: AbortSignal.timeout(20_000),
-    });
+    const res = await completionRequest(token, { model: catalogId, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }, fetchImpl);
     if (res.ok) return "ok";
     if (res.status !== 404) return "unknown";
     const body: unknown = await res.json().catch(() => null);
-    const message = isRecord(body) && isRecord(body.error) && typeof body.error.message === "string" ? body.error.message : "";
+    const message = errorMessage(body);
     return BLOCKED_RE.test(message) ? "blocked" : "unknown";
   } catch {
     return "unknown";
@@ -134,20 +147,19 @@ const ALLOWED_PROVIDERS_RE = /permits only:\s*([^.]*)\./i;
  */
 export async function fetchAllowedProviders(token: string, modelId: string, fetchImpl: typeof fetch = fetch): Promise<Set<string> | null> {
   try {
-    const res = await fetchImpl(OPENROUTER_COMPLETIONS_URL, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({
+    const res = await completionRequest(
+      token,
+      {
         model: modelId,
         messages: [{ role: "user", content: "ok" }],
         max_tokens: 1,
         provider: { only: ["__omp-llm-role-canary__"] },
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
+      },
+      fetchImpl,
+    );
     if (res.status !== 404) return null;
     const body: unknown = await res.json().catch(() => null);
-    const message = isRecord(body) && isRecord(body.error) && typeof body.error.message === "string" ? body.error.message : "";
+    const message = errorMessage(body);
     const match = ALLOWED_PROVIDERS_RE.exec(message);
     if (!match) return null;
     const providers = match[1]
@@ -158,6 +170,19 @@ export async function fetchAllowedProviders(token: string, modelId: string, fetc
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether a route's `providerSlug` is permitted by the account's
+ * allowed-providers whitelist. Whitelist entries are bare lab names
+ * (`coreweave`) while route slugs are tiered (`coreweave/fp8`), so a match is
+ * the entry itself or an `entry/` prefix.
+ */
+export function providerAllowed(allowed: ReadonlySet<string>, slug: string): boolean {
+  for (const entry of allowed) {
+    if (slug === entry || slug.startsWith(`${entry}/`)) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
