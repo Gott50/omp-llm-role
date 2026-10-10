@@ -194,7 +194,10 @@ cache, `default` role, 146 eligible):
   `id`, so a re-run is deterministic. The basis is **soft**: a model with no
   candidate route keeps the blend and is never dropped, so the capability
   **never changes eligibility** (unlike the hard `providerPin`, which drops a
-  model with no matching route). Measured coverage on the 2026-10-09 cache: all
+  model with no matching route). The `maxPriceUsdPerM` gate is **basis-independent**:
+  with no hard pin it caps the model's own blend price, not the soft route's, so
+  the flag can neither add nor drop a model; the candidate-route cap filter only
+  keeps the written pin at or below the cap. Measured coverage on the 2026-10-09 cache: all
   151 routed models have a candidate route (the old own-lab slug-prefix rule
   matched only 51 of 149), so the capability covers the whole routed field. The
   resolved route is the same basis a hard pin uses, so the preference moves the
@@ -248,7 +251,10 @@ A model ranks for a role only when:
 - `minContextTokens` filters the **endpoint** `context_length`, not the
   model-level `context`;
 - `maxPriceUsdPerM` caps the thinking-adjusted `priceEff` (the price the role
-  actually pays), not the bare billed blend;
+  actually pays), not the bare billed blend. For a **pinned** role that is the
+  pin route's price; for a soft `preferOwnProvider` role it is the model's own
+  blend price (basis-independent, so the flag cannot change eligibility), while
+  the candidate-route filter keeps the auto-pin at or below the cap;
 - a role that declares `tools`/`minContextTokens`/`minOutputTokens` is **priced**
   on the surviving pool: `endpointFilteredModel` recomputes `price`/`throughput`
   as the `1/price²` blend over the routes that clear the filters

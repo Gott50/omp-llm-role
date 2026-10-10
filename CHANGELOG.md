@@ -22,6 +22,10 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   ties by slug then id) — replacing the old own-lab slug-prefix match — and it
   stays **soft**: a model with no candidate route keeps the `1/price²` blend and
   is never dropped, so enabling the capability cannot shrink the eligible pool.
+  The `maxPriceUsdPerM` gate is basis-independent — with no hard pin it caps the
+  model's own blend price, not the soft route's, so the flag cannot change the
+  eligible count — while the candidate-route filter keeps the written pin at or
+  below the cap.
   A hand-set `roles.<role>.providerPin` overrides the automatic choice and stays
   a hard gate. The explorer gains a manual pin field and a read-only auto-pin
   indicator, and Export rejects a pin that matches no route in the loaded
