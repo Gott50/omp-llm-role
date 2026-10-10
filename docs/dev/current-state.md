@@ -10,6 +10,16 @@ below are the 2026-10-09 measurement (the input-price blend basis #21, the
 #17/#18/#19/#20 wave and the #34–#40 focus-axis/capability-flag work; see the top
 bullets) and are not re-derived on read.
 
+- Auto-pin chain expansion (2026-10-10, issue #69): with `providerPinning` on,
+  the fallback chain no longer stops at three providers per model — the primary
+  model contributes every gate-passing route except the pinned best, then each
+  `fallbackChainDepth` fallback model contributes every gate-passing route, in
+  route-value order and deduped by provider slug, so a down provider fails over
+  to another provider of the same model before the chain switches models. Chain
+  length is data-driven (`(R_primary − 1) + Σ R_fallback`) instead of the fixed
+  `2 + 3·fallbackChainDepth`; the manual-`providerPin` and no-pin paths are
+  unchanged. The ranking numbers are unchanged — the chain is a write-side
+  shape, not a ranking input.
 - Opt-in error reporting (2026-10-08, issue #48): a new `errorReporting` setting
   (`off` — the default — `ask`, `auto`) turns a genuinely unexpected failure — a
   command handler throwing, or a `runUpdater` abort whose `RunResult.defect` is
