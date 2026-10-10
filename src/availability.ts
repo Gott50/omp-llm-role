@@ -118,6 +118,48 @@ export async function probeModel(token: string, catalogId: string, fetchImpl: ty
   }
 }
 
+/** 404 body OpenRouter returns when the account's allowed-providers privacy
+ * whitelist leaves the canary provider without a runnable endpoint; the message
+ * names the whitelist after "permits only:". */
+const ALLOWED_PROVIDERS_RE = /permits only:\s*([^.]*)\./i;
+
+/**
+ * Harvest the account's allowed-providers privacy whitelist. The whitelist is
+ * invisible to `/api/v1/key` and the catalog endpoints; the only place it
+ * appears is the 404 body of a request that fails because of it. A canary
+ * completion on a valid model with a nonexistent provider slug (`provider.only`)
+ * 404s and names the whitelist. Returns null when the body does not name a
+ * whitelist (no whitelist set), the response is not a 404, or the request
+ * throws — never throws.
+ */
+export async function fetchAllowedProviders(token: string, modelId: string, fetchImpl: typeof fetch = fetch): Promise<Set<string> | null> {
+  try {
+    const res = await fetchImpl(OPENROUTER_COMPLETIONS_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: "user", content: "ok" }],
+        max_tokens: 1,
+        provider: { only: ["__omp-llm-role-canary__"] },
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (res.status !== 404) return null;
+    const body: unknown = await res.json().catch(() => null);
+    const message = isRecord(body) && isRecord(body.error) && typeof body.error.message === "string" ? body.error.message : "";
+    const match = ALLOWED_PROVIDERS_RE.exec(message);
+    if (!match) return null;
+    const providers = match[1]
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return providers.length > 0 ? new Set(providers) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Keyed-catalog availability
 // ---------------------------------------------------------------------------
