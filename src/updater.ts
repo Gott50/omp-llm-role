@@ -550,18 +550,24 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         };
         const values: string[] = [];
         if (plan.autoPin) {
-          // Auto-pin chain (spec #58): the primary model on its 2nd/3rd-best
-          // routes, then each fallback model on its own top-3 routes — every
-          // entry bound to its route's provider, so a down primary provider
-          // falls back to the same model on another provider rather than a
-          // different model. A model with fewer than 3 candidate routes
-          // contributes only the routes it has (0 → 0 entries).
+          // Auto-pin chain (spec #58, expanded by #69): every gate-passing route
+          // of the primary model (all but the pinned best), then every
+          // gate-passing route of each fallback model, in route-value order —
+          // every entry bound to its route's provider, so a down primary
+          // provider falls back to the same model on another provider rather
+          // than a different model. `rankedRoutes` already applies every gate
+          // (non-degraded, endpoint filters, usable billed price, the
+          // maxPriceUsdPerM cap, the allowed-providers whitelist), so the chain
+          // carries exactly the routes the role can use. The dedup below
+          // collapses two routes that share a provider slug (same chain value),
+          // so the chain length is (R_primary − 1) + Σ R_fallback over distinct
+          // gate-passing provider slugs.
           const chosenCandidate = plan.pool[plan.chosenIdx];
-          for (const r of rankedRoutes(chosenCandidate.ranked.model, plan.def).slice(1, 3)) {
+          for (const r of rankedRoutes(chosenCandidate.ranked.model, plan.def).slice(1)) {
             values.push(`openrouter/${chosenCandidate.catalogId}@${r.providerSlug}${levelFor(chosenCandidate.catalogId)}`);
           }
           for (const p of chainPool) {
-            for (const r of rankedRoutes(p.ranked.model, plan.def).slice(0, 3)) {
+            for (const r of rankedRoutes(p.ranked.model, plan.def)) {
               values.push(`openrouter/${p.catalogId}@${r.providerSlug}${levelFor(p.catalogId)}`);
             }
           }
