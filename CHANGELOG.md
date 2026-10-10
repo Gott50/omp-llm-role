@@ -31,6 +31,17 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   indicator, and Export rejects a pin that matches no route in the loaded
   dataset. Every flag still ships off, so a stock config is byte-identical.
   (spec #58)
+- **Route selection is whitelist-aware** — the daily updater learns the account's
+  OpenRouter **allowed-providers privacy whitelist** once per run (a canary
+  request that bills no tokens) and narrows every model's route pool to allowed
+  providers before ranking, so the `providerPinning` auto-pin, the fallback
+  chains and the soft best-route basis never select a route the account cannot
+  run (a route outside the whitelist 404s at request time). A manual
+  `providerPin` on a blocked provider now drops the model with the whitelist as
+  the cause. The run notes `OpenRouter allowed-providers whitelist active — N
+  providers; M routes pruned` (or `… whitelist: no whitelist`). With no whitelist
+  set — or when the harvest fails — behaviour is byte-identical to today.
+  (spec #65)
 
 ### Changed
 

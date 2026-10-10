@@ -52,28 +52,38 @@ passing.
     equal sets → no-filter; empty → unavailable; a keyed id absent from public →
     no-filter; aliases collapse; two parallel GETs, one authenticated; never
     throws.
-11. **Endpoint ceilings** (`endpoint-ceilings.test.ts`) — the narrower reads
+11. **Allowed-providers whitelist** (`allowed-providers.test.ts`,
+    `whitelist.test.ts`) — `fetchAllowedProviders` parses the 404 body's
+    "permits only:" list into a set and returns `null` for a 200, a 404 without
+    the clause, or a transport throw, with the canary request shape (POST,
+    bearer, `provider.only`, `max_tokens: 1`); the updater prunes every model's
+    route pool to allowed providers before ranking, so a blocked best route
+    falls to the next-best allowed route as the auto-pin, the chain carries only
+    allowed routes, a bare entry matches a tiered slug by prefix, the notify line
+    reports the active whitelist and the pruned count (or "no whitelist"), and a
+    `null` whitelist reproduces today's output byte-for-byte.
+12. **Endpoint ceilings** (`endpoint-ceilings.test.ts`) — the narrower reads
     context/output/tools, a missing field is null; a failing route drops, a null
     field is kept; a model with no capable route is ineligible; a filtered role
     is priced on the surviving pool; `maxPriceUsdPerM` caps the thinking-adjusted
     price.
-12. **Route pricing (provider pin)** (`route-pricing.test.ts`) — a pinned role
+13. **Route pricing (provider pin)** (`route-pricing.test.ts`) — a pinned role
     prices the matching route, not the blend; a tiered pin matches verbatim;
     `maxPriceUsdPerM` caps the route price; throughput is the route p50 with a
     blend fallback; no matching route → ineligible; the `@<slug>` selector and
     chain carry the pin; a pin matching no route leaves the role unchanged.
-13. **Thinking price** (`thinking-price.test.ts`) — bare/off unadjusted; a level
+14. **Thinking price** (`thinking-price.test.ts`) — bare/off unadjusted; a level
     scales only thinking-capable models; the frontier uses the effective price;
     `resolveSettings` validates thinking and rejects the legacy `suffixes` map;
     catalog `thinking[]` wins over the OR flag; meta levels never gate.
-14. **OpenRouter blend** (`openrouter-blend.test.ts`) — price/throughput are the
+15. **OpenRouter blend** (`openrouter-blend.test.ts`) — price/throughput are the
     `1/price²`-weighted means over the page routes; flex/priority/degraded/free/
     `:batch` stay out; throughput renormalizes; the find-row fallback; the weight
     follows the input price.
-15. **Writing metric** (`writing.test.ts`) — `parseWritingEvidence` keys finite
+16. **Writing metric** (`writing.test.ts`) — `parseWritingEvidence` keys finite
     scores and rejects junk; `applyWritingScores` fills uncovered models; a
     covered model ranks above an uncovered one.
-16. **Benchmark sources** (`benchmark-sources.test.ts`) — `resolveBenchmarkSource`
+17. **Benchmark sources** (`benchmark-sources.test.ts`) — `resolveBenchmarkSource`
     maps an llm-stats benchmark page, a bare id, the writing leaderboard and a
     Design Arena link, `null` for an unknown host; `normalizeMetricKey` is
     dot-free; `parseBenchmarkPayload` reads the llm-stats `entries[]` and writing
@@ -91,7 +101,7 @@ passing.
     fields, `scoreMax`, join) and a metric colliding with a shipped key is
     rejected; `dryRunDeclaration` reports coverage/leader and rejects a zero-join;
     `extractBenchmarkLinks` pulls URLs from prose.
-17. **Agent creation** (`create-agent.test.ts`) — a purpose fits the expected
+18. **Agent creation** (`create-agent.test.ts`) — a purpose fits the expected
     archetype; a `--weights` set violating Σ(non-price) = 1 − w_price is refused;
     an existing agent file without `--force` is refused and writes no role;
     `--dry-run` writes neither file; an architect `spec` replaces the
@@ -99,46 +109,46 @@ passing.
     share, is a no-op for the archetype's own specialist set, and keeps both
     invariants; the nine-axis gate (the maintenance, provenance and cross-source
     axes are annotations, never a drop).
-18. **Agent removal** (`remove-agent.test.ts`) — the role's lock-file keys and the
+19. **Agent removal** (`remove-agent.test.ts`) — the role's lock-file keys and the
     agent file are deleted (backup written); a shipped default role, a reserved
     name and an invalid name are refused; nothing-to-remove errors; `--dry-run`
     writes nothing; the updater drops `modelRoles.<n>` and the plugin-managed
     `task.disabledAgents` entry.
-19. **Agent pins / disable** (`agent-pins.test.ts`, `agent-disable.test.ts`) —
+20. **Agent pins / disable** (`agent-pins.test.ts`, `agent-disable.test.ts`) —
     `parseAgentPin` takes the first `@role`; `discoverAgentPins` scans the three
     scopes, most specific wins; the sync is not day-gated; an unrelated entry
     keeps its position; an unknown role is never added.
-20. **Role enable / lock** (`role-enable.test.ts`, `role-lock.test.ts`) —
+21. **Role enable / lock** (`role-enable.test.ts`, `role-lock.test.ts`) —
     disabling drops the role from the resolved set and its `modelRoles` line; a
     locked role is not switched and its chain survives the prune; unlocking
     restores the switch.
-21. **Settings** (`settings.test.ts`, `settings-schema.test.ts`) — opt-in roles;
+22. **Settings** (`settings.test.ts`, `settings-schema.test.ts`) — opt-in roles;
     `priceSwitchFraction` range; flat/nested merge; `required` as string or
     array; an external metric key is weightable, a dotted one rejected;
     `package.json` `omp.settings` deep-equals `deriveSettingsSchema()`.
-22. **Explorer** (`explorer.test.ts`, `explorer-scopes.test.ts`) — rank deltas;
+23. **Explorer** (`explorer.test.ts`, `explorer-scopes.test.ts`) — rank deltas;
     contributions sum to `q`; `inverseCardinal` round-trips; Export preserves
     siblings and normalizes nested roles; the scope switcher; the availability
     overlay.
-23. **Project scope** (`project-updater.test.ts`, `project-setup.test.ts`,
+24. **Project scope** (`project-updater.test.ts`, `project-setup.test.ts`,
     `project-roles-command.test.ts`) — project mode scopes config/state/history/
     lock to `<cwd>/.omp`; the day gate is per scope; the registry write;
     `setupProject` add/drop/keep, `--dry-run`, `--force`; the command is
     registered.
-24. **Session model** (`session-model.test.ts`) — the hook fires only after a real
+25. **Session model** (`session-model.test.ts`) — the hook fires only after a real
     write on a real `default` change; a dry run and a kept default skip it; a
     throwing hook is contained.
-25. **Docs** (`docs.test.ts`) — every relative markdown link resolves; no
+26. **Docs** (`docs.test.ts`) — every relative markdown link resolves; no
     reference to a moved doc; the CHANGELOG shape; `package.json` `files` entries
     exist; the README has no dev-only headings.
-26. **Architect provenance** (`architect-provenance.test.ts`) — the vendored
+27. **Architect provenance** (`architect-provenance.test.ts`) — the vendored
     prompt header matches `ARCHITECT_PROMPT_VERSION` and the version named in
     [`agent-authoring.md`](agent-authoring.md).
-27. **Architect retry** (`agent-architect.test.ts`) — a malformed architect
+28. **Architect retry** (`agent-architect.test.ts`) — a malformed architect
     response is retried once and the parsed spec returned; an always-malformed
     run throws carrying the raw output; a `run()` failure propagates with no
     retry.
-28. **Error reporting** (`error-report.test.ts`) — `reportUnexpectedError`
+29. **Error reporting** (`error-report.test.ts`) — `reportUnexpectedError`
     through its one entry point with fully injected deps: `off` → no fetch, no
     ledger write, `action: "off"`; `auto` + token → exactly one create whose body
     carries the fingerprint marker, plugin version, runtime, platform, label and
@@ -166,7 +176,7 @@ passing.
     aborts under one label differ; the in-process guard; and a ledger that
     tolerates junk and truncates a pathological stack — including a multi-byte
     one — to the 64 KB **byte** budget.
-29. **CI/CD** (`ci.test.ts`) — the workflow parses and declares both jobs with
+30. **CI/CD** (`ci.test.ts`) — the workflow parses and declares both jobs with
     `release` needing `test`; the `test` job's command is identical to the
     pre-commit hook's; the tag trigger covers every CHANGELOG tag link and the
     package version; `.node-version` is the file the workflow reads; the release
