@@ -54,6 +54,16 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   trusted publishing — no long-lived token — and creates the GitHub Release from
   the CHANGELOG section, and every pull request and `main` push runs the suite on
   GitHub with the same command the pre-commit hook runs. (issue #56)
+- **The auto-pin fallback chain now carries every gate-passing provider route** —
+  with `providerPinning` on, the chain no longer stops at three providers per
+  model: the primary model contributes every gate-passing route except the pinned
+  best, and each fallback model contributes every gate-passing route, in
+  route-value order and deduped by provider slug, so a down provider fails over
+  to another provider of the same model before the chain switches models. Chain
+  length is data-driven (`(R_primary − 1) + Σ R_fallback`, the number of distinct
+  gate-passing provider slugs per model) instead of the fixed
+  `2 + 3·fallbackChainDepth`. The manual-`providerPin` and no-pin paths are
+  unchanged. (issue #69)
 
 ## [1.1.0] - 2026-10-08
 
