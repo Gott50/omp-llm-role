@@ -158,16 +158,21 @@ ineligible); clearing it resumes the automatic choice.
 `:level` — so it **includes** the pin (`openrouter/<id>@<slug>`). Its values, in
 order:
 
-1. the same model on its 2nd-best route,
-2. the same model on its 3rd-best route,
-3. then, for each of the `fallbackChainDepth` fallback models, that model on its
-   own top-3 routes (best, 2nd, 3rd).
+1. the same model on **every** gate-passing route except the pinned best, in
+   route-value order,
+2. then, for each of the `fallbackChainDepth` fallback models, that model on
+   **every** gate-passing route, in route-value order.
 
-Length = `2 + 3·fallbackChainDepth` (8 at the shipped depth 2). Every entry
-carries the same `@<slug>` suffix (and the role's thinking level where the target
-advertises it). A model with fewer than 3 candidate routes contributes only the
-routes it has (0 → 0 entries). The probe walk target is unchanged
-(`1 + fallbackChainDepth` — it counts models, not routes).
+Length = `(R_primary − 1) + Σ R_fallback`, where `R` is the number of distinct
+gate-passing provider slugs for that model — data-driven, not a fixed cap.
+Entries dedup by chain value, so two routes sharing a provider slug collapse to
+one. Every entry carries the same `@<slug>` suffix (and the role's thinking level
+where the target advertises it). A model with no gate-passing route contributes
+nothing. The gates are the engine's `rankedRoutes` set: non-degraded
+(`status === 0`), the endpoint capability filters (`tools` / `minContextTokens` /
+`minOutputTokens`), a usable billed price, the `maxPriceUsdPerM` cap
+(thinking-adjusted), and the allowed-providers whitelist. The probe walk target
+is unchanged (`1 + fallbackChainDepth` — it counts models, not routes).
 
 **Prune on a pin change.** Because the chain key includes the pin, a pin change
 changes the key; the updater's chain prune (`state.pluginWrittenChainKeys`) drops
