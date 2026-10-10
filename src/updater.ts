@@ -16,7 +16,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { autoPinApplies, bestRoute, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
@@ -85,6 +85,13 @@ export type Deps = {
   probeModel?(token: string, catalogId: string): Promise<ProbeVerdict>;
   /** DI seam like `getKeyMeta`/`probeModel`; production defaults to `fetchKeyAvailability` (never throws). */
   getKeyAvailability?(token: string): Promise<KeyAvailability>;
+  /**
+   * DI seam like `getKeyAvailability`; production defaults to
+   * `fetchAllowedProviders` (never throws). Returns the account's
+   * allowed-providers privacy whitelist, or null when there is none (or the
+   * harvest failed) — a null result leaves every route pool untouched.
+   */
+  getAllowedProviders?(token: string, modelId: string): Promise<Set<string> | null>;
   /**
    * Host coupling (extension only): apply a concrete selector to the live
    * session model. Receives the final `default` selector (with thinking
@@ -323,6 +330,42 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       notes.push(
         `omp-llm-role: OpenRouter keyed catalog ${availability.reason === "no-filter" ? "not filtering" : "unavailable"} — enable OpenRouter → Settings → "Filter the model catalog for API keys" to skip probing key-blocked models; the probe walk is still in use`,
       );
+    }
+
+    // Allowed-providers privacy whitelist (spec #65): harvested once per run
+    // with a valid catalog model id (the canary 404s, so it bills no tokens).
+    // The whitelist is invisible to /api/v1/key and the catalog endpoints, so a
+    // route on a provider outside it would be written into config.yml and 404
+    // at request time. Pruning every model's route pool to allowed providers
+    // before ranking makes the soft basis, the auto-pin and the fallback chains
+    // whitelist-aware through the single `m.routes` seam. A null result (no
+    // whitelist set / harvest failed) leaves the pools untouched.
+    const canaryModelId = eligible[0]?.id;
+    const allowed =
+      canaryModelId === undefined
+        ? null
+        : await (deps.getAllowedProviders ? deps.getAllowedProviders(token, canaryModelId) : fetchAllowedProviders(token, canaryModelId));
+    if (allowed !== null) {
+      const isAllowed = (slug: string): boolean => {
+        for (const entry of allowed) {
+          if (slug === entry || slug.startsWith(`${entry}/`)) return true;
+        }
+        return false;
+      };
+      let prunedCount = 0;
+      const pruned = rank.models.map((m) => {
+        const routes = m.routes;
+        if (routes === undefined) return m;
+        const kept = routes.filter((r) => isAllowed(r.providerSlug));
+        prunedCount += routes.length - kept.length;
+        return { ...m, routes: kept };
+      });
+      rank = { ...rank, models: pruned };
+      notes.push(
+        `omp-llm-role: OpenRouter allowed-providers whitelist active — ${allowed.size} providers; ${prunedCount} routes pruned`,
+      );
+    } else {
+      notes.push(`omp-llm-role: OpenRouter allowed-providers whitelist: no whitelist`);
     }
     const poolByRole: Record<string, Candidate[]> = {};
     const chainPlanByRole: Record<string, ChainPlan> = {};
