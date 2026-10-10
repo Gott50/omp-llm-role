@@ -146,6 +146,23 @@ The pin is a cost-and-throughput posture, not a quality edit: it moves the price
 axis to the route's billed price and the throughput axis to the route's p50,
 while every other weighted metric stays the model's own.
 
+### Whitelist-aware route selection
+
+The updater narrows every model's route pool to the account's
+**allowed-providers privacy whitelist** before ranking (data-sources.md,
+*OpenRouter — allowed-providers whitelist*; architecture.md, *Data flow*). The
+prune is the single change point — `roleRoute`, `bestRoute`, `rankedRoutes` and
+`endpointFilteredModel` all read `m.routes` — so every route consumer above is
+whitelist-aware: a hard `providerPin` on a blocked provider matches no route and
+drops the model (`providerPinDrops`), the soft `preferOwnProvider` basis prices
+each model on its best **allowed** route, the endpoint-filtered blend is computed
+over the allowed pool, and the fallback chains carry only allowed routes. A
+`null` whitelist (no whitelist set, harvest failed) leaves every pool untouched,
+so the ranking is byte-identical to today. The whitelist is a route-selection
+filter, not a re-pricing: the role-independent `1/price²` blend (`m.price`/
+`m.throughput`) is left as the account-agnostic expected value, and a model with
+no allowed route keeps that blend (the soft basis never drops a model).
+
 ## Capability presets (feature flags)
 
 One named flag per opt-in capability (`features.<id>` global,
@@ -182,7 +199,9 @@ cache, `default` role, 146 eligible):
 - **`providerPinning`** (`preferOwnProvider: true`) prices a model on its
   **best route** — the route maximizing the role's own value (`q_route −
   λ·priceEff_route`, with the route's p50 throughput and cache-adjusted billed
-  price) among the routes that pass the role's endpoint filters — falling back to
+  price) among the routes that pass the role's endpoint filters and the
+  account's allowed-providers whitelist (see *Whitelist-aware route selection*)
+  — falling back to
   the default `1/price²` blend only when the model has no candidate route. It is
   a **per-model policy, not a scalar** — the sensible pin differs per model, so
   the bundle carries a policy field evaluated against the model's own routes at

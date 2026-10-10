@@ -183,8 +183,8 @@ freeUsable   = free_model_daily_requests.remaining > 0
 billed → billed variants only (exclude `:free`, `:batch`); else free → `:free`
 variants only (exclude `:batch`); else `"none"` aborts the run. The key endpoint
 carries **no** model/provider restriction field — the account's allowed-providers
-whitelist is invisible to it (see the keyed catalog below and the probe in
-[`architecture.md`](architecture.md)).
+whitelist is invisible to it (see the allowed-providers whitelist below and the
+probe in [`architecture.md`](architecture.md)).
 
 ## OpenRouter — keyed catalog (availability)
 
@@ -204,6 +204,32 @@ makes the Bearer-authenticated catalog a per-key allowlist.
   explorer fetches it on boot and on `POST /api/refresh`. It is **not cached to disk** —
   every consumer re-fetches, and `fetchKeyAvailability` **never throws** (a failure
   degrades to `unavailable` with empty sets, so the probe walk / `unknown` marks stand).
+
+## OpenRouter — allowed-providers whitelist (availability)
+
+The account's **allowed-providers privacy whitelist**
+(openrouter.ai/settings/privacy) restricts which provider routes a request may
+use. It is invisible to `/api/v1/key` and to the catalog endpoints; the only
+place it appears is the 404 body of a request that fails because of it.
+
+- **URL**: `POST https://openrouter.ai/api/v1/chat/completions` with
+  `provider.only: ["__omp-llm-role-canary__"]` (a nonexistent provider slug) on a
+  valid catalog model. `fetchAllowedProviders(token, modelId, fetchImpl?)`
+  (`src/availability.ts`) issues it.
+- **Signal**: the 404 body names the whitelist after "permits only:" — the
+  message is parsed into a `Set<string>` of bare lab names (`coreweave`,
+  `baseten`, …). A non-404 response, a body without the clause (no whitelist
+  set), or any transport/shape failure returns `null`. The canary 404s, so it
+  bills no tokens.
+- **Match rule**: a route's `providerSlug` is allowed when it equals a whitelist
+  entry or starts with `<entry>/` — the whitelist carries bare lab names while
+  route slugs are tiered (`coreweave/fp8`, `baseten/fp8`).
+- **Consumer**: the updater harvests it **once per run** (with a valid catalog
+  model id) and prunes every model's route pool to allowed providers before
+  ranking (architecture.md, *Data flow*). It is **not cached to disk** — every
+  run re-learns it, so a privacy-setting change takes effect on the next refresh
+  — and `fetchAllowedProviders` **never throws** (a failure degrades to `null`,
+  which leaves every route pool untouched).
 
 ## Design Arena — design quality
 

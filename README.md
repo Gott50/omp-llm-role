@@ -157,7 +157,8 @@ beats a global `true`. The preset fills only knobs the role does not already
 set, and an explicit key is merged last, so it always wins. `providerPinning`'s
 recommended setting is a **soft per-model policy** (`preferOwnProvider`), not a
 hard `providerPin`: it prices a model on its **best route** (the value-max route
-among the filter-passing, non-degraded, priced routes) — the route's billed price
+among the filter-passing, non-degraded, priced routes the account's
+allowed-providers whitelist permits) — the route's billed price
 **and** its p50 throughput, so `q` moves as well as `priceEff` — and never makes
 a model ineligible (the hard `providerPin` stays available by hand, and overrides
 the automatic choice). `minContextTokens` is deliberately **not** part of `endpointCeilings` —
@@ -466,6 +467,13 @@ The plugin keeps only models the OpenRouter key can actually run:
   whitelist** is invisible to the key endpoint and the unauthenticated catalog, and a
   real request's 404 is the only reliable signal. Blocked candidates are excluded from
   selection and chains; a role with no clean candidate is left untouched.
+- **Allowed-providers whitelist** — the account's OpenRouter **allowed-providers
+  privacy whitelist** (openrouter.ai/settings/privacy) is learned once per run (a
+  canary request that bills no tokens) and every model's route pool is narrowed to
+  allowed providers before ranking, so a pin or a fallback hop is never written on a
+  provider the account cannot use. The run notes `OpenRouter allowed-providers
+  whitelist active — N providers; M routes pruned` (or `… whitelist: no whitelist`).
+  With no whitelist set — or when the harvest fails — nothing changes.
 - **Explorer key marking** — the explorer overlays every ranked model with a
   **usable** / **key-blocked** / **unknown** badge derived from the
   key-authenticated `GET /api/v1/models` (the account setting **"Filter the model
@@ -486,7 +494,8 @@ The plugin keeps only models the OpenRouter key can actually run:
   [docs/dev/quirks.md](docs/dev/quirks.md)).
 - **Provider whitelist.** The account's allowed-providers whitelist blocks many
   models, so the report's #1 and the written selector can differ — judge weights
-  on the reachable pool.
+  on the reachable pool. The updater prunes *routes* to the whitelist (see
+  Availability), but the report has no token and is not whitelist-aware.
 - **Provider pinning opts out of auto-Exacto.** A `providerPin` — or the
   automatic pin the `providerPinning` capability writes — puts a trailing
   `@<slug>` on the selector, which omp applies as OpenRouter
