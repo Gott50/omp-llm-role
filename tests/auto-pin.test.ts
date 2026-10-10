@@ -7,12 +7,13 @@ import type { Model, OpenRouterEndpointRecord } from "../src/engine.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
-// Auto-pin (issue #61, spec #58): when a role's expanded def has
-// `preferOwnProvider === true` and no manual `providerPin`, the updater writes
-// the chosen model's best route as the selector's `@<slug>` suffix and fills the
-// fallback chain with the same model's next-best routes plus each fallback
-// model's top routes, all pinned. A manual pin is a hard gate and always wins;
-// a model with no candidate route keeps default routing (bare selector).
+// Auto-pin (issue #61, spec #58; expanded by #69): when a role's expanded def
+// has `preferOwnProvider === true` and no manual `providerPin`, the updater
+// writes the chosen model's best route as the selector's `@<slug>` suffix and
+// fills the fallback chain with every gate-passing route of the primary model
+// (all but the pinned best) and of each fallback model, in route-value order,
+// deduped by chain value. A manual pin is a hard gate and always wins; a model
+// with no candidate route keeps default routing (bare selector).
 
 function route(over: Partial<OpenRouterEndpointRecord> = {}): OpenRouterEndpointRecord {
   return {
@@ -167,7 +168,10 @@ test("the chain has the exact 8-value shape at depth 2", async () => {
   const doc = readConfig(dir);
   assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cheap:auto");
   const chain = doc.retry.fallbackChains["openrouter/org/model-a@cheap"];
-  // Primary on its 2nd/3rd routes, then each fallback model on its top-3.
+  // Every gate-passing route: the primary's non-pinned routes, then each
+  // fallback model's routes. The fixture's models have 3 routes each, so the
+  // count is unchanged (2 + 3 + 3 = 8) — the rule is "all gate-passing routes",
+  // not "top-3".
   assert.deepEqual(chain, [
     "openrouter/org/model-a@mid:auto",
     "openrouter/org/model-a@exp:auto",
@@ -198,6 +202,141 @@ test("a model with only one candidate route contributes only that route", async 
     "openrouter/org/model-b@b1:auto",
     "openrouter/org/model-c@c1:auto",
   ]);
+});
+
+test("a model with more than three gate-passing routes contributes all of them", async () => {
+  // Acceptance fixture: a 5-route primary (4 non-pinned) + a 4-route fallback at
+  // depth 1, so the chain is exactly the 8 non-pinned routes in route-value order.
+  const models = [
+    routed("model-a", 90, 1, 100, ["a1", "a2", "a3", "a4", "a5"]),
+    routed("model-b", 80, 5, 60, ["b1", "b2", "b3", "b4"]),
+  ];
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(models, onlyDefault({ fallbackChainDepth: 1, roles: { default: { preferOwnProvider: true } } }));
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const doc = readConfig(dir);
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@a1:auto");
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@a1"], [
+    "openrouter/org/model-a@a2:auto",
+    "openrouter/org/model-a@a3:auto",
+    "openrouter/org/model-a@a4:auto",
+    "openrouter/org/model-a@a5:auto",
+    "openrouter/org/model-b@b1:auto",
+    "openrouter/org/model-b@b2:auto",
+    "openrouter/org/model-b@b3:auto",
+    "openrouter/org/model-b@b4:auto",
+  ]);
+});
+
+test("the primary model contributes all its non-pinned routes", async () => {
+  const models = [
+    routed("model-a", 90, 1, 100, ["a1", "a2", "a3", "a4"]),
+    routed("model-b", 80, 5, 60, ["b1"]),
+    routed("model-c", 70, 10, 30, ["c1"]),
+  ];
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(models, onlyDefault({ roles: { default: { preferOwnProvider: true } } }));
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const doc = readConfig(dir);
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@a1"], [
+    "openrouter/org/model-a@a2:auto",
+    "openrouter/org/model-a@a3:auto",
+    "openrouter/org/model-a@a4:auto",
+    "openrouter/org/model-b@b1:auto",
+    "openrouter/org/model-c@c1:auto",
+  ]);
+});
+
+test("a degraded route is excluded from the chain", async () => {
+  const a = makeModel("model-a", 90, 1, 100);
+  a.routes = [
+    route({ id: "a-cheap", providerSlug: "cheap", price: 1, tput: 100 }),
+    route({ id: "a-mid", providerSlug: "mid", price: 2, tput: 100 }),
+    route({ id: "a-down", providerSlug: "down", price: 3, tput: 100, status: 1 }),
+    route({ id: "a-exp", providerSlug: "exp", price: 4, tput: 100 }),
+  ];
+  const models = [a, routed("model-b", 80, 5, 60, ["b1"]), routed("model-c", 70, 10, 30, ["c1"])];
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(models, onlyDefault({ roles: { default: { preferOwnProvider: true } } }));
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
+  assert.deepEqual(chain, [
+    "openrouter/org/model-a@mid:auto",
+    "openrouter/org/model-a@exp:auto",
+    "openrouter/org/model-b@b1:auto",
+    "openrouter/org/model-c@c1:auto",
+  ]);
+  assert.ok(!chain.some((v) => v.includes("@down")));
+});
+
+test("a route over filters.maxPriceUsdPerM is excluded from the chain", async () => {
+  const a = makeModel("model-a", 90, 1, 100);
+  a.routes = [
+    route({ id: "a-cheap", providerSlug: "cheap", price: 1, tput: 100 }),
+    route({ id: "a-mid", providerSlug: "mid", price: 2, tput: 100 }),
+    route({ id: "a-over", providerSlug: "over", price: 3, tput: 100 }),
+    route({ id: "a-exp", providerSlug: "exp", price: 4, tput: 100 }),
+  ];
+  const models = [a, routed("model-b", 80, 2, 60, ["b1"]), routed("model-c", 70, 3, 30, ["c1"])];
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(models, onlyDefault({ roles: { default: { preferOwnProvider: true, filters: { maxPriceUsdPerM: 3 } } } }));
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
+  assert.deepEqual(chain, [
+    "openrouter/org/model-a@mid:auto",
+    "openrouter/org/model-a@over:auto",
+    "openrouter/org/model-b@b1:auto",
+    "openrouter/org/model-c@c1:auto",
+  ]);
+  assert.ok(!chain.some((v) => v.includes("@exp")));
+});
+
+test("a whitelist-blocked route is excluded from the chain", async () => {
+  const models = [
+    routed("model-a", 90, 1, 100, ["cheap", "mid", "blocked"]),
+    routed("model-b", 80, 5, 60, ["b1"]),
+    routed("model-c", 70, 10, 30, ["c1"]),
+  ];
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(models, onlyDefault({ roles: { default: { preferOwnProvider: true } } }), {
+    getAllowedProviders: async () => new Set(["cheap", "mid", "b1", "c1"]),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
+  assert.deepEqual(chain, [
+    "openrouter/org/model-a@mid:auto",
+    "openrouter/org/model-b@b1:auto",
+    "openrouter/org/model-c@c1:auto",
+  ]);
+  assert.ok(!chain.some((v) => v.includes("@blocked")));
+});
+
+test("two routes sharing a provider slug collapse to one chain entry", async () => {
+  const a = makeModel("model-a", 90, 1, 100);
+  a.routes = [
+    route({ id: "a-cheap", providerSlug: "cheap", price: 1, tput: 100 }),
+    route({ id: "a-shared-1", providerSlug: "shared", price: 2, tput: 100 }),
+    route({ id: "a-shared-2", providerSlug: "shared", price: 3, tput: 100 }),
+    route({ id: "a-exp", providerSlug: "exp", price: 4, tput: 100 }),
+  ];
+  const models = [a, routed("model-b", 80, 5, 60, ["b1"]), routed("model-c", 70, 10, 30, ["c1"])];
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(models, onlyDefault({ roles: { default: { preferOwnProvider: true } } }));
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
+  assert.deepEqual(chain, [
+    "openrouter/org/model-a@shared:auto",
+    "openrouter/org/model-a@exp:auto",
+    "openrouter/org/model-b@b1:auto",
+    "openrouter/org/model-c@c1:auto",
+  ]);
+  assert.equal(chain.filter((v) => v.includes("@shared")).length, 1);
 });
 
 // --- determinism / prune -----------------------------------------------------
