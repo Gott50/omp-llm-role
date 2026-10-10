@@ -295,6 +295,29 @@ test("a route over filters.maxPriceUsdPerM is excluded from the chain", async ()
   assert.ok(!chain.some((v) => v.includes("@exp")));
 });
 
+test("a route failing an endpoint filter is excluded from the chain", async () => {
+  const a = makeModel("model-a", 90, 1, 100);
+  a.routes = [
+    route({ id: "a-cheap", providerSlug: "cheap", price: 1, tput: 100 }),
+    route({ id: "a-mid", providerSlug: "mid", price: 2, tput: 100 }),
+    route({ id: "a-notools", providerSlug: "notools", price: 3, tput: 100, supportsTools: false }),
+    route({ id: "a-exp", providerSlug: "exp", price: 4, tput: 100 }),
+  ];
+  const models = [a, routed("model-b", 80, 5, 60, ["b1"]), routed("model-c", 70, 10, 30, ["c1"])];
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(models, onlyDefault({ roles: { default: { preferOwnProvider: true, filters: { tools: true } } } }));
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
+  assert.deepEqual(chain, [
+    "openrouter/org/model-a@mid:auto",
+    "openrouter/org/model-a@exp:auto",
+    "openrouter/org/model-b@b1:auto",
+    "openrouter/org/model-c@c1:auto",
+  ]);
+  assert.ok(!chain.some((v) => v.includes("@notools")));
+});
+
 test("a whitelist-blocked route is excluded from the chain", async () => {
   const models = [
     routed("model-a", 90, 1, 100, ["cheap", "mid", "blocked"]),

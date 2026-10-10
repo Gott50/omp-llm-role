@@ -170,9 +170,11 @@ one. Every entry carries the same `@<slug>` suffix (and the role's thinking leve
 where the target advertises it). A model with no gate-passing route contributes
 nothing. The gates are the engine's `rankedRoutes` set: non-degraded
 (`status === 0`), the endpoint capability filters (`tools` / `minContextTokens` /
-`minOutputTokens`), a usable billed price, the `maxPriceUsdPerM` cap
-(thinking-adjusted), and the allowed-providers whitelist. The probe walk target
-is unchanged (`1 + fallbackChainDepth` — it counts models, not routes).
+`minOutputTokens`), a usable billed price, and the `maxPriceUsdPerM` cap
+(thinking-adjusted). The allowed-providers whitelist is not a `rankedRoutes`
+filter: the updater prunes each model's route pool to allowed providers before
+ranking, which is what makes `rankedRoutes` whitelist-aware. The probe walk
+target is unchanged (`1 + fallbackChainDepth` — it counts models, not routes).
 
 **Prune on a pin change.** Because the chain key includes the pin, a pin change
 changes the key; the updater's chain prune (`state.pluginWrittenChainKeys`) drops

@@ -189,6 +189,12 @@ passing.
     and `cut` bumping the four fields, cutting the changelog, committing and
     tagging while refusing a dirty tree, an existing tag, an empty
     `## [Unreleased]` and a HEAD that is not `origin/main`.
+31. **Auto-pin** (`auto-pin.test.ts`) — the selector gains the best route's
+    `@<slug>`; the chain carries every gate-passing route of the primary (all but
+    the pinned best) then of each fallback model, in route-value order, deduped by
+    provider slug; a degraded / over-`maxPriceUsdPerM` / endpoint-filter-failing /
+    whitelist-blocked route is excluded; the manual pin wins and the no-pin path
+    is bare; a re-run is idempotent and a pin change prunes the old key.
 
 ## Live checks
 

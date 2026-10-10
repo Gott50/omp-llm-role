@@ -15,8 +15,9 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   requests to its chosen model's **best provider route**: the selector gains the
   `@<slug>` suffix (`openrouter/<id>@<slug>:<level>`, which omp applies as
   `compat.openRouterRouting = { only: [slug] }`) and the fallback chain carries
-  the same model on its next-best providers plus each fallback model on its best
-  providers, so a down route fails over within the model's own routes. The route
+  the primary model on every gate-passing route except the pinned best, then each
+  fallback model on every gate-passing route, so a down provider fails over to
+  another provider of the same model before the chain switches models. The route
   basis is the model's **best route** by the role's own value (the value-max
   route among the filter-passing, non-degraded, priced routes, cap-respecting;
   ties by slug then id) — replacing the old own-lab slug-prefix match — and it

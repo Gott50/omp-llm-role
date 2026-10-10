@@ -142,7 +142,7 @@ defaults.
 |---|---|---|
 | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | Routes that cannot call tools and routes whose output ceiling is below 16 384 tokens leave the pool — a reasoning model is not cut off mid-thought |
 | `cachePricing` | `cacheHitRate: 0.5` | The role is priced on a cache-heavy agent loop's invoice (the endpoint's `cacheReadPrice` blended in) rather than the sticker price |
-| `providerPinning` | `preferOwnProvider: true` | Each request is bound to the model's **best provider route** — the selector gains `@<slug>` — and the fallback chain carries the same model on its next-best providers plus each fallback model on its best providers, so a down route fails over within the model's own routes. The model is priced **and measured** on that route (its billed price and p50 throughput, so `q` moves too), falling back to the default blend only when it has no candidate route |
+| `providerPinning` | `preferOwnProvider: true` | Each request is bound to the model's **best provider route** — the selector gains `@<slug>` — and the fallback chain carries the primary model on every gate-passing route except the pinned best, then each fallback model on every gate-passing route, so a down provider fails over to another provider of the same model before the chain switches models. The model is priced **and measured** on that route (its billed price and p50 throughput, so `q` moves too), falling back to the default blend only when it has no candidate route |
 | `costCap` | `filters.maxPriceUsdPerM: 10` | The priciest tail of the eligible pool leaves it, so the pick cannot be an expensive outlier |
 
 Precedence is one rule:
