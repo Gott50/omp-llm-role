@@ -10,6 +10,17 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **The live provider route is shown in the model display** — when the live
+  session model carries a provider pin (a hand-set `providerPin`, or the
+  automatic pin the `providerPinning` capability writes), the plugin keeps the
+  model object's `name` suffixed with the route, so omp's status-line model
+  segment renders e.g. `DeepSeek V4.1 Flash @coreweave/fp8`. The suffix is
+  applied on session start, refreshed on the two fallback events, and re-derived
+  at the start of every turn — so it self-heals after omp silently restores the
+  primary model following a fallback cooldown (which emits no session event).
+  An unpinned model's display is unchanged, and the suffix is display-only: it
+  rides the model object's `name`, so attribution, usage recording and model
+  comparison are unaffected. (spec #77)
 - **`providerPinning` now auto-configures the provider pin** — enabling the
   capability (`preferOwnProvider: true`) makes the daily updater bind each role's
   requests to its chosen model's **best provider route**: the selector gains the

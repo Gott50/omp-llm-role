@@ -48,6 +48,16 @@ omp plugin install omp-llm-role@gott50-plugins
   session actually booted on the previous `default` selector (an explicit
   `omp --model X` is never clobbered), and only on a real change. Disable with
   `activateDefaultOnEmptySession=false`.
+- **Provider in the model display.** When the live session model carries a
+  provider pin — a hand-set `providerPin`, or the automatic pin the
+  `providerPinning` capability writes — the status line's model segment shows
+  the route next to the model name, e.g. `DeepSeek V4.1 Flash @coreweave/fp8`.
+  The suffix is applied on session start, refreshed when a fallback switches the
+  model, and re-derived at the start of every turn, so it self-heals after omp
+  silently restores the primary model following a fallback cooldown. An unpinned
+  model's display is unchanged, and the suffix is display-only: it rides the
+  model object's `name`, so attribution, usage recording and model comparison
+  are unaffected.
 - **Surgical writes.** Only managed role lines, managed chain keys, and the
   plugin-managed `task.disabledAgents` names change; comments, blank lines and
   unknown keys stay byte-identical, and a no-change run writes nothing.
