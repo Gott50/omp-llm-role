@@ -157,6 +157,11 @@ things that only bite someone changing or debugging the code.
   one-turn lag). The primary and a fallback may be the same registry object
   (same model id, different route), so the strip-then-append is idempotent and
   reads the pin from the live model's routing block, never a cached value.
+  `retry_fallback_applied`/`retry_fallback_succeeded` are also emitted for
+  **advisor** fallbacks, where only the advisor's model changes and the session
+  model is untouched, so the event's selector is trusted only when it names the
+  live session model (`liveModelIsSelector`); otherwise the pin is re-derived
+  from the live model's routing block.
 - **Testing a registered slash command needs `--mode rpc` or a TUI** — `omp -p`
   (print mode) sends a leading `/name` as a *prompt* to the model, so the handler
   never runs and `ctx.ui.notify` is a no-op anyway. RPC mode does dispatch them:
