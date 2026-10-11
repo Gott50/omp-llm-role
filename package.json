@@ -90,7 +90,7 @@
       },
       "features.providerPinning": {
         "type": "boolean",
-        "description": "Bind each request to the model's best provider route (per-model policy; never drops a model)",
+        "description": "Bind each request to the model's best provider route (per-model policy; never drops a model) and prefer routes at or above 50 tok/s",
         "default": false
       },
       "features.costCap": {
