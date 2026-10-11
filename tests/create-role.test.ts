@@ -145,5 +145,5 @@ test("create-role --list-features prints every capability id and its bundle", ()
   }
   assert.match(out, /cachePricing[^\n]*cacheHitRate=0\.5/);
   assert.match(out, /costCap[^\n]*maxPriceUsdPerM=10/);
-  assert.match(out, /providerPinning[^\n]*preferOwnProvider=true/);
+  assert.match(out, /providerPinning[^\n]*filters\.preferredMinThroughput=50, preferOwnProvider=true/);
 });
