@@ -1,20 +1,40 @@
-# Current state (2026-10-09)
+# Current state (2026-10-11)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
 per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
-[`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The ranking numbers
-below are the 2026-10-09 measurement (the input-price blend basis #21, the
-#17/#18/#19/#20 wave and the #34–#40 focus-axis/capability-flag work; see the top
-bullets) and are not re-derived on read.
+[`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
+ranking numbers below are the 2026-10-09 measurement (the input-price blend basis
+#21, the #17/#18/#19/#20 wave and the #34–#40 focus-axis/capability-flag work);
+the provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
+bullet). Neither is re-derived on read.
+
+- Provider ordering: value-for-money route score (2026-10-11, spec #71): the
+  auto-pin route basis changed from the route's own value (`q_route −
+  λ·priceEff_route`) to a min/max-normalized **value-for-money score** `vfm =
+  wT·tNorm − wP·pNorm` (`wT = wTput/(wPrice+wTput)`, `wP =
+  wPrice/(wPrice+wTput)`; `tNorm`/`pNorm` min/max over the candidate set), with a
+  new **soft** `filters.preferredMinThroughput` floor (routes at or above sort
+  first; below-floor routes are kept and sorted last) that the `providerPinning`
+  preset sets to 50. `routeValue` is deleted. The model-level ranking is
+  unchanged — the report is not regenerated (the ranking CLI does not apply
+  capability features and no shipped role sets `preferOwnProvider`). Measured
+  2026-10-11 on the current endpoints cache with the live lock's expanded defs
+  (all four capabilities on, `cacheHitRate 0.9`; `deepseek/deepseek-v4.1-flash`,
+  11 allowed providers, 12 allowed routes):
+  `morph/fp8` ($0.0840,
+  103 tok/s) wins `default`, `smol`, `commit`, `task`, `advisor`; `coreweave/fp8`
+  ($0.1978, 185.5 tok/s) wins `slow`, `tiny`, `designer`; `decart/fp4` ($0.0639,
+  72 tok/s) wins `vision`, `plan`.
 
 - Auto-pin chain expansion (2026-10-10, issue #69): with `providerPinning` on,
   the fallback chain no longer stops at three providers per model — the primary
   model contributes every gate-passing route except the pinned best, then each
   `fallbackChainDepth` fallback model contributes every gate-passing route, in
-  route-value order and deduped by provider slug, so a down provider fails over
+  score order (the `vfm` route score — spec #71 replaced the original
+  route-value order) and deduped by provider slug, so a down provider fails over
   to another provider of the same model before the chain switches models. Chain
   length is data-driven (`(R_primary − 1) + Σ R_fallback`) instead of the fixed
   `2 + 3·fallbackChainDepth`; the manual-`providerPin` and no-pin paths are
@@ -84,25 +104,27 @@ bullets) and are not re-derived on read.
   single precedence implementation (`effective def = shipped default ⊕
   preset(enabled flags) ⊕ explicit user keys`; a per-role `false` beats a global
   `true`; an explicit knob always wins). Grounding on the 2026-10-09 cache
-  (`default` role, 146 eligible):
+  (`default` role, 146 eligible; the `providerPinning` row is re-measured on the
+  2026-10-11 cache):
 
   | Flag | Recommended settings | Measured effect |
   |---|---|---|
   | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | 146 → 135 eligible, leader unchanged (`deepseek-v4.1-flash`, 0.37 $/M) |
   | `cachePricing` | `cacheHitRate: 0.5` | 146 eligible, leader unchanged, its `priceEff` 0.3732 → 0.3522 (−5.6 %) |
-  | `providerPinning` | `preferOwnProvider: true` | per-model policy, never changes eligibility; prices each model on its **best route** (value-max among the filter-passing, non-degraded, priced routes, cap-respecting; ties by slug then id) — 151 of 151 routed models have a candidate route, so the soft basis covers the whole routed field |
+  | `providerPinning` | `preferOwnProvider: true`, `filters.preferredMinThroughput: 50` | per-model policy, never changes eligibility; prices each model on its **best route** (max `vfm` among the filter-passing, non-degraded, priced routes, cap-respecting; the soft 50 tok/s floor sorts below-floor routes last; ties by slug then id) — 144 of 144 routed models have a candidate route (2026-10-11), so the soft basis covers the whole routed field |
   | `costCap` | `filters.maxPriceUsdPerM: 10` | 146 → 137 eligible (the top ≈6 %), leader unchanged; pool p90 7.8, p95 11.1 $/M, every leader 0.20–3.71 $/M |
 
   `providerPinning`'s recommended setting is a **soft per-model policy**
   (`preferOwnProvider`), not a hard `providerPin`: a hard pin would make a model
   with no matching route ineligible and empty most of a role's pool, so the
-  policy prices a model on its **best route** — the value-max route among the
-  filter-passing, non-degraded, priced routes (thinking-adjusted price ≤
-  `maxPriceUsdPerM`; ties by slug then id) — and falls back to the `1/price²`
-  blend only when the model has no candidate route. The basis is soft: it never
-  changes eligibility, and on the 2026-10-09 cache every one of the 151 routed
-  models has a candidate route, so the capability covers the whole routed field
-  (the old own-lab slug-prefix rule matched only 51 of 149). `minContextTokens`
+  policy prices a model on its **best route** — the max-`vfm` route (the
+  value-for-money score, with the soft 50 tok/s floor sorting below-floor routes
+  last) among the filter-passing, non-degraded, priced routes (thinking-adjusted
+  price ≤ `maxPriceUsdPerM`; ties by slug then id) — and falls back to the
+  `1/price²` blend only when the model has no candidate route. The basis is soft:
+  it never changes eligibility, and on the 2026-10-11 cache every one of the 144
+  routed models has a candidate route, so the capability covers the whole routed
+  field (the old own-lab slug-prefix rule matched only 51 of 149). `minContextTokens`
   is deliberately not in the `endpointCeilings` bundle (an absolute floor cannot
   express the video's fraction-of-the-model's-own-window complaint). The flags
   are settable from `create-role.ts`, `/create-agent`, `/project-roles`

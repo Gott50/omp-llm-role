@@ -137,6 +137,7 @@ test("each global flag applies its recommended bundle", () => {
   assert.deepEqual(pin.errors, []);
   for (const [name, def] of Object.entries(pin.settings.roles)) {
     assert.equal(def.preferOwnProvider, true, `${name} preferOwnProvider`);
+    assert.equal(def.filters?.preferredMinThroughput, 50, `${name} preferredMinThroughput`);
   }
 });
 
@@ -144,7 +145,14 @@ test("providerPinning's buys describes the auto-pin route binding", () => {
   const row = FEATURES.find((f) => f.id === "providerPinning");
   assert.ok(row, "providerPinning row exists");
   assert.match(row.buys, /@<slug>|pin|route/i, `buys should name the route binding:\n${row.buys}`);
-  assert.deepEqual(row.recommended, { preferOwnProvider: true });
+  assert.deepEqual(row.recommended, { preferOwnProvider: true, filters: { preferredMinThroughput: 50 } });
+});
+
+test("an explicit preferredMinThroughput beats the providerPinning floor", () => {
+  const { settings, errors } = resolveSettings({ "features.providerPinning": true, "roles.default.filters.preferredMinThroughput": 200 });
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.default.filters?.preferredMinThroughput, 200);
+  assert.equal(settings.roles.smol.filters?.preferredMinThroughput, 50);
 });
 
 test("an explicit knob beats the flag", () => {
@@ -224,6 +232,7 @@ test("feature bundles are pairwise leaf-disjoint", () => {
     if (rec.filters?.tools !== undefined) out.push("filters.tools");
     if (rec.filters?.minOutputTokens !== undefined) out.push("filters.minOutputTokens");
     if (rec.filters?.maxPriceUsdPerM !== undefined) out.push("filters.maxPriceUsdPerM");
+    if (rec.filters?.preferredMinThroughput !== undefined) out.push("filters.preferredMinThroughput");
     if (rec.cacheHitRate !== undefined) out.push("cacheHitRate");
     if (rec.preferOwnProvider !== undefined) out.push("preferOwnProvider");
     return out;

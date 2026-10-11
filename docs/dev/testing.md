@@ -71,7 +71,14 @@ passing.
     prices the matching route, not the blend; a tiered pin matches verbatim;
     `maxPriceUsdPerM` caps the route price; throughput is the route p50 with a
     blend fallback; no matching route → ineligible; the `@<slug>` selector and
-    chain carry the pin; a pin matching no route leaves the role unchanged.
+    chain carry the pin; a pin matching no route leaves the role unchanged. The
+    route-ordering score (spec #71): `rankedRoutes` orders by the value-for-money
+    score `vfm = wT·tNorm − wP·pNorm` (a throughput-heavy role picks a faster
+    route than a price-heavy role); the soft `filters.preferredMinThroughput`
+    floor sorts a below-floor route last **without dropping it**; a route with no
+    p50 uses the model's blended throughput (for both the score and the floor
+    check); equal scores break by `providerSlug` then `id`; `explainModel`'s
+    `autoPin` is the score-max route.
 14. **Thinking price** (`thinking-price.test.ts`) — bare/off unadjusted; a level
     scales only thinking-capable models; the frontier uses the effective price;
     `resolveSettings` validates thinking and rejects the legacy `suffixes` map;
@@ -125,7 +132,12 @@ passing.
 22. **Settings** (`settings.test.ts`, `settings-schema.test.ts`) — opt-in roles;
     `priceSwitchFraction` range; flat/nested merge; `required` as string or
     array; an external metric key is weightable, a dotted one rejected;
-    `package.json` `omp.settings` deep-equals `deriveSettingsSchema()`.
+    `package.json` `omp.settings` deep-equals `deriveSettingsSchema()`. The
+    `providerPinning` preset sets `preferOwnProvider: true` +
+    `filters.preferredMinThroughput: 50` (the registry row and the expanded def
+    agree), an explicit `filters.preferredMinThroughput` beats the preset, and
+    the schema carries the `roles.<role>.filters.preferredMinThroughput` row
+    (number, min 0, default 0).
 23. **Explorer** (`explorer.test.ts`, `explorer-scopes.test.ts`) — rank deltas;
     contributions sum to `q`; `inverseCardinal` round-trips; Export preserves
     siblings and normalizes nested roles; the scope switcher; the availability
@@ -191,7 +203,8 @@ passing.
     `## [Unreleased]` and a HEAD that is not `origin/main`.
 31. **Auto-pin** (`auto-pin.test.ts`) — the selector gains the best route's
     `@<slug>`; the chain carries every gate-passing route of the primary (all but
-    the pinned best) then of each fallback model, in route-value order, deduped by
+    the pinned best) then of each fallback model, in score order (the `vfm` route
+    score desc, spec #71), deduped by
     provider slug; a degraded / over-`maxPriceUsdPerM` / endpoint-filter-failing /
     whitelist-blocked route is excluded; the manual pin wins and the no-pin path
     is bare; a re-run is idempotent and a pin change prunes the old key.

@@ -55,6 +55,37 @@ test("schema rows carry the shipped defaults", () => {
   assert.equal(schema["roles.designer.enabled"].default, false);
 });
 
+test("schema exposes the soft throughput floor with default 0 and min 0", () => {
+  const schema = deriveSettingsSchema();
+  for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
+    const row = schema[`roles.${name}.filters.preferredMinThroughput`];
+    assert.ok(row, `missing roles.${name}.filters.preferredMinThroughput`);
+    assert.equal(row.type, "number");
+    assert.equal(row.min, 0);
+    assert.equal(row.default, def.filters?.preferredMinThroughput ?? 0);
+  }
+});
+
+test("resolveSettings accepts a positive preferredMinThroughput", () => {
+  const { settings, errors } = resolveSettings({
+    "roles.default.filters.preferredMinThroughput": 50,
+  });
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.default.filters?.preferredMinThroughput, 50);
+});
+
+test("resolveSettings rejects bad preferredMinThroughput values", () => {
+  for (const bad of [-1, "50", Number.NaN]) {
+    const { errors } = resolveSettings({
+      "roles.default.filters.preferredMinThroughput": bad,
+    });
+    assert.ok(
+      errors.some((e) => e.includes("filters.preferredMinThroughput must be a number ≥ 0")),
+      `expected rejection for ${String(bad)}`,
+    );
+  }
+});
+
 test("every schema default resolves to a real setting", () => {
   const raw: Record<string, unknown> = {};
   for (const [key, row] of Object.entries(deriveSettingsSchema())) {

@@ -9,7 +9,6 @@ import {
   providerPinDrops,
   rankRole,
   rankedRoutes,
-  routeValue,
   thinkingPriceFactor,
   type OpenRouterEndpointRecord,
   type RoleDef,
@@ -149,10 +148,11 @@ test("bestRoute picks the value-max route under a throughput-weighted role", () 
     route({ providerSlug: "slow-cheap", price: 1, tput: 20 }),
     route({ id: "r2", providerSlug: "fast-pricey", price: 4, tput: 300 }),
   ];
-  // tputRole: qW = 0.5, λ = 0.05. slow-cheap: 0.204 − 0.05·1 = 0.154;
-  // fast-pricey: 1.0 − 0.05·4 = 0.80 ⇒ the faster, pricier route wins.
-  assert.equal(bestRoute(m, tputRole())?.providerSlug, "fast-pricey");
-  // A price-heavy role flips the choice to the cheaper route.
+  // vfm = wT·tNorm − wP·pNorm over the two-route set (tNorm/pNorm are 0/1 at the
+  // extremes). tputRole(0.7/0.3): slow-cheap 0; fast-pricey 0.7 − 0.3 = 0.4 ⇒ the
+  // faster, pricier route wins on the score.
+  assert.equal(bestRoute(m, tputRole({ weights: { throughput: 0.7, price: 0.3 } }))?.providerSlug, "fast-pricey");
+  // A price-heavy role flips the choice to the cheaper route (0.1 − 0.9 = −0.8).
   const priceHeavy = roleWith({ weights: { throughput: 0.1, price: 0.9 }, required: ["throughput", "price"] });
   assert.equal(bestRoute(m, priceHeavy)?.providerSlug, "slow-cheap");
 });
@@ -199,16 +199,106 @@ test("rankedRoutes excludes a route failing the role's endpoint filters", () => 
   assert.deepEqual(rankedRoutes(m, def).map((r) => r.providerSlug), ["tools"]);
 });
 
-test("routeValue equals the value rankRole gives the model on that route", () => {
+test("rankedRoutes orders by the vfm score: a throughput-heavy role picks a faster route than a price-heavy role", () => {
   const m = makeModel("m", 40, 5, 100);
-  m.routes = [route({ providerSlug: "a", price: 2, tput: 40 }), route({ id: "r2", providerSlug: "b", price: 6, tput: 200 })];
-  const def = tputRole({ preferOwnProvider: true });
-  const ranked = rankRole(def, [m]);
-  assert.equal(ranked.length, 1);
-  const best = bestRoute(m, def);
-  assert.ok(best);
-  assert.equal(rankedRoutes(m, def)[0].providerSlug, best.providerSlug);
-  assert.equal(routeValue(m, def, best), ranked[0].value);
+  m.routes = [
+    route({ id: "cheap-slow", providerSlug: "cheap-slow", price: 1, tput: 20 }),
+    route({ id: "mid", providerSlug: "mid", price: 3, tput: 100 }),
+    route({ id: "fast-pricey", providerSlug: "fast-pricey", price: 6, tput: 300 }),
+  ];
+  const tputHeavy = roleWith({ weights: { throughput: 0.8, price: 0.2 }, required: ["throughput", "price"] });
+  const priceHeavy = roleWith({ weights: { throughput: 0.2, price: 0.8 }, required: ["throughput", "price"] });
+  // Same candidate set, opposite weights ⇒ opposite pick.
+  assert.equal(bestRoute(m, tputHeavy)?.providerSlug, "fast-pricey");
+  assert.equal(bestRoute(m, priceHeavy)?.providerSlug, "cheap-slow");
+  // The full order is the score order (desc), not the price order.
+  assert.deepEqual(rankedRoutes(m, tputHeavy).map((r) => r.providerSlug), ["fast-pricey", "mid", "cheap-slow"]);
+  assert.deepEqual(rankedRoutes(m, priceHeavy).map((r) => r.providerSlug), ["cheap-slow", "mid", "fast-pricey"]);
+});
+
+test("the soft floor sorts a below-floor route last without dropping it", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [
+    route({ id: "a-fast", providerSlug: "a-fast", price: 5, tput: 200 }),
+    route({ id: "b-slow", providerSlug: "b-slow", price: 1, tput: 10 }),
+  ];
+  const priceHeavy = roleWith({ weights: { throughput: 0.2, price: 0.8 }, required: ["throughput", "price"] });
+  // Without the floor the cheaper (slower) route wins on score.
+  assert.deepEqual(rankedRoutes(m, priceHeavy).map((r) => r.providerSlug), ["b-slow", "a-fast"]);
+  // With the floor the slow route is kept but sorted last.
+  const floored = { ...priceHeavy, filters: { preferredMinThroughput: 50 } };
+  assert.deepEqual(rankedRoutes(m, floored).map((r) => r.providerSlug), ["a-fast", "b-slow"]);
+  assert.equal(rankedRoutes(m, floored).length, 2); // not dropped
+  assert.equal(bestRoute(m, floored)?.providerSlug, "a-fast");
+});
+
+test("a route with no p50 uses the model's blended throughput for tNorm", () => {
+  const m = makeModel("m", 40, 5, 100); // blended throughput 100
+  m.routes = [
+    route({ id: "z-null", providerSlug: "z-null", price: 1, tput: null }),
+    route({ id: "a-slow", providerSlug: "a-slow", price: 1, tput: 10 }),
+  ];
+  const tputHeavy = roleWith({ weights: { throughput: 0.8, price: 0.2 }, required: ["throughput", "price"] });
+  // z-null is treated as 100 tok/s (the blend), so it out-scores a-slow (10).
+  assert.equal(bestRoute(m, tputHeavy)?.providerSlug, "z-null");
+});
+
+test("a route with no p50 uses the model's blended throughput for the floor check", () => {
+  const m = makeModel("m", 40, 5, 100); // blended throughput 100
+  m.routes = [
+    route({ id: "z-null", providerSlug: "z-null", price: 1, tput: null }),
+    route({ id: "a-fast", providerSlug: "a-fast", price: 5, tput: 200 }),
+  ];
+  const priceHeavy = roleWith({
+    weights: { throughput: 0.2, price: 0.8 },
+    required: ["throughput", "price"],
+    filters: { preferredMinThroughput: 50 },
+  });
+  // z-null (blend 100) clears the floor, so the score decides: z-null (0) > a-fast (−0.6).
+  assert.equal(bestRoute(m, priceHeavy)?.providerSlug, "z-null");
+});
+
+test("a route with no p50 falls back to the endpoint-filtered blend, not the raw model throughput", () => {
+  const m = makeModel("m", 40, 5, 100); // raw model throughput 100
+  m.routes = [
+    route({ id: "z-null", providerSlug: "z-null", price: 1, tput: null }),
+    route({ id: "a-slow", providerSlug: "a-slow", price: 1, tput: 10 }),
+  ];
+  // cacheHitRate > 0 forces the endpoint-filtered blend: the pool's only known
+  // p50 is 10, so z-null is treated as 10 (not the raw 100) and both fall below
+  // the floor — the slug tie-break then picks a-slow.
+  const def = roleWith({
+    weights: { throughput: 0.8, price: 0.2 },
+    required: ["throughput", "price"],
+    cacheHitRate: 0.9,
+    filters: { preferredMinThroughput: 50 },
+  });
+  assert.equal(bestRoute(m, def)?.providerSlug, "a-slow");
+});
+
+test("an all-equal-throughput candidate set still orders by price (zero tSpan)", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [
+    route({ id: "a-pricey", providerSlug: "a-pricey", price: 6, tput: 50 }),
+    route({ id: "b-cheap", providerSlug: "b-cheap", price: 1, tput: 50 }),
+  ];
+  const tputHeavy = roleWith({ weights: { throughput: 0.8, price: 0.2 }, required: ["throughput", "price"] });
+  // tSpan is 0, so tNorm is 0 for both and the score reduces to −wP·pNorm: the
+  // cheaper route wins — no NaN, and the price ordering is not lost.
+  assert.deepEqual(rankedRoutes(m, tputHeavy).map((r) => r.providerSlug), ["b-cheap", "a-pricey"]);
+  assert.equal(bestRoute(m, tputHeavy)?.providerSlug, "b-cheap");
+});
+
+test("explainModel's autoPin is the score-max route", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [
+    route({ id: "cheap-slow", providerSlug: "cheap-slow", price: 1, tput: 20 }),
+    route({ id: "fast-pricey", providerSlug: "fast-pricey", price: 6, tput: 300 }),
+  ];
+  const tputHeavy = roleWith({ weights: { throughput: 0.8, price: 0.2 }, required: ["throughput", "price"], preferOwnProvider: true });
+  const ex = explainModel(tputHeavy, [m], "m");
+  assert.equal(ex.eligible, true);
+  if (ex.eligible) assert.equal(ex.autoPin, "fast-pricey");
 });
 
 test("maxPriceUsdPerM gates the model's own price, not the soft best route", () => {
