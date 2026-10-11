@@ -213,7 +213,8 @@ def is what `rankRole`/`explainModel` see; the authored def (flags + explicit
 keys) is what the explorer edits and exports.
 
 What each recommendation does to the ranking math (grounded on the 2026-10-09
-cache, `default` role, 146 eligible):
+cache, `default` role, 146 eligible; the `providerPinning` bullet is re-measured
+on the 2026-10-11 cache):
 
 - **`endpointCeilings`** (`filters.tools: true`, `filters.minOutputTokens:
   16384`) drops tool-incapable routes and routes whose output ceiling is below
@@ -235,26 +236,27 @@ cache, `default` role, 146 eligible):
   a **per-model policy, not a scalar** — the sensible pin differs per model, so
   the bundle carries a policy field evaluated against the model's own routes at
   rank time, not a slug baked into the lock file. `bestRoute` (`src/engine.ts`)
-  is `rankedRoutes(model, def)[0]`: the candidates are the model's routes that
-  are non-degraded (`status === 0`), pass `routePassesEndpointFilters`, carry a
-  usable billed price, and (when `filters.maxPriceUsdPerM > 0`) a
-  thinking-adjusted price at or below the cap; ties break by `providerSlug` then
-  `id`, so a re-run is deterministic. The basis is **soft**: a model with no
+  is `rankedRoutes(model, def)[0]` (see *Route ordering* for the candidate
+  criteria and the score). The basis is **soft**: a model with no
   candidate route keeps the blend and is never dropped, so the capability
   **never changes eligibility** (unlike the hard `providerPin`, which drops a
   model with no matching route). The `maxPriceUsdPerM` gate is **basis-independent**:
   with no hard pin it caps the model's own blend price, not the soft route's, so
   the flag can neither add nor drop a model; the candidate-route cap filter only
-  keeps the written pin at or below the cap. Measured coverage on the 2026-10-09 cache: all
-  151 routed models have a candidate route (the old own-lab slug-prefix rule
+  keeps the written pin at or below the cap. Measured coverage on the 2026-10-11 cache: all
+  144 routed models have a candidate route (the old own-lab slug-prefix rule
   matched only 51 of 149), so the capability covers the whole routed field. The
   resolved route is the same basis a hard pin uses, so the preference moves the
   **throughput** axis as well as the billed price — a role that routes to the
   best endpoint gets that endpoint's p50 tok/s, not the blend's. Measured on the
-  2026-10-09 cache, the `default` leader's `priceEff` rises 0.3732 → 1.4625 while
-  its `value` *rises* 0.8100 → 0.8150, because its best route's p50 throughput is
-  higher than the blend's, so `q` moves too. That is deliberate (the pin path has
-  always priced and measured on the pinned route); a role that wants the blend's
+  2026-10-11 cache (`rankRole` over the full model set), the `default` leader is
+  `deepseek-v4.1-flash` either way: the blend prices it at `priceEff` 0.2317 /
+  `value` 0.8056 / `q` 0.8069, while the soft best-route basis prices it at
+  `priceEff` 0.1187 / `value` 0.8092 / `q` 0.8099 on its best route `decart/fp4`
+  ($0.0639 billed, 72 tok/s). The soft route is cheaper than the blend, so
+  `priceEff` falls and `value` rises; `q` moves too because the route's p50
+  throughput replaces the blend's. That is deliberate (the pin path has always
+  priced and measured on the pinned route); a role that wants the blend's
   throughput should leave the flag off.
 - **`costCap`** (`filters.maxPriceUsdPerM: 10`) drops the priciest tail of the
   eligible pool: 146 → 137 (the top ≈6 %), leader unchanged. The pool's p90 is
@@ -312,8 +314,9 @@ A model ranks for a role only when:
 
 `endpointFilterDrops(def, models)` lists the ranking ids the gate removed (they
 pass every other eligibility gate but have no capable route) for the decision
-log. `resolveSettings` validates all four; no shipped role sets an endpoint
-filter. Filters apply before ranking eligibility so percentile norms stay on the
+log. `resolveSettings` validates the four endpoint-filter keys plus the soft
+`filters.preferredMinThroughput`; no shipped role sets an endpoint filter.
+Filters apply before ranking eligibility so percentile norms stay on the
 unfiltered pool.
 
 ## Pareto frontier (★)
