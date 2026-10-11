@@ -395,6 +395,12 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       default: def.filters?.maxPriceUsdPerM ?? 0,
       min: 0,
     };
+    schema[`${p}.filters.preferredMinThroughput`] = {
+      type: "number",
+      description: `Soft throughput floor for ${name} routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped`,
+      default: def.filters?.preferredMinThroughput ?? 0,
+      min: 0,
+    };
     schema[`${p}.lambda`] = {
       type: "number",
       description: `Explicit λ ($ per quality point) override for ${name}`,
@@ -647,7 +653,7 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
         if (rdef.filters.tools !== undefined && typeof rdef.filters.tools !== "boolean") {
           errors.push(`role ${name}: filters.tools must be a boolean`);
         }
-        for (const key of ["minContextTokens", "minOutputTokens", "maxPriceUsdPerM"] as const) {
+        for (const key of ["minContextTokens", "minOutputTokens", "maxPriceUsdPerM", "preferredMinThroughput"] as const) {
           const v = rdef.filters[key];
           if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
             errors.push(`role ${name}: filters.${key} must be a number ≥ 0`);
