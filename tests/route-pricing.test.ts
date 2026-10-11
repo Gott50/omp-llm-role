@@ -148,10 +148,11 @@ test("bestRoute picks the value-max route under a throughput-weighted role", () 
     route({ providerSlug: "slow-cheap", price: 1, tput: 20 }),
     route({ id: "r2", providerSlug: "fast-pricey", price: 4, tput: 300 }),
   ];
-  // tputRole: qW = 0.5, λ = 0.05. slow-cheap: 0.204 − 0.05·1 = 0.154;
-  // fast-pricey: 1.0 − 0.05·4 = 0.80 ⇒ the faster, pricier route wins.
-  assert.equal(bestRoute(m, tputRole())?.providerSlug, "fast-pricey");
-  // A price-heavy role flips the choice to the cheaper route.
+  // vfm = wT·tNorm − wP·pNorm over the two-route set (tNorm/pNorm are 0/1 at the
+  // extremes). tputRole(0.7/0.3): slow-cheap 0; fast-pricey 0.7 − 0.3 = 0.4 ⇒ the
+  // faster, pricier route wins on the score.
+  assert.equal(bestRoute(m, tputRole({ weights: { throughput: 0.7, price: 0.3 } }))?.providerSlug, "fast-pricey");
+  // A price-heavy role flips the choice to the cheaper route (0.1 − 0.9 = −0.8).
   const priceHeavy = roleWith({ weights: { throughput: 0.1, price: 0.9 }, required: ["throughput", "price"] });
   assert.equal(bestRoute(m, priceHeavy)?.providerSlug, "slow-cheap");
 });
@@ -255,6 +256,24 @@ test("a route with no p50 uses the model's blended throughput for the floor chec
   });
   // z-null (blend 100) clears the floor, so the score decides: z-null (0) > a-fast (−0.6).
   assert.equal(bestRoute(m, priceHeavy)?.providerSlug, "z-null");
+});
+
+test("a route with no p50 falls back to the endpoint-filtered blend, not the raw model throughput", () => {
+  const m = makeModel("m", 40, 5, 100); // raw model throughput 100
+  m.routes = [
+    route({ id: "z-null", providerSlug: "z-null", price: 1, tput: null }),
+    route({ id: "a-slow", providerSlug: "a-slow", price: 1, tput: 10 }),
+  ];
+  // cacheHitRate > 0 forces the endpoint-filtered blend: the pool's only known
+  // p50 is 10, so z-null is treated as 10 (not the raw 100) and both fall below
+  // the floor — the slug tie-break then picks a-slow.
+  const def = roleWith({
+    weights: { throughput: 0.8, price: 0.2 },
+    required: ["throughput", "price"],
+    cacheHitRate: 0.9,
+    filters: { preferredMinThroughput: 50 },
+  });
+  assert.equal(bestRoute(m, def)?.providerSlug, "a-slow");
 });
 
 test("explainModel's autoPin is the score-max route", () => {

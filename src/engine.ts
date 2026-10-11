@@ -1143,6 +1143,9 @@ export function rankedRoutes(model: Model, def: RoleDef): OpenRouterEndpointReco
     return true;
   });
   if (out.length === 0) return [];
+  // A route with no p50 falls back to the model's blended throughput over the
+  // endpoint-filtered pool — the same basis `roleMetricValue` used before.
+  const em = endpointFilteredModel(model, def.filters, cacheHitRate) ?? model;
   const wTput = def.weights.throughput ?? 0;
   const wPrice = def.weights.price ?? 0;
   const wSum = wTput + wPrice;
@@ -1152,7 +1155,7 @@ export function rankedRoutes(model: Model, def: RoleDef): OpenRouterEndpointReco
   // compute each route's terms once.
   const decorated = out.map((route) => ({
     route,
-    tput: roleMetricValue(model, "throughput", route, cacheHitRate) ?? 0,
+    tput: roleMetricValue(em, "throughput", route, cacheHitRate) ?? 0,
     priceEff: routeEffectivePrice(route, cacheHitRate) as number,
   }));
   const tMin = Math.min(...decorated.map((d) => d.tput));
