@@ -21,8 +21,10 @@ bullet). Neither is re-derived on read.
   preset sets to 50. `routeValue` is deleted. The model-level ranking is
   unchanged — the report is not regenerated (the ranking CLI does not apply
   capability features and no shipped role sets `preferOwnProvider`). Measured
-  2026-10-11 on the current endpoints cache (`deepseek/deepseek-v4.1-flash`, 11
-  allowed providers, 12 allowed routes, `cacheHitRate 0.9`): `morph/fp8` ($0.0840,
+  2026-10-11 on the current endpoints cache with the live lock's
+  **feature-expanded** defs (all four capabilities on, `cacheHitRate 0.9`;
+  `deepseek/deepseek-v4.1-flash`, 11 allowed providers, 12 allowed routes):
+  `morph/fp8` ($0.0840,
   103 tok/s) wins `default`, `smol`, `commit`, `task`, `advisor`; `coreweave/fp8`
   ($0.1978, 185.5 tok/s) wins `slow`, `tiny`, `designer`; `decart/fp4` ($0.0639,
   72 tok/s) wins `vision`, `plan`.
@@ -102,13 +104,14 @@ bullet). Neither is re-derived on read.
   single precedence implementation (`effective def = shipped default ⊕
   preset(enabled flags) ⊕ explicit user keys`; a per-role `false` beats a global
   `true`; an explicit knob always wins). Grounding on the 2026-10-09 cache
-  (`default` role, 146 eligible):
+  (`default` role, 146 eligible; the `providerPinning` row is re-measured on the
+  2026-10-11 cache):
 
   | Flag | Recommended settings | Measured effect |
   |---|---|---|
   | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | 146 → 135 eligible, leader unchanged (`deepseek-v4.1-flash`, 0.37 $/M) |
   | `cachePricing` | `cacheHitRate: 0.5` | 146 eligible, leader unchanged, its `priceEff` 0.3732 → 0.3522 (−5.6 %) |
-  | `providerPinning` | `preferOwnProvider: true`, `filters.preferredMinThroughput: 50` | per-model policy, never changes eligibility; prices each model on its **best route** (max `vfm` among the filter-passing, non-degraded, priced routes, cap-respecting; the soft 50 tok/s floor sorts below-floor routes last; ties by slug then id) — 151 of 151 routed models have a candidate route, so the soft basis covers the whole routed field |
+  | `providerPinning` | `preferOwnProvider: true`, `filters.preferredMinThroughput: 50` | per-model policy, never changes eligibility; prices each model on its **best route** (max `vfm` among the filter-passing, non-degraded, priced routes, cap-respecting; the soft 50 tok/s floor sorts below-floor routes last; ties by slug then id) — 144 of 144 routed models have a candidate route (2026-10-11), so the soft basis covers the whole routed field |
   | `costCap` | `filters.maxPriceUsdPerM: 10` | 146 → 137 eligible (the top ≈6 %), leader unchanged; pool p90 7.8, p95 11.1 $/M, every leader 0.20–3.71 $/M |
 
   `providerPinning`'s recommended setting is a **soft per-model policy**
@@ -119,7 +122,7 @@ bullet). Neither is re-derived on read.
   last) among the filter-passing, non-degraded, priced routes (thinking-adjusted
   price ≤ `maxPriceUsdPerM`; ties by slug then id) — and falls back to the
   `1/price²` blend only when the model has no candidate route. The basis is soft:
-  it never changes eligibility, and on the 2026-10-09 cache every one of the 151
+  it never changes eligibility, and on the 2026-10-11 cache every one of the 144
   routed models has a candidate route, so the capability covers the whole routed
   field (the old own-lab slug-prefix rule matched only 51 of 149). `minContextTokens`
   is deliberately not in the `endpointCeilings` bundle (an absolute floor cannot

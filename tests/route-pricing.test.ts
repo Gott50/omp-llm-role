@@ -276,6 +276,19 @@ test("a route with no p50 falls back to the endpoint-filtered blend, not the raw
   assert.equal(bestRoute(m, def)?.providerSlug, "a-slow");
 });
 
+test("an all-equal-throughput candidate set still orders by price (zero tSpan)", () => {
+  const m = makeModel("m", 40, 5, 100);
+  m.routes = [
+    route({ id: "a-pricey", providerSlug: "a-pricey", price: 6, tput: 50 }),
+    route({ id: "b-cheap", providerSlug: "b-cheap", price: 1, tput: 50 }),
+  ];
+  const tputHeavy = roleWith({ weights: { throughput: 0.8, price: 0.2 }, required: ["throughput", "price"] });
+  // tSpan is 0, so tNorm is 0 for both and the score reduces to −wP·pNorm: the
+  // cheaper route wins — no NaN, and the price ordering is not lost.
+  assert.deepEqual(rankedRoutes(m, tputHeavy).map((r) => r.providerSlug), ["b-cheap", "a-pricey"]);
+  assert.equal(bestRoute(m, tputHeavy)?.providerSlug, "b-cheap");
+});
+
 test("explainModel's autoPin is the score-max route", () => {
   const m = makeModel("m", 40, 5, 100);
   m.routes = [
