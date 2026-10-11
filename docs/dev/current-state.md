@@ -21,9 +21,9 @@ bullet). Neither is re-derived on read.
   preset sets to 50. `routeValue` is deleted. The model-level ranking is
   unchanged — the report is not regenerated (the ranking CLI does not apply
   capability features and no shipped role sets `preferOwnProvider`). Measured
-  2026-10-11 on the current endpoints cache with the live lock's
-  **feature-expanded** defs (all four capabilities on, `cacheHitRate 0.9`;
-  `deepseek/deepseek-v4.1-flash`, 11 allowed providers, 12 allowed routes):
+  2026-10-11 on the current endpoints cache with the live lock's expanded defs
+  (all four capabilities on, `cacheHitRate 0.9`; `deepseek/deepseek-v4.1-flash`,
+  11 allowed providers, 12 allowed routes):
   `morph/fp8` ($0.0840,
   103 tok/s) wins `default`, `smol`, `commit`, `task`, `advisor`; `coreweave/fp8`
   ($0.1978, 185.5 tok/s) wins `slow`, `tiny`, `designer`; `decart/fp4` ($0.0639,
