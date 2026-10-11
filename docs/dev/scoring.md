@@ -213,7 +213,8 @@ def is what `rankRole`/`explainModel` see; the authored def (flags + explicit
 keys) is what the explorer edits and exports.
 
 What each recommendation does to the ranking math (grounded on the 2026-10-09
-cache, `default` role, 146 eligible):
+cache, `default` role, 146 eligible; the `providerPinning` bullet is re-measured
+on the 2026-10-11 cache):
 
 - **`endpointCeilings`** (`filters.tools: true`, `filters.minOutputTokens:
   16384`) drops tool-incapable routes and routes whose output ceiling is below
