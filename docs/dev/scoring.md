@@ -139,12 +139,40 @@ route instead of the `1/price²` blend:
   `explainModel` reports "no route matches the role's provider pin".
 - an **unpinned** role ignores `routes` entirely — the blend path is unchanged —
   **unless** it sets the soft `preferOwnProvider` policy (the `providerPinning`
-  capability), which prices it on its **best route** (the value-max candidate
-  route; see *Capability presets*).
+  capability), which prices it on its **best route** (the max-value-for-money
+  candidate route; see *Route ordering* and *Capability presets*).
 
 The pin is a cost-and-throughput posture, not a quality edit: it moves the price
 axis to the route's billed price and the throughput axis to the route's p50,
 while every other weighted metric stays the model's own.
+
+### Route ordering (the value-for-money score)
+
+`rankedRoutes(model, def)` (`src/engine.ts`) is the one function that orders a
+model's candidate routes; `bestRoute` is `rankedRoutes[0]`, and `roleRoute` (the
+route `rankRole` prices the model on) and the updater's auto-pin both read it, so
+the priced route, the written pin and the fallback chain move together.
+
+- **Candidates.** A route is a candidate when it is non-degraded (`status === 0`),
+  passes `routePassesEndpointFilters(route, def.filters)`, carries a usable billed
+  price, and (when `filters.maxPriceUsdPerM > 0`) a thinking-adjusted price at or
+  below the cap. The allowed-providers whitelist is applied upstream by pruning
+  `m.routes` (see *Whitelist-aware route selection*).
+- **The score.** Each candidate is scored
+  `vfm = wT·tNorm − wP·pNorm`, where `tNorm`/`pNorm` are the route's p50
+  throughput and cache-adjusted billed price **min/max-normalized over the
+  candidate set** (`tNorm = (tput − tMin)/(tMax − tMin)`, `pNorm = (priceEff −
+  pMin)/(pMax − pMin)`; a zero span normalizes to 0), and `wT =
+  wTput/(wPrice+wTput)`, `wP = wPrice/(wPrice+wTput)`. Sort desc; ties break by
+  `providerSlug` then `id`, so a re-run is deterministic. A route with no p50 uses
+  the model's blended throughput (an absent p50 is unknown, not slow).
+- **The soft floor.** `filters.preferredMinThroughput` (tok/s; `0`/absent = off)
+  is a **preference, not a gate**: routes at or above the floor sort before
+  routes below it, and the score orders within each band. A below-floor route is
+  **never dropped** — it stays a last-resort candidate.
+- **`routeValue` is deleted.** The old `q(route p50) − λ·route price` route sort
+  key is gone; the score above is the only route basis. (The model-level
+  `value = q − λ·priceEff` is unchanged — see *`λ` and `value`*.)
 
 ### Whitelist-aware route selection
 
@@ -196,12 +224,13 @@ cache, `default` role, 146 eligible):
   loop's invoice (see *Cache-read pricing*): 146 eligible, leader unchanged, its
   `priceEff` 0.3732 → 0.3522 (−5.6 %). 0.5 is the low end of the measured
   third-party range (51–69 %), so the preset never over-credits a cache.
-- **`providerPinning`** (`preferOwnProvider: true`) prices a model on its
-  **best route** — the route maximizing the role's own value (`q_route −
-  λ·priceEff_route`, with the route's p50 throughput and cache-adjusted billed
-  price) among the routes that pass the role's endpoint filters and the
-  account's allowed-providers whitelist (see *Whitelist-aware route selection*)
-  — falling back to
+- **`providerPinning`** (`{ preferOwnProvider: true, filters: {
+  preferredMinThroughput: 50 } }`) prices a model on its **best route** — the
+  max-value-for-money candidate route (see *Route ordering*: the `vfm` score
+  desc, with the soft 50 tok/s floor sorting below-floor routes last) among the
+  routes that pass the role's endpoint filters and the account's
+  allowed-providers whitelist (see *Whitelist-aware route selection*) — falling
+  back to
   the default `1/price²` blend only when the model has no candidate route. It is
   a **per-model policy, not a scalar** — the sensible pin differs per model, so
   the bundle carries a policy field evaluated against the model's own routes at

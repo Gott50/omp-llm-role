@@ -142,7 +142,7 @@ defaults.
 |---|---|---|
 | `endpointCeilings` | `filters.tools: true`, `filters.minOutputTokens: 16384` | Routes that cannot call tools and routes whose output ceiling is below 16 384 tokens leave the pool — a reasoning model is not cut off mid-thought |
 | `cachePricing` | `cacheHitRate: 0.5` | The role is priced on a cache-heavy agent loop's invoice (the endpoint's `cacheReadPrice` blended in) rather than the sticker price |
-| `providerPinning` | `preferOwnProvider: true` | Each request is bound to the model's **best provider route** — the selector gains `@<slug>` — and the fallback chain carries the primary model on every gate-passing route except the pinned best, then each fallback model on every gate-passing route, so a down provider fails over to another provider of the same model before the chain switches models. The model is priced **and measured** on that route (its billed price and p50 throughput, so `q` moves too), falling back to the default blend only when it has no candidate route |
+| `providerPinning` | `preferOwnProvider: true`, `filters.preferredMinThroughput: 50` | Each request is bound to the model's **best provider route** — the max-value-for-money route (the `vfm` score, with a soft 50 tok/s floor that deprioritizes a pathologically slow route without dropping it) — the selector gains `@<slug>` — and the fallback chain carries the primary model on every gate-passing route except the pinned best, then each fallback model on every gate-passing route, so a down provider fails over to another provider of the same model before the chain switches models. The model is priced **and measured** on that route (its billed price and p50 throughput, so `q` moves too), falling back to the default blend only when it has no candidate route |
 | `costCap` | `filters.maxPriceUsdPerM: 10` | The priciest tail of the eligible pool leaves it, so the pick cannot be an expensive outlier |
 
 Precedence is one rule:
@@ -156,8 +156,9 @@ and otherwise when the global `features.<id>` is `true` — so a per-role `false
 beats a global `true`. The preset fills only knobs the role does not already
 set, and an explicit key is merged last, so it always wins. `providerPinning`'s
 recommended setting is a **soft per-model policy** (`preferOwnProvider`), not a
-hard `providerPin`: it prices a model on its **best route** (the value-max route
-among the filter-passing, non-degraded, priced routes the account's
+hard `providerPin`: it prices a model on its **best route** (the max-`vfm` route
+— the value-for-money score, with the soft 50 tok/s floor — among the
+filter-passing, non-degraded, priced routes the account's
 allowed-providers whitelist permits) — the route's billed price
 **and** its p50 throughput, so `q` moves as well as `priceEff` — and never makes
 a model ineligible (the hard `providerPin` stays available by hand, and overrides
