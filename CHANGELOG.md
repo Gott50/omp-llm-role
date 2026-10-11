@@ -18,8 +18,9 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   the primary model on every gate-passing route except the pinned best, then each
   fallback model on every gate-passing route, so a down provider fails over to
   another provider of the same model before the chain switches models. The route
-  basis is the model's **best route** by the role's own value (the value-max
-  route among the filter-passing, non-degraded, priced routes, cap-respecting;
+  basis is the model's **best route** by the role's own value (the max-`vfm`
+  route — the value-for-money score, with the soft 50 tok/s floor — among the
+  filter-passing, non-degraded, priced routes, cap-respecting;
   ties by slug then id) — replacing the old own-lab slug-prefix match — and it
   stays **soft**: a model with no candidate route keeps the `1/price²` blend and
   is never dropped, so enabling the capability cannot shrink the eligible pool.
@@ -46,6 +47,19 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Changed
 
+- **Provider routes are ordered by a value-for-money score with a soft
+  throughput floor** — the auto-pin route basis changed from the route's own
+  value (`q_route − λ·priceEff_route`) to a min/max-normalized **value-for-money
+  score** `vfm = wT·tNorm − wP·pNorm` (`wT = wTput/(wPrice+wTput)`, `wP =
+  wPrice/(wPrice+wTput)`; `tNorm`/`pNorm` min/max over the candidate set; ties by
+  `providerSlug` then `id`), and a new **soft** `filters.preferredMinThroughput`
+  floor (tok/s; `0`/absent = off) sorts routes below the floor last **without
+  dropping them**. The `providerPinning` preset now recommends
+  `{ preferOwnProvider: true, filters: { preferredMinThroughput: 50 } }`, and the
+  auto-pin fallback chain is score-ordered. The old `routeValue` route sort key
+  is deleted. The model-level ranking is unchanged (the report is not
+  regenerated — the ranking CLI does not apply capability features and no shipped
+  role sets `preferOwnProvider`). (spec #71)
 - **Releases are cut by `scripts/release.ts` and delivered by the tag push** —
   `due` says whether `## [Unreleased]` owes a release, `notes <tag>` verifies a
   tag against the tree and prints its CHANGELOG section, and
@@ -59,7 +73,7 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   with `providerPinning` on, the chain no longer stops at three providers per
   model: the primary model contributes every gate-passing route except the pinned
   best, and each fallback model contributes every gate-passing route, in
-  route-value order and deduped by provider slug, so a down provider fails over
+  score order and deduped by provider slug, so a down provider fails over
   to another provider of the same model before the chain switches models. Chain
   length is data-driven (`(R_primary − 1) + Σ R_fallback`, the number of distinct
   gate-passing provider slugs per model) instead of the fixed

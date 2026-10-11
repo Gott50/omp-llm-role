@@ -150,7 +150,8 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   unreachable/extrapolated notes), `dominators` (models both cheaper and at
   least as good on `q`, top 3), `ownProvider` (true when the model was priced on
   the soft best route rather than the blend), `autoPin` (the provider slug the
-  updater would write — `bestRoute(model, def)?.providerSlug` when the role sets
+  updater would write — `bestRoute(model, def)?.providerSlug`, the max-`vfm`
+  route (scoring.md, *Route ordering*), when the role sets
   `preferOwnProvider` and carries no manual `providerPin`, else `null`), and the
   availability overlay `key`/`keyReason`
   (the same verdict as `rankRows`, plus the reason it reads that way). It mirrors

@@ -148,8 +148,8 @@ openrouter/<id>@<slug>:<level>
 omp's `splitUpstreamRouting` parses the trailing `@<slug>` and applies
 `compat.openRouterRouting = { only: [slug] }`, so the price the ranking assumed
 is the price the request pays. The slug is `bestRoute(chosenModel, def)`'s
-`providerSlug` — the value-max candidate route (see scoring.md, *Capability
-presets*). The pin is re-derived on every run, so it follows the ranking when the
+`providerSlug` — the max-value-for-money candidate route (see scoring.md,
+*Route ordering*). The pin is re-derived on every run, so it follows the ranking when the
 chosen model changes. A manual `roles.<role>.providerPin` **wins** over the
 automatic choice and stays a **hard** gate (a model with no matching route is
 ineligible); clearing it resumes the automatic choice.
@@ -159,9 +159,9 @@ ineligible); clearing it resumes the automatic choice.
 order:
 
 1. the same model on **every** gate-passing route except the pinned best, in
-   route-value order,
+   score order (the `vfm` route score desc — see scoring.md, *Route ordering*),
 2. then, for each of the `fallbackChainDepth` fallback models, that model on
-   **every** gate-passing route, in route-value order.
+   **every** gate-passing route, in score order.
 
 Length = `(R_primary − 1) + Σ R_fallback`, where `R` is the number of distinct
 gate-passing provider slugs for that model — data-driven, not a fixed cap.
@@ -171,10 +171,13 @@ where the target advertises it). A model with no gate-passing route contributes
 nothing. The gates are the engine's `rankedRoutes` set: non-degraded
 (`status === 0`), the endpoint capability filters (`tools` / `minContextTokens` /
 `minOutputTokens`), a usable billed price, and the `maxPriceUsdPerM` cap
-(thinking-adjusted). The allowed-providers whitelist is not a `rankedRoutes`
-filter: the updater prunes each model's route pool to allowed providers before
-ranking, which is what makes `rankedRoutes` whitelist-aware. The probe walk
-target is unchanged (`1 + fallbackChainDepth` — it counts models, not routes).
+(thinking-adjusted). The soft `filters.preferredMinThroughput` floor is a
+**preference, not a gate** — it sorts below-floor routes last but never drops
+them, so a below-floor route still appears in the chain. The allowed-providers
+whitelist is not a `rankedRoutes` filter: the updater prunes each model's route
+pool to allowed providers before ranking, which is what makes `rankedRoutes`
+whitelist-aware. The probe walk target is unchanged (`1 + fallbackChainDepth` —
+it counts models, not routes).
 
 **Prune on a pin change.** Because the chain key includes the pin, a pin change
 changes the key; the updater's chain prune (`state.pluginWrittenChainKeys`) drops
