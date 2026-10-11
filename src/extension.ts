@@ -27,6 +27,7 @@ import { formatFeatures } from "./features.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { resolveScopes, unionRoles } from "./explorer/scopes.ts";
 import { isRecord } from "./guards.ts";
+import { applyProviderDisplay, providerPinOf, providerPinOfSelector } from "./provider-display.ts";
 import { applyProfileOverrides, formatProjectRolesReport, parseProjectRolesArgs, PROJECT_ROLES_USAGE, setupProject, type ProjectProfile } from "./project-setup.ts";
 import { DEFAULT_ROLES, findProjectAnchor, KNOWN_METRICS, PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings } from "./settings.ts";
 import { runUpdater, type Deps } from "./updater.ts";
@@ -82,6 +83,22 @@ function sessionBootedOnOldDefault(ctx: ExtContext, oldSelector: string): boolea
   if (typeof current !== "object" || typeof oldModel !== "object") return false;
   if (!("provider" in current) || !("id" in current) || !("provider" in oldModel) || !("id" in oldModel)) return false;
   return current.provider === oldModel.provider && current.id === oldModel.id;
+}
+
+/**
+ * Apply the provider display suffix to the live session model (spec #77).
+ * `selector` is the event's authoritative selector string when the event
+ * carries one; the live model's routing block is the fallback. Contained: a
+ * throw must not tear down the session or escape into omp's dispatch.
+ */
+function applyProviderDisplayFor(ctx: ExtContext, selector?: string): void {
+  try {
+    const live = ctx.models?.current();
+    const pin = (typeof selector === "string" ? providerPinOfSelector(selector) : null) ?? providerPinOf(live);
+    applyProviderDisplay(live, pin);
+  } catch {
+    // display-only; never let a failure escape into omp's dispatch
+  }
 }
 
 /**
@@ -416,6 +433,26 @@ export default function (pi: ExtensionAPI) {
     } catch (err) {
       reportCommandError(ctx, "session-start", err);
     }
+  });
+
+  // Provider display (spec #77): keep the live model's name suffixed with its
+  // provider pin. Never pi.setModel — that would wipe omp's in-flight fallback
+  // state and clobber the thinking level; mutate the live model's name only.
+  // Registered after the updater so the session-start pin reflects the model
+  // the run just selected.
+  pi.on("session_start", async (_event, ctx: ExtContext) => {
+    applyProviderDisplayFor(ctx);
+  });
+  pi.on("retry_fallback_applied", async (event, ctx: ExtContext) => {
+    applyProviderDisplayFor(ctx, event.to);
+  });
+  pi.on("retry_fallback_succeeded", async (event, ctx: ExtContext) => {
+    applyProviderDisplayFor(ctx, event.model);
+  });
+  // Self-healing hook: omp restores the primary after a fallback cooldown with
+  // no session event, so re-derive the pin from the live model before each turn.
+  pi.on("turn_start", async (_event, ctx: ExtContext) => {
+    applyProviderDisplayFor(ctx);
   });
 
   pi.registerCommand("refresh-roles", {
