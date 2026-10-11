@@ -724,7 +724,7 @@ test("bootstrap carries the scope's global flags and the feature registry", asyn
       assert.ok(isRecord(f.recommended));
     }
     assert.deepEqual(registry.find((f) => f.id === "cachePricing")?.recommended, { cacheHitRate: 0.5 });
-    assert.deepEqual(registry.find((f) => f.id === "providerPinning")?.recommended, { preferOwnProvider: true });
+    assert.deepEqual(registry.find((f) => f.id === "providerPinning")?.recommended, { preferOwnProvider: true, filters: { preferredMinThroughput: 50 } });
   } finally {
     await handle.close();
   }

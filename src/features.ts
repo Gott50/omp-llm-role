@@ -19,7 +19,7 @@ export type FeatureRow = {
   description: string;
   /** The recommended settings the flag applies. A bundle value is either a
    * scalar knob or a per-model policy field (`preferOwnProvider`). */
-  recommended: { filters?: { tools?: boolean; minOutputTokens?: number; maxPriceUsdPerM?: number }; cacheHitRate?: number; preferOwnProvider?: true };
+  recommended: { filters?: { tools?: boolean; minOutputTokens?: number; maxPriceUsdPerM?: number; preferredMinThroughput?: number }; cacheHitRate?: number; preferOwnProvider?: true };
   /** What the flag buys, for `--list-features` and the docs. */
   buys: string;
 };
@@ -46,9 +46,9 @@ export const FEATURES: readonly FeatureRow[] = [
     // so the bundle carries `preferOwnProvider` (evaluated against the model's
     // best route at rank time). It changes no eligibility — a model with no
     // candidate route keeps the default 1/price² blend.
-    description: "Bind each request to the model's best provider route (per-model policy; never drops a model)",
-    recommended: { preferOwnProvider: true },
-    buys: "each request is bound to the model's best provider route — the selector gains @<slug> — and the fallback chain carries the same model on its next-best providers plus each fallback model on its best providers, so a down route fails over within the model's own routes",
+    description: "Bind each request to the model's best provider route (per-model policy; never drops a model) and prefer routes at or above 50 tok/s",
+    recommended: { preferOwnProvider: true, filters: { preferredMinThroughput: 50 } },
+    buys: "each request is bound to the model's best provider route — the selector gains @<slug> — and the fallback chain carries the same model on its next-best providers plus each fallback model on its best providers, so a down route fails over within the model's own routes; a soft 50 tok/s floor deprioritizes a pathologically slow route without dropping it",
   },
   {
     id: "costCap",
@@ -69,6 +69,7 @@ function formatBundle(rec: FeatureRow["recommended"]): string {
   if (rec.filters?.tools !== undefined) parts.push(`filters.tools=${rec.filters.tools}`);
   if (rec.filters?.minOutputTokens !== undefined) parts.push(`filters.minOutputTokens=${rec.filters.minOutputTokens}`);
   if (rec.filters?.maxPriceUsdPerM !== undefined) parts.push(`filters.maxPriceUsdPerM=${rec.filters.maxPriceUsdPerM}`);
+  if (rec.filters?.preferredMinThroughput !== undefined) parts.push(`filters.preferredMinThroughput=${rec.filters.preferredMinThroughput}`);
   if (rec.cacheHitRate !== undefined) parts.push(`cacheHitRate=${rec.cacheHitRate}`);
   if (rec.preferOwnProvider !== undefined) parts.push(`preferOwnProvider=${rec.preferOwnProvider}`);
   return parts.join(", ");
@@ -95,6 +96,7 @@ export function expandFeatures(authored: RoleDef, globalFlags: Record<string, bo
       if (rec.filters.tools !== undefined && f.tools === undefined) f.tools = rec.filters.tools;
       if (rec.filters.minOutputTokens !== undefined && f.minOutputTokens === undefined) f.minOutputTokens = rec.filters.minOutputTokens;
       if (rec.filters.maxPriceUsdPerM !== undefined && f.maxPriceUsdPerM === undefined) f.maxPriceUsdPerM = rec.filters.maxPriceUsdPerM;
+      if (rec.filters.preferredMinThroughput !== undefined && f.preferredMinThroughput === undefined) f.preferredMinThroughput = rec.filters.preferredMinThroughput;
     }
     if (rec.cacheHitRate !== undefined && out.cacheHitRate === undefined) out.cacheHitRate = rec.cacheHitRate;
     if (rec.preferOwnProvider !== undefined && out.preferOwnProvider === undefined) out.preferOwnProvider = rec.preferOwnProvider;

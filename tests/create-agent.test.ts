@@ -1271,6 +1271,6 @@ test("formatFeatures prints every capability id and the settings it applies", ()
   }
   assert.match(out, /endpointCeilings[^\n]*filters\.tools=true, filters\.minOutputTokens=16384/);
   assert.match(out, /cachePricing[^\n]*cacheHitRate=0\.5/);
-  assert.match(out, /providerPinning[^\n]*preferOwnProvider=true/);
+  assert.match(out, /providerPinning[^\n]*filters\.preferredMinThroughput=50, preferOwnProvider=true/);
   assert.match(out, /costCap[^\n]*filters\.maxPriceUsdPerM=10/);
 });

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import type { Model, OpenRouterEndpointRecord } from "../src/engine.ts";
+import { rankedRoutes } from "../src/engine.ts";
+import { resolveSettings } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
@@ -11,8 +13,9 @@ import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 // has `preferOwnProvider === true` and no manual `providerPin`, the updater
 // writes the chosen model's best route as the selector's `@<slug>` suffix and
 // fills the fallback chain with every gate-passing route of the primary model
-// (all but the pinned best) and of each fallback model, in route-value order,
-// deduped by chain value. A manual pin is a hard gate and always wins; a model
+// (all but the pinned best) and of each fallback model, in the role's
+// value-for-money score order (`rankedRoutes`, spec #71), deduped by chain
+// value. A manual pin is a hard gate and always wins; a model
 // with no candidate route keeps default routing (bare selector).
 
 function route(over: Partial<OpenRouterEndpointRecord> = {}): OpenRouterEndpointRecord {
@@ -247,6 +250,37 @@ test("the primary model contributes all its non-pinned routes", async () => {
     "openrouter/org/model-b@b1:auto",
     "openrouter/org/model-c@c1:auto",
   ]);
+});
+
+test("the auto-pin chain is in rankedRoutes (score) order", async () => {
+  // Distinct price/throughput per route so the value-for-money score order is
+  // non-trivial: the pricier-but-faster `fast` route outranks the cheapest
+  // `slow` route, which in turn outranks the expensive `pricey` route. A
+  // price-ordered chain would be slow, fast, pricey. Every route clears the
+  // providerPinning preset's soft throughput floor, so the floor never reorders.
+  const a = makeModel("model-a", 90, 1, 100);
+  a.routes = [
+    route({ id: "a-slow", providerSlug: "slow", price: 1, tput: 60 }),
+    route({ id: "a-fast", providerSlug: "fast", price: 1.2, tput: 300 }),
+    route({ id: "a-pricey", providerSlug: "pricey", price: 10, tput: 300 }),
+  ];
+  const models = [a, routed("model-b", 80, 5, 60, ["b1"]), routed("model-c", 70, 10, 30, ["c1"])];
+  const settings = onlyDefault({ features: { providerPinning: true } });
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(models, settings);
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const doc = readConfig(dir);
+  // The def the updater ranks with, so the expected order is the engine's own.
+  const def = resolveSettings(settings).settings.roles.default;
+  const ranked = rankedRoutes(a, def);
+  // The pinned best is the score leader; the chain carries the rest in score order.
+  assert.equal(doc.modelRoles.default, `openrouter/org/model-a@${ranked[0].providerSlug}:auto`);
+  const chain = doc.retry.fallbackChains[`openrouter/org/model-a@${ranked[0].providerSlug}`];
+  const primary = ranked.slice(1).map((r) => `openrouter/org/model-a@${r.providerSlug}:auto`);
+  assert.deepEqual(chain.slice(0, primary.length), primary);
+  // The score order is not the price order: `fast` (pricier) outranks `slow`.
+  assert.deepEqual(primary, ["openrouter/org/model-a@slow:auto", "openrouter/org/model-a@pricey:auto"]);
 });
 
 test("a degraded route is excluded from the chain", async () => {
