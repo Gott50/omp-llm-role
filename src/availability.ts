@@ -295,12 +295,23 @@ export function rankingIdOf(catalogId: string): string {
   return noFree.endsWith("-latest") ? noFree.slice(0, -"-latest".length) : noFree;
 }
 
+/** Split a selector's trailing thinking suffix (`provider/model[:level]`):
+ * `base` without the suffix, `level` the suffix or null. The single home for
+ * the `:level` strip shared by `currentRankingId`, `providerPinOfSelector`, and
+ * the extension's selector handling. */
+export function splitThinkingSuffix(selector: string): { base: string; level: string | null } {
+  const colon = selector.lastIndexOf(":");
+  if (colon !== -1 && selector.slice(colon + 1) in THINKING_LEVELS) {
+    return { base: selector.slice(0, colon), level: selector.slice(colon + 1) };
+  }
+  return { base: selector, level: null };
+}
+
 /** Identity of a configured selector for hysteresis/chain keys: drop `:level`,
  * `openrouter/`, and a trailing `@<slug>` provider pin, then rankingIdOf. A
  * tiered pin (`@deepinfra/fp8`) is dropped whole — everything from the last `@`. */
 export function currentRankingId(selector: string): string {
-  const colon = selector.lastIndexOf(":");
-  const base = colon !== -1 && selector.slice(colon + 1) in THINKING_LEVELS ? selector.slice(0, colon) : selector;
+  const { base } = splitThinkingSuffix(selector);
   const unprefixed = base.startsWith("openrouter/") ? base.slice("openrouter/".length) : base;
   const at = unprefixed.lastIndexOf("@");
   const unpinned = at !== -1 ? unprefixed.slice(0, at) : unprefixed;

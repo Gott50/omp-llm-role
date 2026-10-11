@@ -27,14 +27,16 @@ function mockPi(): { handlers: Record<string, Handler[]>; setModelCalls: unknown
   return { handlers, setModelCalls, pi };
 }
 
-/** A fake ctx whose live model is `model`; `models.current()` returns it. */
-function mockCtx(model: unknown): unknown {
+/** A fake ctx whose live model is `model`; `models.current()` returns it and
+ * `models.resolve(spec)` returns `resolve(spec)` (default: the live model, i.e.
+ * the selector names the live session model). */
+function mockCtx(model: unknown, resolve?: (spec: string) => unknown): unknown {
   return {
     hasUI: false,
     cwd: process.cwd(),
     ui: { notify: () => {} },
     modelRegistry: { getApiKeyForProvider: () => undefined, getAvailable: () => [] },
-    models: { current: () => model, resolve: () => undefined },
+    models: { current: () => model, resolve: resolve ?? (() => model) },
     setTimeout: () => 0,
   };
 }
@@ -49,7 +51,7 @@ async function fire(handlers: Record<string, Handler[]>, event: string, payload:
   await handler(payload, ctx);
 }
 
-const PINNED = { id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", compat: { openRouterRouting: { only: ["coreweave/fp8"] } } };
+const PINNED = { provider: "openrouter", id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", compat: { openRouterRouting: { only: ["coreweave/fp8"] } } };
 
 test("session_start suffixes the live model's name with its provider pin", async () => {
   const { handlers, pi } = mockPi();
@@ -117,6 +119,36 @@ test("retry_fallback_succeeded applies the pin parsed from event.model", async (
     mockCtx(model),
   );
   assert.equal(model.name, "DeepSeek V4.1 Flash @baseten/fp8");
+});
+
+test("retry_fallback_applied ignores the event pin when the selector names a different model (advisor fallback)", async () => {
+  const { handlers, pi } = mockPi();
+  extension(pi as never);
+  // Advisor fallbacks emit the same event, but only the advisor's model
+  // changes; the event's selector resolves to the advisor, not the session.
+  const model = { ...PINNED, name: "DeepSeek V4.1 Flash @coreweave/fp8", compat: { openRouterRouting: { only: ["coreweave/fp8"] } } };
+  const advisorModel = { provider: "openrouter", id: "qwen/qwen3-14b" };
+  await fire(
+    handlers,
+    "retry_fallback_applied",
+    { type: "retry_fallback_applied", from: "openrouter/a@x:auto", to: "openrouter/qwen3-14b@fireworks/us:auto", role: "advisor" },
+    mockCtx(model, () => advisorModel),
+  );
+  assert.equal(model.name, "DeepSeek V4.1 Flash @coreweave/fp8");
+});
+
+test("retry_fallback_succeeded ignores the event pin when the selector names a different model (advisor fallback)", async () => {
+  const { handlers, pi } = mockPi();
+  extension(pi as never);
+  const model = { ...PINNED, name: "DeepSeek V4.1 Flash @coreweave/fp8", compat: { openRouterRouting: { only: ["coreweave/fp8"] } } };
+  const advisorModel = { provider: "openrouter", id: "qwen/qwen3-14b" };
+  await fire(
+    handlers,
+    "retry_fallback_succeeded",
+    { type: "retry_fallback_succeeded", model: "openrouter/qwen3-14b@baseten/fp8:auto", role: "advisor" },
+    mockCtx(model, () => advisorModel),
+  );
+  assert.equal(model.name, "DeepSeek V4.1 Flash @coreweave/fp8");
 });
 
 test("turn_start re-derives the pin from the live model (the silent restore case)", async () => {

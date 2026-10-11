@@ -9,7 +9,7 @@
  * module is pure and dual-runtime (no `@oh-my-pi/*` import) — the extension
  * wiring only calls it.
  */
-import { THINKING_LEVELS } from "./availability.ts";
+import { splitThinkingSuffix } from "./availability.ts";
 import { isRecord } from "./guards.ts";
 
 /** The single upstream route of a compat routing block, or null. Mirrors omp's
@@ -39,8 +39,7 @@ export function providerPinOf(model: unknown): string | null {
  * in `src/availability.ts`: level first, then `@`.
  */
 export function providerPinOfSelector(selector: string): string | null {
-  const colon = selector.lastIndexOf(":");
-  const base = colon !== -1 && selector.slice(colon + 1) in THINKING_LEVELS ? selector.slice(0, colon) : selector;
+  const { base } = splitThinkingSuffix(selector);
   const at = base.lastIndexOf("@");
   if (at === -1) return null;
   const slug = base.slice(at + 1);
