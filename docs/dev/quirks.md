@@ -146,6 +146,17 @@ things that only bite someone changing or debugging the code.
   update (or a `link` to a changed tree), a session that was already running
   still executes the module it loaded at start; a write from that stale code can
   revert a newer write. Restart the session after updating the plugin.
+- **omp's restore-to-primary is silent to extensions.** After a fallback
+  cooldown, omp restores the primary model at prompt admission
+  (`#maybeRestoreRetryFallbackPrimary`) with **no** session event, and
+  `model_changed` is not delivered to extensions — so a display derived from the
+  fallback events alone would keep the fallback's provider pin after a restore.
+  The provider display (`src/provider-display.ts`) therefore re-derives the pin
+  from the live model on `turn_start`, which *is* extension-delivered and fires
+  after the restore. The same re-derive covers a manual `/model` change (with a
+  one-turn lag). The primary and a fallback may be the same registry object
+  (same model id, different route), so the strip-then-append is idempotent and
+  reads the pin from the live model's routing block, never a cached value.
 - **Testing a registered slash command needs `--mode rpc` or a TUI** — `omp -p`
   (print mode) sends a leading `/name` as a *prompt* to the model, so the handler
   never runs and `ctx.ui.notify` is a no-op anyway. RPC mode does dispatch them:
