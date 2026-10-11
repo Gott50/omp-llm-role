@@ -193,6 +193,12 @@
         "default": 0,
         "min": 0
       },
+      "roles.default.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for default routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
+        "default": 0,
+        "min": 0
+      },
       "roles.default.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for default",
@@ -341,6 +347,12 @@
         "default": 0,
         "min": 0
       },
+      "roles.smol.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for smol routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
+        "default": 0,
+        "min": 0
+      },
       "roles.smol.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for smol",
@@ -481,6 +493,12 @@
         "default": 0,
         "min": 0
       },
+      "roles.slow.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for slow routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
+        "default": 0,
+        "min": 0
+      },
       "roles.slow.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for slow",
@@ -618,6 +636,12 @@
       "roles.vision.filters.maxPriceUsdPerM": {
         "type": "number",
         "description": "Drop vision models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.vision.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for vision routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
         "default": 0,
         "min": 0
       },
@@ -769,6 +793,12 @@
         "default": 0,
         "min": 0
       },
+      "roles.plan.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for plan routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
+        "default": 0,
+        "min": 0
+      },
       "roles.plan.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for plan",
@@ -898,6 +928,12 @@
       "roles.commit.filters.maxPriceUsdPerM": {
         "type": "number",
         "description": "Drop commit models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.commit.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for commit routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
         "default": 0,
         "min": 0
       },
@@ -1033,6 +1069,12 @@
         "default": 0,
         "min": 0
       },
+      "roles.tiny.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for tiny routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
+        "default": 0,
+        "min": 0
+      },
       "roles.tiny.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for tiny",
@@ -1154,6 +1196,12 @@
       "roles.task.filters.maxPriceUsdPerM": {
         "type": "number",
         "description": "Drop task models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.task.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for task routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
         "default": 0,
         "min": 0
       },
@@ -1305,6 +1353,12 @@
         "default": 0,
         "min": 0
       },
+      "roles.advisor.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for advisor routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
+        "default": 0,
+        "min": 0
+      },
       "roles.advisor.lambda": {
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for advisor",
@@ -1434,6 +1488,12 @@
       "roles.designer.filters.maxPriceUsdPerM": {
         "type": "number",
         "description": "Drop designer models whose role-priced blend exceeds this ($/M; 0 = off)",
+        "default": 0,
+        "min": 0
+      },
+      "roles.designer.filters.preferredMinThroughput": {
+        "type": "number",
+        "description": "Soft throughput floor for designer routes (tok/s; 0 = off) — a below-floor route sorts last but is never dropped",
         "default": 0,
         "min": 0
       },
