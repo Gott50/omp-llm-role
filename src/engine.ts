@@ -181,6 +181,9 @@ export type RoleDef = {
     minOutputTokens?: number;
     /** drop the model when its role-priced blend exceeds this ($/M); 0 = off */
     maxPriceUsdPerM?: number;
+    /** soft throughput floor (tok/s); 0/absent = off. A route at or above the
+     * floor sorts before a route below it, but is never dropped. */
+    preferredMinThroughput?: number;
   };
   /** explicit λ override ($ per quality point); default derives from the price weight */
   lambda?: number;
@@ -1078,8 +1081,7 @@ export function thinkingAdjustedPrice(model: Model, def: RoleDef, basePrice: num
 /** The role's value of a model priced on `route` (null = the 1/price² blend):
  * the price-free quality composite q over the model's metrics with the route's
  * p50 throughput and cache-adjusted billed price, minus λ·priceEff. Returns null
- * when the model has no usable billed price. Shared by `rankRole` and
- * `routeValue` so the two can never disagree. */
+ * when the model has no usable billed price. */
 function roleValueOnRoute(
   em: Model,
   def: RoleDef,
@@ -1116,13 +1118,22 @@ function roleValueOnRoute(
 }
 
 /** The model's routes that are candidates for the role's soft best-route basis,
- * sorted by `routeValue` desc (ties: providerSlug asc, id asc). A candidate is
- * non-degraded (status === 0), passes `routePassesEndpointFilters(route, def.filters)`,
- * has a usable billed price, and (when `filters.maxPriceUsdPerM > 0`) a
- * thinking-adjusted price at or below the cap. */
+ * sorted by the value-for-money score desc (ties: providerSlug asc, id asc). A
+ * candidate is non-degraded (status === 0), passes
+ * `routePassesEndpointFilters(route, def.filters)`, has a usable billed price,
+ * and (when `filters.maxPriceUsdPerM > 0`) a thinking-adjusted price at or below
+ * the cap.
+ *
+ * The score is `vfm = wT·tNorm − wP·pNorm`, where `tNorm`/`pNorm` are the
+ * route's p50 throughput and cache-adjusted billed price min/max-normalized over
+ * the candidate set, and `wT = wTput/(wPrice+wTput)`, `wP = wPrice/(wPrice+wTput)`.
+ * A route with no p50 uses the model's blended throughput (an absent p50 is
+ * unknown, not slow). `filters.preferredMinThroughput` is a SOFT floor: routes at
+ * or above it sort before routes below it, but are never dropped. */
 export function rankedRoutes(model: Model, def: RoleDef): OpenRouterEndpointRecord[] {
   const cacheHitRate = def.cacheHitRate ?? 0;
   const cap = def.filters?.maxPriceUsdPerM ?? 0;
+  const floor = def.filters?.preferredMinThroughput ?? 0;
   const out = (model.routes ?? []).filter((r) => {
     if (r.status !== 0) return false;
     if (!routePassesEndpointFilters(r, def.filters)) return false;
@@ -1131,32 +1142,38 @@ export function rankedRoutes(model: Model, def: RoleDef): OpenRouterEndpointReco
     if (cap > 0 && thinkingAdjustedPrice(model, def, p) > cap) return false;
     return true;
   });
-  // Decorate-sort-undecorate: `routeValue` is not cheap, so compute each route's
-  // value once instead of twice per comparison.
-  return out
-    .map((route) => ({ route, value: routeValue(model, def, route) }))
+  if (out.length === 0) return [];
+  const wTput = def.weights.throughput ?? 0;
+  const wPrice = def.weights.price ?? 0;
+  const wSum = wTput + wPrice;
+  const wT = wSum > 0 ? wTput / wSum : 0;
+  const wP = wSum > 0 ? wPrice / wSum : 0;
+  // Decorate-sort-undecorate: the throughput/price lookups are not free, so
+  // compute each route's terms once.
+  const decorated = out.map((route) => ({
+    route,
+    tput: roleMetricValue(model, "throughput", route, cacheHitRate) ?? 0,
+    priceEff: routeEffectivePrice(route, cacheHitRate) as number,
+  }));
+  const tMin = Math.min(...decorated.map((d) => d.tput));
+  const tMax = Math.max(...decorated.map((d) => d.tput));
+  const pMin = Math.min(...decorated.map((d) => d.priceEff));
+  const pMax = Math.max(...decorated.map((d) => d.priceEff));
+  const tSpan = tMax - tMin;
+  const pSpan = pMax - pMin;
+  return decorated
+    .map((d) => {
+      const tNorm = tSpan > 0 ? (d.tput - tMin) / tSpan : 0;
+      const pNorm = pSpan > 0 ? (d.priceEff - pMin) / pSpan : 0;
+      return { route: d.route, score: wT * tNorm - wP * pNorm, aboveFloor: floor <= 0 || d.tput >= floor };
+    })
     .sort((a, b) => {
-      if (a.value !== b.value) return b.value - a.value;
+      if (a.aboveFloor !== b.aboveFloor) return a.aboveFloor ? -1 : 1;
+      if (a.score !== b.score) return b.score - a.score;
       if (a.route.providerSlug !== b.route.providerSlug) return a.route.providerSlug < b.route.providerSlug ? -1 : 1;
       return a.route.id < b.route.id ? -1 : a.route.id > b.route.id ? 1 : 0;
     })
     .map((d) => d.route);
-}
-
-/** The role's value of one route: q over the model's metrics with the route's
- * p50 throughput and cache-adjusted billed price, minus λ·priceEff_route
- * (priceEff_route = routeEffectivePrice(route, cacheHitRate) × the role's
- * thinking factor when the model runs the level). Exactly the value `rankRole`
- * gives the model on that route; `-Infinity` for a route with no usable price. */
-export function routeValue(model: Model, def: RoleDef, route: OpenRouterEndpointRecord): number {
-  const cacheHitRate = def.cacheHitRate ?? 0;
-  const em = endpointFilteredModel(model, def.filters, cacheHitRate) ?? model;
-  const wPrice = def.weights.price ?? 0;
-  const qW = 1 - wPrice;
-  const lambda = roleLambda(def);
-  const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
-  const rv = roleValueOnRoute(em, def, route, cacheHitRate, lambda, levelFactor, qW);
-  return rv === null ? Number.NEGATIVE_INFINITY : rv.value;
 }
 
 /** `rankedRoutes(model, def)[0]` or null. The auto-pin slug and the soft basis. */
