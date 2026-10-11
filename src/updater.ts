@@ -552,8 +552,9 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         if (plan.autoPin) {
           // Auto-pin chain (spec #58, expanded by #69): every gate-passing route
           // of the primary model (all but the pinned best), then every
-          // gate-passing route of each fallback model, in route-value order —
-          // every entry bound to its route's provider, so a down primary
+          // gate-passing route of each fallback model, in the role's
+          // value-for-money score order (`rankedRoutes`, spec #71) — every entry
+          // bound to its route's provider, so a down primary
           // provider falls back to the same model on another provider rather
           // than a different model. `rankedRoutes` already applies every gate
           // (non-degraded, endpoint filters, usable billed price, the
