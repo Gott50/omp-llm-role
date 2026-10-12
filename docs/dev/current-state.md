@@ -1,4 +1,4 @@
-# Current state (2026-10-11)
+# Current state (2026-10-12)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
@@ -6,10 +6,26 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
-ranking numbers below are the 2026-10-09 measurement (the input-price blend basis
+ranking numbers below are the 2026-10-12 measurement (the input-price blend basis
 #21, the #17/#18/#19/#20 wave and the #34–#40 focus-axis/capability-flag work);
 the provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
 bullet). Neither is re-derived on read.
+
+- Provider display (2026-10-12, spec #77): when the live session model carries a
+  provider pin (a hand-set `providerPin`, or the automatic pin the
+  `providerPinning` capability writes), the plugin keeps the model object's
+  `name` suffixed with the route, so omp's status-line model segment renders
+  e.g. `DeepSeek V4.1 Flash @coreweave/fp8`. The suffix is applied on session
+  start, refreshed on the two fallback events, and re-derived at every
+  `turn_start` — the re-derive is what heals the display after omp silently
+  restores the primary model following a fallback cooldown (no session event is
+  emitted), and it also covers a manual `/model` change with a one-turn lag. An
+  event's selector is trusted only when it names the live session model, so an
+  advisor fallback (the same events, the advisor's model) re-derives from the
+  live model instead of stamping the advisor's pin onto the session.
+  Display-only: the suffix rides the model object's `name`, so attribution,
+  usage recording and model comparison are unaffected. The ranking numbers are
+  unchanged.
 
 - Provider ordering: value-for-money route score (2026-10-11, spec #71): the
   auto-pin route basis changed from the route's own value (`q_route −
@@ -653,18 +669,18 @@ bullet). Neither is re-derived on read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 408 llm-stats models; OpenRouter matched 155/408 (throughput), 153 priced (the
-  2026-10-08 snapshot read 155/407 — the daily cache moved, not the code; the
+- 408 llm-stats models; OpenRouter matched 150/408 (throughput), 148 priced (the
+  2026-10-09 snapshot read 155/408 — the daily cache moved, not the code; the
   #34–#40 axes and flags leave every ranking byte-identical until a flag is
   turned on).
-- Eligible per role: 146 (vision 75, designer 89, image-input filter).
+- Eligible per role: 140 (vision 72, designer 86, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.810), `smol` DeepSeek-V4.1-Flash (0.729),
-  `slow` DeepSeek-V4.1-Flash (0.832), `vision` DeepSeek-V4.1-Flash (0.730),
-  `plan` Muse Spark 1.3 (0.793), `commit` DeepSeek-V4.1-Flash (0.762), `tiny`
-  Muse Spark 1.1 (0.791), `task` DeepSeek-V4.1-Flash (0.754), `advisor`
-  Muse Spark 1.3 (0.787), `designer` DeepSeek-V4.1-Flash (0.787).
+  `default` DeepSeek-V4.1-Flash (0.809), `smol` DeepSeek-V4.1-Flash (0.715),
+  `slow` DeepSeek-V4.1-Flash (0.830), `vision` DeepSeek-V4.1-Flash (0.728),
+  `plan` Muse Spark 1.3 (0.794), `commit` DeepSeek-V4.1-Flash (0.747), `tiny`
+  Ling 3.0 Flash (0.775), `task` DeepSeek-V4.1-Flash (0.752), `advisor`
+  Muse Spark 1.3 (0.790), `designer` DeepSeek-V4.1-Flash (0.781).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)

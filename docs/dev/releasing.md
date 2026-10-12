@@ -122,6 +122,20 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   push publishes to npm over OIDC and creates the GitHub Release. The guard was
   verified with a negative control — tag `v0.0.1` against version `1.1.0` failed
   in `notes` before any publish.
+- **1.2.0 published by CD 2026-10-12** (run 38299141569, tag push): the guard
+  and the npm floor passed, `npm publish` completed over OIDC trusted publishing
+  with a provenance attestation (`npm audit signatures`: 1 package has a
+  verified attestation), and the GitHub Release was created with the 1.2.0
+  CHANGELOG section as its body
+  (`https://github.com/Gott50/omp-llm-role/releases/tag/v1.2.0`). Verified:
+  `dist-tags.latest` = `1.2.0`, npm's `gitHead` = `50fce66` (the tag's commit),
+  and the publish step's log carries the direct-publish signature (`Publishing
+  to https://registry.npmjs.org/ with tag latest`, `Signed provenance
+  statement`, `+ omp-llm-role@1.2.0`). The cut (`50fce66`, tagged `v1.2.0`)
+  bumped the four lockstep fields, renamed `## [Unreleased]` to
+  `## [1.2.0] - 2026-10-12`, and regenerated the report (408 models, matched
+  150/408, priced 148; `docs/dev/current-state.md` refreshed to the same
+  measurement).
 - **1.1.0 published by CD 2026-10-09** (run 37897647817,
   `gh workflow run ci.yml --ref v1.1.0`): the guard and the npm floor passed,
   `npm publish` completed over OIDC trusted publishing with a provenance
@@ -171,6 +185,7 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 - **Stray registry placeholder.** The registry also carries a `0.0.0-stage`
   version ("Temporary package placeholder for staged publishing", 334 B,
   published 2026-10-03). It is not from this tree and does not affect installs
-  (`latest` is `1.1.0`).
-- **Next release: one owed.** `## [Unreleased]` carries the CI/CD entry; the
-  number comes from the Unreleased scope, not from the open issues.
+  (`latest` is `1.2.0`).
+- **Next release: none owed.** `## [Unreleased]` is empty — the 1.2.0 cut moved
+  its entries under `## [1.2.0] - 2026-10-12`; the number comes from the
+  Unreleased scope, not from the open issues.
