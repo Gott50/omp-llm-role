@@ -136,6 +136,21 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   `## [1.2.0] - 2026-10-12`, and regenerated the report (408 models, matched
   150/408, priced 148; `docs/dev/current-state.md` refreshed to the same
   measurement).
+- **1.2.0 install routes smoke-tested** (2026-10-12, omp 18.10.3, throwaway
+  `HOME`s, cwd outside the real home tree): npm
+  (`omp plugin install omp-llm-role`), git
+  (`omp plugin install github:Gott50/omp-llm-role`) and marketplace
+  (`omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins`) each installed 1.2.0
+  (`omp plugin doctor`: 4 ok / 0 warnings / 0 errors for npm and git; the
+  marketplace install's one warning is the expected
+  `package_manifest: Not created yet`). Each post-install session run
+  (`omp -p "say ok"` with `OPENROUTER_API_KEY` from `omp token openrouter`)
+  wrote `modelRoles` (9 roles), `retry.fallbackChains` and
+  `task.disabledAgents: [designer]` into that HOME's `config.yml`, landed
+  `llm-role-state.json` + `llm-role-history.jsonl`, and answered. The npm-route
+  run also exercised the spec #65 whitelist harvest live (`OpenRouter
+  allowed-providers whitelist active — 11 providers; 542 routes pruned`).
 - **1.1.0 published by CD 2026-10-09** (run 37897647817,
   `gh workflow run ci.yml --ref v1.1.0`): the guard and the npm floor passed,
   `npm publish` completed over OIDC trusted publishing with a provenance
