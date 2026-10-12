@@ -20,13 +20,14 @@ import { generateAgentSpec, generateProjectProfile } from "./agent-architect.ts"
 import { authorBenchmarkSource } from "./benchmark-author.ts";
 import { applyBenchmarkScores, BENCHMARK_ENTRY_CAP, cachedSourceInfo, declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, sourceForMetric, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkPayloadMeta, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
-import { THINKING_LEVELS, catalogFromOmpModelsJson, fetchKeyAvailability, type KeyAvailability } from "./availability.ts";
+import { catalogFromOmpModelsJson, fetchKeyAvailability, splitThinkingSuffix, type KeyAvailability } from "./availability.ts";
 import { loadRankData, rankRole, type Model } from "./engine.ts";
 import { defaultErrorReportDeps, reportUnexpectedError, type ErrorReportInput } from "./error-report.ts";
 import { formatFeatures } from "./features.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { resolveScopes, unionRoles } from "./explorer/scopes.ts";
 import { isRecord } from "./guards.ts";
+import { applyProviderDisplay, providerPinOf, providerPinOfSelector } from "./provider-display.ts";
 import { applyProfileOverrides, formatProjectRolesReport, parseProjectRolesArgs, PROJECT_ROLES_USAGE, setupProject, type ProjectProfile } from "./project-setup.ts";
 import { DEFAULT_ROLES, findProjectAnchor, KNOWN_METRICS, PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings } from "./settings.ts";
 import { runUpdater, type Deps } from "./updater.ts";
@@ -71,17 +72,41 @@ function hasEmptyConversation(ctx: ExtContext): boolean {
   return true;
 }
 
-/** True when the live session model resolves from the old default selector (same provider/id, any level). */
-function sessionBootedOnOldDefault(ctx: ExtContext, oldSelector: string): boolean {
+/**
+ * True when `selector` names the live session model: the selector's base
+ * (thinking suffix stripped) resolves to a model with the same `provider` and
+ * `id` as `ctx.models.current()`. Any thinking level or provider pin is
+ * ignored. Used both to detect a session booted on the old default role and to
+ * decide whether a fallback event's selector is authoritative for the session
+ * (advisor fallbacks emit the same events with the advisor's selector).
+ */
+function liveModelIsSelector(ctx: ExtContext, selector: string): boolean {
   const current = ctx.models?.current();
-  const colon = oldSelector.lastIndexOf(":");
-  const level = colon !== -1 && oldSelector.slice(colon + 1) in THINKING_LEVELS ? oldSelector.slice(colon + 1) : null;
-  const base = level === null ? oldSelector : oldSelector.slice(0, oldSelector.length - level.length - 1);
-  const oldModel = ctx.models?.resolve(base);
-  if (current === undefined || current === null || oldModel === undefined || oldModel === null) return false;
-  if (typeof current !== "object" || typeof oldModel !== "object") return false;
-  if (!("provider" in current) || !("id" in current) || !("provider" in oldModel) || !("id" in oldModel)) return false;
-  return current.provider === oldModel.provider && current.id === oldModel.id;
+  const { base } = splitThinkingSuffix(selector);
+  const target = ctx.models?.resolve(base);
+  if (current === undefined || current === null || target === undefined || target === null) return false;
+  if (typeof current !== "object" || typeof target !== "object") return false;
+  if (!("provider" in current) || !("id" in current) || !("provider" in target) || !("id" in target)) return false;
+  return current.provider === target.provider && current.id === target.id;
+}
+
+/**
+ * Apply the provider display suffix to the live session model (spec #77).
+ * `selector` is the event's authoritative selector string when the event
+ * carries one; the live model's routing block is the fallback. The event's
+ * selector is trusted only when it names the live session model — the fallback
+ * events are also emitted for advisor fallbacks, where only the advisor's model
+ * changes and the session model is untouched. Contained: a throw must not tear
+ * down the session or escape into omp's dispatch.
+ */
+function applyProviderDisplayFor(ctx: ExtContext, selector?: string): void {
+  try {
+    const live = ctx.models?.current();
+    const eventPin = typeof selector === "string" && liveModelIsSelector(ctx, selector) ? providerPinOfSelector(selector) : null;
+    applyProviderDisplay(live, eventPin ?? providerPinOf(live));
+  } catch {
+    // display-only; never let a failure escape into omp's dispatch
+  }
 }
 
 /**
@@ -97,10 +122,8 @@ function makeApplySessionModel(pi: ExtensionAPI, ctx: ExtContext, notify: (lines
     if (ctx.agent.kind !== "main") return;
     if (!hasEmptyConversation(ctx)) return;
     if (previous === null) return; // first run ever wrote a fresh default; the session predates no old role
-    if (!sessionBootedOnOldDefault(ctx, previous)) return;
-    const colon = selector.lastIndexOf(":");
-    const level = colon !== -1 && selector.slice(colon + 1) in THINKING_LEVELS ? selector.slice(colon + 1) : null;
-    const base = level === null ? selector : selector.slice(0, selector.length - level.length - 1);
+    if (!liveModelIsSelector(ctx, previous)) return;
+    const { base, level } = splitThinkingSuffix(selector);
     const model = ctx.models?.resolve(base);
     if (model === undefined || model === null) {
       notify([`omp-llm-role: session model not updated — "${base}" matches no available model`]);
@@ -416,6 +439,26 @@ export default function (pi: ExtensionAPI) {
     } catch (err) {
       reportCommandError(ctx, "session-start", err);
     }
+  });
+
+  // Provider display (spec #77): keep the live model's name suffixed with its
+  // provider pin. Never pi.setModel — that would wipe omp's in-flight fallback
+  // state and clobber the thinking level; mutate the live model's name only.
+  // Registered after the updater so the session-start pin reflects the model
+  // the run just selected.
+  pi.on("session_start", async (_event, ctx: ExtContext) => {
+    applyProviderDisplayFor(ctx);
+  });
+  pi.on("retry_fallback_applied", async (event, ctx: ExtContext) => {
+    applyProviderDisplayFor(ctx, event.to);
+  });
+  pi.on("retry_fallback_succeeded", async (event, ctx: ExtContext) => {
+    applyProviderDisplayFor(ctx, event.model);
+  });
+  // Self-healing hook: omp restores the primary after a fallback cooldown with
+  // no session event, so re-derive the pin from the live model before each turn.
+  pi.on("turn_start", async (_event, ctx: ExtContext) => {
+    applyProviderDisplayFor(ctx);
   });
 
   pi.registerCommand("refresh-roles", {
