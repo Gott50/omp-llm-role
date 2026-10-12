@@ -8,6 +8,8 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-12
+
 ### Added
 
 - **The live provider route is shown in the model display** — when the live
@@ -718,6 +720,7 @@ install routes verified end-to-end).
   showed it disabled again until the server restarted. Every request now
   re-reads the lock file (`getState()`), so a reload reflects the Export.
 
-[Unreleased]: https://github.com/Gott50/omp-llm-role/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Gott50/omp-llm-role/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.0.0
