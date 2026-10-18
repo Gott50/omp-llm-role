@@ -101,10 +101,13 @@ cache reads; the knob prices that, opt-in, without touching any shipped role.
 - `endpointFilteredModel(model, filters, cacheHitRate)` recomputes the blend when
   the role declares endpoint filters **or** a non-zero hit rate; the hit rate
   composes with the filters (filter the pool first, then cache-price it);
-- `roleEffectivePrice`/`routeEffectivePrice` is the single per-route accessor the
-  blend, the pinned-route path and `roleMetricValue` share; a pinned role prices
-  its route's cache-adjusted billed price, and `maxPriceUsdPerM` caps the
-  thinking-adjusted `priceEff` (the same cap as the blend path);
+- the route-price accessors — `routeInputPrice` (the cache-adjusted input term),
+  `routeEffectivePrice` (the billed 3:1 blend, which reuses the input accessor),
+  `routeOutputPrice`/`blendOutputPrice` (the inverse blend) — are what the
+  blend, the pinned-route path, `roleMetricValue` and the explorer's per-task
+  price share; a pinned role prices its route's cache-adjusted billed price, and
+  `maxPriceUsdPerM` caps the thinking-adjusted `priceEff` (the same cap as the
+  blend path);
 - `explainModel` mirrors all of it, carries `role.cacheHitRate`, and reports the
   cache-adjusted `cost.billedPrice`; the SPA cost line appends `· cache <rate>`
   when the rate is set;

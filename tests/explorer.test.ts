@@ -984,7 +984,9 @@ test("perTaskPrice: the output term is scaled by the role's thinking factor", ()
   assert.equal(high.thinkingFactor, thinkingPriceFactor("high"));
   // Only the output term carries the factor; the input term is untouched.
   assert.equal(high.inputPrice, bare.inputPrice);
-  assert.equal(high.total, (1000 * 1 + 1000 * 4 * thinkingPriceFactor("high")) / 1e6);
+  // Worked by hand from the route prices ($1 in, $4 out) and the level's factor
+  // 19/7 ((1 + 3·0.25 + 3)/(1 + 3·0.25) for `high`): (1000·1 + 1000·4·19/7)/1e6.
+  assert.ok(Math.abs(high.total - 83000 / 7 / 1e6) < 1e-12);
 });
 
 test("perTaskPrice: the thinking factor is gated on the model running at the level", () => {
@@ -1016,7 +1018,7 @@ test("perTaskPrice: the role's cache-hit rate blends the cache-read price into t
   assert.ok(p);
   // effInput = 0.5·0.1 + 0.5·1 = 0.55; blend = 1.75 + 3·(0.55 − 1)/4 = 1.4125.
   assert.ok(Math.abs(p.inputPrice - 0.55) < 1e-9);
-  assert.ok(Math.abs(p.outputPrice - (4 * 1.4125 - 3 * 0.55)) < 1e-9);
+  assert.ok(Math.abs(p.outputPrice - 4) < 1e-9); // the route's own output price
 });
 
 test("perTaskPrice: the 1/price² blend case uses the model's blended input and billed prices", () => {
@@ -1038,13 +1040,28 @@ test("perTaskPrice: the blend case uses the role's endpoint-filtered blend", () 
   const model: Model = { ...makeModel("f", 80, 2, 100), routes: [pricedRoute("a", 1.75, 1, { supportsTools: true }), pricedRoute("b", 3.5, 2, { supportsTools: false })] };
   const p = perTaskPrice(model, def, PROFILE);
   assert.ok(p);
-  // Only route a survives the tools filter, so the billed blend is 1.75, not the
-  // raw model price 2: output = 4·1.75 − 3·input.
-  assert.equal(p.outputPrice, 4 * 1.75 - 3 * p.inputPrice);
+  // Only route a survives the tools filter, so both terms come from it: billed
+  // $1.75, input $1 → output $4 (4·1.75 − 3·1). The unfiltered pool's input blend
+  // ((1·1 + 0.25·2)/1.25 = $1.2) belongs to no route's output price.
+  assert.equal(p.inputPrice, 1);
+  assert.equal(p.outputPrice, 4);
   const rows = rankRows(def, [model], rankRole(def, [model]), undefined, PROFILE);
   const ex = explainModel(def, [model], "f", "f", undefined, PROFILE);
   if (!ex.eligible) throw new Error("unexpected ineligible");
   assert.equal(rows[0].perTask, ex.perTask?.total);
+});
+
+test("perTaskPrice: the blend case takes p_in from the routes that survive the filters", () => {
+  // The filter drops the CHEAP route, so the surviving pool is route b alone:
+  // p_in is its $2 input price and p_out its $8 output price (4·3.5 − 3·2), not
+  // the unfiltered 1/price² input blend (1.2) the buggy basis mixed in.
+  const def = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"], filters: { tools: true } };
+  const model: Model = { ...makeModel("fc", 80, 3.5, 100), routes: [pricedRoute("a", 1.75, 1, { supportsTools: false }), pricedRoute("b", 3.5, 2, { supportsTools: true })] };
+  const p = perTaskPrice(model, def, PROFILE);
+  assert.ok(p);
+  assert.equal(p.inputPrice, 2);
+  assert.equal(p.outputPrice, 8);
+  assert.equal(p.total, 0.01); // (1000·$2 + 1000·$8) per 1e6
 });
 
 test("perTaskPrice: a model whose every route fails the role's filters is absent", () => {

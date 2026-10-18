@@ -164,12 +164,15 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   `gpqa` exception.
 - **`perTaskPrice(model, def, profile)`** — the display-only dollars-per-task:
   `p_in` is the role's priced route's input price (cache-adjusted by the role's
-  `cacheHitRate`), `p_out = 4·blend − 3·p_in` where `blend` is the route's billed
-  price, and the output term is scaled by the role's thinking factor
+  `cacheHitRate`, `routeInputPrice`) and `p_out` that same route's output price —
+  the inverse 3:1 blend of it (`routeOutputPrice`), never re-derived here — and
+  the output term is scaled by the role's thinking factor
   (`thinkingAdjustedPrice(model, def, 1)`, so the per-task price and the row's
   `priceEff` cannot disagree). When the role prices on the `1/price²` blend
-  (`roleRoute` returns `null`) the model's blended input and billed prices stand
-  in. `null` when there is no usable route price — **absent, never a silent
+  (`roleRoute` returns `null`) the model's billed blend and the input blend over
+  the routes that survive the role's endpoint filters stand in — the same pool the
+  ranking prices on, so `p_in` and the billed blend never mix two route pools.
+  `null` when there is no usable route price — **absent, never a silent
   zero**. The SPA renders `—` in both cases: no token profile resolves (no
   recorded usage and no `tokenProfile` set), **or** the model has no usable
   route price (e.g. every route pruned by the as-written whitelist — the model

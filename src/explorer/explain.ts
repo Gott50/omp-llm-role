@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { autoPinApplies, BENCHMARK_CHANCE, blendRoutePool, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, thinkingAdjustedPrice, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { autoPinApplies, BENCHMARK_CHANCE, blendOutputPrice, blendRoutePool, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, routeInputPrice, routeOutputPrice, routePassesEndpointFilters, thinkingAdjustedPrice, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 import { type TokenProfile } from "../usage-ledger.ts";
 
@@ -148,33 +148,25 @@ export type PerTaskPrice = {
   total: number;
 };
 
-/** The route's input price under the role's cache-hit rate: the same input term
- * `routeEffectivePrice` blends into the billed price (`hitRate·cacheRead +
- * (1−hitRate)·input`), so the per-task input price and the ranking's billed price
- * cannot disagree. */
-function cacheAdjustedInputPrice(route: OpenRouterEndpointRecord, cacheHitRate: number): number | null {
-  if (route.weightPrice == null) return null;
-  if (cacheHitRate <= 0 || route.cacheReadPrice == null) return route.weightPrice;
-  return cacheHitRate * route.cacheReadPrice + (1 - cacheHitRate) * route.weightPrice;
-}
-
 /** The model's blended input price: the 1/weightPrice²-weighted mean of the
- * routes' cache-adjusted input prices — the same weighting `blendRoutePool` uses
- * (the router's sort key), so price each route at its input price and read the
- * blend back. The cache-hit rate must reach this term too, or `p_out` would mix a
- * cache-adjusted billed blend with an unadjusted input price. */
+ * routes' cache-adjusted input prices (`routeInputPrice`) — the same weighting
+ * `blendRoutePool` uses (the router's sort key), so price each route at its input
+ * price and read the blend back. The cache-hit rate must reach this term too, or
+ * `p_out` would mix a cache-adjusted billed blend with an unadjusted input price. */
 function blendedInputPrice(routes: readonly OpenRouterEndpointRecord[], cacheHitRate: number): number | null {
-  const priced = routes.map((r) => ({ ...r, price: cacheAdjustedInputPrice(r, cacheHitRate) }));
+  const priced = routes.map((r) => ({ ...r, price: routeInputPrice(r, cacheHitRate) }));
   return blendRoutePool(priced, 0).price;
 }
 
 /** The per-task price of `model` under `def` for a token profile: `p_in` is the
- * role's priced route's input price (cache-adjusted), `p_out = 4·blend − 3·p_in`
- * where `blend` is the route's billed price, and the output term is scaled by the
- * role's thinking factor. When the role prices on the 1/price² blend (`roleRoute`
- * returns null) the model's blended input and billed prices stand in — the same
- * endpoint-filtered blend the ranking prices on. `null` when there is no usable
- * route price (absent, never a silent zero). */
+ * role's priced route's input price (cache-adjusted), `p_out` its output price
+ * (the inverse 3:1 blend of the same route, `routeOutputPrice`), and the output
+ * term is scaled by the role's thinking factor. When the role prices on the
+ * 1/price² blend (`roleRoute` returns null) the model's billed blend and the input
+ * blend over the routes that survive the role's endpoint filters stand in — the
+ * same pool the ranking prices on, so `p_in` and the billed blend never mix two
+ * route pools. `null` when there is no usable route price (absent, never a silent
+ * zero). */
 export function perTaskPrice(model: Model, def: RoleDef, profile: TokenProfile): PerTaskPrice | null {
   const cacheHitRate = def.cacheHitRate ?? 0;
   // A role with endpoint filters prices on the routes that survive them; a model
@@ -183,10 +175,23 @@ export function perTaskPrice(model: Model, def: RoleDef, profile: TokenProfile):
   const em = endpointFilteredModel(model, def.filters, cacheHitRate);
   if (em === null) return null;
   const route = roleRoute(model, def);
-  const inputPrice = route !== null ? cacheAdjustedInputPrice(route, cacheHitRate) : blendedInputPrice(model.routes ?? [], cacheHitRate);
-  const blend = route !== null ? routeEffectivePrice(route, cacheHitRate) : em.price;
-  if (inputPrice === null || blend === null) return null;
-  const outputPrice = 4 * blend - 3 * inputPrice;
+  let inputPrice: number | null;
+  let outputPrice: number | null;
+  if (route !== null) {
+    // The role prices this model on one route: that route's own input and output
+    // prices, the same pair the billed blend comes from.
+    inputPrice = routeInputPrice(route, cacheHitRate);
+    outputPrice = routeOutputPrice(route, cacheHitRate);
+  } else {
+    // The 1/price² blend case: the billed blend `em` is priced on and the input
+    // blend over exactly the routes it blended — the endpoint-filtered pool, never
+    // the model's full route list (a dropped route's input price belongs to no
+    // route's output price).
+    const pool = (model.routes ?? []).filter((r) => routePassesEndpointFilters(r, def.filters));
+    inputPrice = blendedInputPrice(pool, cacheHitRate);
+    outputPrice = inputPrice === null || em.price === null ? null : blendOutputPrice(em.price, inputPrice);
+  }
+  if (inputPrice === null || outputPrice === null) return null;
   // The same gated factor the ranking applies: `thinkingAdjustedPrice(model, def, 1)`
   // is 1 unless the model actually runs at the role's level, so the per-task price
   // and the row's `priceEff` can never disagree for a non-thinking model.

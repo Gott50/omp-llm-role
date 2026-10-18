@@ -5,10 +5,14 @@ import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import {
   bestRoute,
+  blendOutputPrice,
   cardinalMetric,
   providerPinDrops,
   rankRole,
   rankedRoutes,
+  routeEffectivePrice,
+  routeInputPrice,
+  routeOutputPrice,
   thinkingPriceFactor,
   type OpenRouterEndpointRecord,
   type RoleDef,
@@ -135,6 +139,49 @@ test("an unpinned role ignores routes and keeps the blend", () => {
   assert.equal(ranked.length, 1);
   assert.equal(ranked[0].priceEff, 5); // blend, not the route's 2
   assert.equal(ranked[0].parts.throughput, cardinalMetric("throughput", 100)); // blend, not 42
+});
+
+// --- the route-price accessors (the 3:1 blend's one home) --------------------
+
+test("routeInputPrice/routeEffectivePrice/routeOutputPrice are the billed blend and its inverse", () => {
+  // A billed $1.75/M price with a $1/M input price is the 3:1 blend of a $4/M
+  // output: (3·1 + 4)/4 = 1.75.
+  const r = route({ price: 1.75, weightPrice: 1 });
+  assert.equal(routeInputPrice(r), 1);
+  assert.equal(routeEffectivePrice(r), 1.75);
+  assert.equal(routeOutputPrice(r), 4);
+  // A second, exact case: billed $2.5/M, input $0.5/M → output $8.5/M.
+  assert.equal(routeOutputPrice(route({ price: 2.5, weightPrice: 0.5 })), 8.5);
+  // The standalone inverse agrees with the route accessor.
+  assert.equal(blendOutputPrice(2.5, 0.5), 8.5);
+});
+
+test("the route-price accessors carry the role's cache-hit rate into both terms", () => {
+  // effInput = 0.5·0.1 + 0.5·1 = 0.55; billed = 1.75 + 3·(0.55 − 1)/4 = 1.4125;
+  // the output term is unchanged at $4/M.
+  const cached = route({ price: 1.75, weightPrice: 1, cacheReadPrice: 0.1 });
+  assert.ok(Math.abs(routeInputPrice(cached, 0.5) - 0.55) < 1e-12);
+  assert.ok(Math.abs(routeEffectivePrice(cached, 0.5) - 1.4125) < 1e-12);
+  assert.ok(Math.abs(routeOutputPrice(cached, 0.5) - 4) < 1e-12);
+  // A route with no cache-read price keeps its full input price: missing data is
+  // not a silent discount.
+  const noCache = route({ price: 1.75, weightPrice: 1, cacheReadPrice: null });
+  assert.equal(routeInputPrice(noCache, 0.5), 1);
+  assert.equal(routeEffectivePrice(noCache, 0.5), 1.75);
+  assert.equal(routeOutputPrice(noCache, 0.5), 4);
+});
+
+test("the route-price accessors report missing data as null, never a price", () => {
+  // No input price: the billed price stands, the input/output prices are unknown.
+  const noInput = route({ price: 1.75, weightPrice: null });
+  assert.equal(routeInputPrice(noInput), null);
+  assert.equal(routeOutputPrice(noInput), null);
+  assert.equal(routeEffectivePrice(noInput), 1.75);
+  // No billed price: the input price is still known, the billed/output ones are not.
+  const noBilled = route({ price: null, weightPrice: 1 });
+  assert.equal(routeInputPrice(noBilled), 1);
+  assert.equal(routeEffectivePrice(noBilled), null);
+  assert.equal(routeOutputPrice(noBilled), null);
 });
 
 // --- best-route preference (issue #40, re-based by #58) ----------------------
