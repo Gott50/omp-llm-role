@@ -1,4 +1,4 @@
-# Current state (2026-10-12)
+# Current state (2026-10-18)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
@@ -6,11 +6,30 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
-ranking numbers below are the 2026-10-12 measurement (the input-price blend basis
-#21, the #17/#18/#19/#20 wave and the #34–#40 focus-axis/capability-flag work);
-the provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
+ranking numbers below are the 2026-10-18 measurement (the input-price blend basis
+#21, the #17/#18/#19/#20 wave, the #34–#40 focus-axis/capability-flag work, and
+spec #81's explorer surfaces — the ranking CLI itself is unchanged); the
+provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
 bullet). Neither is re-derived on read.
 
+- Explorer as-written pool, per-task price, and price levers (2026-10-18, spec
+  #81): the explorer gains a **pool toggle** (raw vs as-written), a **per-task
+  price column**, and two **price-lever readouts**. The as-written pool applies
+  the same two filters the updater applies before ranking — the catalog/tier gate
+  and the allowed-providers whitelist prune — so the leader the user sees is the
+  model the updater will write (the raw pool's leader differed from the config's
+  for 6 of 10 roles). The per-task price is `inputTokens·p_in +
+  outputTokens·p_out·thinkingFactor` over the role's priced route, using the
+  plugin's own recorded per-role usage (the median per-turn counts) or the
+  `tokenProfile` setting; it is **display-only** — the price axis stays `$/M`
+  (issue #32's verdict stands) and the reported `$/M` keeps its billed 3:1 blend.
+  The readouts are the leader-flip threshold (`λ* = min over cheaper challengers
+  X of (q_L − q_X)/(pEff_L − pEff_X)`, `w* = 20λ*/(1+20λ*)`) and the thinking
+  level's effect on the leader. A new append-only, capped, best-effort
+  **usage ledger** (`llm-role-usage.jsonl`, one row per assistant turn) follows
+  the plugin's state dir (`<project>/.omp` in project mode, `agentDir()`
+  otherwise). The ranking numbers are unchanged — the ranking CLI does not apply
+  the pool toggle, and the per-task price never feeds the sort key.
 - Provider display (2026-10-12, spec #77): when the live session model carries a
   provider pin (a hand-set `providerPin`, or the automatic pin the
   `providerPinning` capability writes), the plugin keeps the model object's
@@ -669,18 +688,18 @@ bullet). Neither is re-derived on read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 408 llm-stats models; OpenRouter matched 150/408 (throughput), 148 priced (the
+- 408 llm-stats models; OpenRouter matched 149/408 (throughput), 148 priced (the
   2026-10-09 snapshot read 155/408 — the daily cache moved, not the code; the
   #34–#40 axes and flags leave every ranking byte-identical until a flag is
   turned on).
-- Eligible per role: 140 (vision 72, designer 86, image-input filter).
+- Eligible per role: 140 (vision 73, designer 87, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.809), `smol` DeepSeek-V4.1-Flash (0.715),
-  `slow` DeepSeek-V4.1-Flash (0.830), `vision` DeepSeek-V4.1-Flash (0.728),
-  `plan` Muse Spark 1.3 (0.794), `commit` DeepSeek-V4.1-Flash (0.747), `tiny`
-  Ling 3.0 Flash (0.775), `task` DeepSeek-V4.1-Flash (0.752), `advisor`
-  Muse Spark 1.3 (0.790), `designer` DeepSeek-V4.1-Flash (0.781).
+  `default` DeepSeek-V4.1-Flash (0.807), `smol` DeepSeek-V4.1-Flash (0.706),
+  `slow` Gemini 4 Argon (0.834), `vision` Gemini 4 Argon (0.732),
+  `plan` Muse Spark 1.3 (0.789), `commit` DeepSeek-V4.1-Flash (0.736), `tiny`
+  Mercury 2 (0.797), `task` DeepSeek-V4.1-Flash (0.750), `advisor`
+  Muse Spark 1.3 (0.785), `designer` DeepSeek-V4.1-Flash (0.772).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)

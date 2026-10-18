@@ -134,6 +134,17 @@ gating — that this plugin never reads (zero occurrences in `src/`, `web/`,
 `tests/`). The plugin's `features.<id>` keys are plugin settings, not omp
 feature flags; do not merge the two.
 
+**`tokenProfile` (spec #81).** A global setting (`tokenProfile.inputTokens` /
+`tokenProfile.outputTokens`, flat dotted keys like the rest) — the per-task
+token profile the explorer's `$/task` column falls back to when a role has no
+recorded usage. `null` (the default) = unset, and the column reads `—`. It is
+validated to `null` or a record whose two fields are finite numbers ≥ 0
+(`tokenProfile: must be null or an object with inputTokens/outputTokens` /
+`tokenProfile.<key>: must be a number >= 0`). It is **display-only**: it never
+feeds the ranking, the reported `$/M` price, or any write. The recorded usage
+takes precedence over it (`resolveTokenProfile`), so once a role has ledger rows
+the setting is ignored for that role.
+
 ## The provider-pin auto-configuration (spec #58)
 
 When a role's **expanded** def sets `preferOwnProvider: true` (the
@@ -209,6 +220,7 @@ settings entry the global behavior is unchanged.
 |---|---|---|
 | `llm-role-state.json` | `{ lastRunDay, managedRoles, roleLastSelector, pluginWrittenChainKeys, previousModelRoles, managedDisabledAgents }` | day gate, managed-role set, last selectors, plugin-owned chain keys, pre-write `modelRoles` snapshot, **managed `task.disabledAgents` names** |
 | `llm-role-history.jsonl` | one JSON row per completed run: `{ ts, trigger, keyMeta{isFreeTier, limitRemaining, creditsRemaining}, decisions[] }` | append-only decision log |
+| `llm-role-usage.jsonl` | one JSON row per assistant turn: `{ ts, role, model, provider, input, output, cacheRead, cacheWrite, cost }` | the per-role usage ledger (spec #81) the explorer's per-task price resolves its token profile from |
 | `llm-role-projects.json` | `{ projects: [{ root, lastUsed }] }` | the plugin's memory of the projects where `/project-roles` was used (the explorer's scope list) |
 | `.llm-role-refresh.lock` | `O_EXCL` create, holds `"<pid> <iso>"` | serializes concurrent session starts; stale (> 60 s) locks are unlinked and retried once |
 | `llm-role-error-reports.json` | `{ reports: [{ fingerprint, label, title, firstSeen, lastSeen, createdDay?, offeredDay?, count, action, issueNumber?, issueUrl? }], dayCount: { day, count } }` | what the opt-in `errorReporting` path filed, offered or suppressed |
@@ -240,6 +252,24 @@ settings entry the global behavior is unchanged.
   and re-offering, and a `count`; `dayCount` tracks the UTC-day creation total
   that feeds the 3-creations-per-day cap. Nothing is written when
   `errorReporting` is `off`.
+
+- `llm-role-usage.jsonl` is the per-role usage ledger (spec #81,
+  `src/usage-ledger.ts`). Unlike the two ledgers above it is **not** global: it
+  follows the plugin's state location — `<cwd>/.omp` in project mode,
+  `agentDir()` otherwise — so a project's usage stays separate from the
+  user-level profile. The extension records one row per assistant turn on
+  `turn_end` and `session_shutdown` (the backstop for a headless one-turn run),
+  read from `sessionManager.getBranch()` — the same entries the session jsonl
+  persists — into `resolveProjectDir() ?? agentDir()`, deduped by `ts|model` so
+  the two hooks cannot double-record. The file is **append-only** (a crash never
+  corrupts it) and **bounded**: `appendUsageRow` compacts to the newest
+  `USAGE_LEDGER_CAP = 2000` rows via a temp file + atomic rename, so a crash
+  mid-compaction leaves the original intact. Recording is **best-effort** — a
+  failure never breaks a session, and `appendUsageRow` never throws. Reading is
+  tolerant: a missing, unreadable or malformed file degrades to `[]`, and an
+  unparseable or wrongly-shaped line is skipped. The explorer reads the active
+  scope's ledger (a project scope its own `<root>/.omp`), so the per-task column
+  follows the scope.
 
 - `previousModelRoles` is the full snapshot of the last `modelRoles` block
   **before** the plugin changed it — a manual rollback aid; there is no rollback

@@ -137,11 +137,18 @@ passing.
     `filters.preferredMinThroughput: 50` (the registry row and the expanded def
     agree), an explicit `filters.preferredMinThroughput` beats the preset, and
     the schema carries the `roles.<role>.filters.preferredMinThroughput` row
-    (number, min 0, default 0).
+    (number, min 0, default 0). The `tokenProfile` setting (spec #81) defaults to
+    `null`, accepts a record with finite `inputTokens`/`outputTokens` ≥ 0, and
+    rejects a non-record or a negative/non-finite field; the schema carries the
+    `tokenProfile.inputTokens`/`tokenProfile.outputTokens` rows (number, min 0).
 23. **Explorer** (`explorer.test.ts`, `explorer-scopes.test.ts`) — rank deltas;
     contributions sum to `q`; `inverseCardinal` round-trips; Export preserves
     siblings and normalizes nested roles; the scope switcher; the availability
-    overlay.
+    overlay. The per-task price (spec #81): `rankRows`/`explainModel` fill
+    `perTask` from a supplied profile and leave it `null` without one; the
+    `POST /api/pool` toggle returns the gated/pruned dataset in `as-written` mode
+    and the full one in `raw`; the bootstrap payload carries `poolMode` and
+    `tokenProfile`; the explain response carries `leaderFlip`/`thinkingLevels`.
 24. **Project scope** (`project-updater.test.ts`, `project-setup.test.ts`,
     `project-roles-command.test.ts`) — project mode scopes config/state/history/
     lock to `<cwd>/.omp`; the day gate is per scope; the registry write;
@@ -224,6 +231,28 @@ passing.
     from the live model on `turn_start` (the silent-restore case), strips when
     neither source carries a pin, never calls `pi.setModel`, and contains a
     throwing live-model read.
+33. **Usage ledger** (`usage-ledger.test.ts`, `usage-ledger-wiring.test.ts`) —
+    `appendUsageRow` writes one row with the expected fields; `readUsageRows`
+    degrades to `[]` on a missing/malformed file and skips an unparseable or
+    wrongly-shaped line; the cap holds (the newest `USAGE_LEDGER_CAP` rows
+    survive a compaction); `roleTokenProfile` is the role's median per-turn
+    counts (or `null` with no rows) and `resolveTokenProfile` prefers the
+    recorded usage over the setting. The wiring (a fake `pi`/`ctx` with a
+    `sessionManager.getBranch()`) records one row per assistant turn on
+    `turn_end` and `session_shutdown`, dedupes by `ts|model` so the two hooks
+    cannot double-record, writes into `resolveProjectDir() ?? agentDir()`, and
+    contains a throwing branch read.
+34. **Explorer price levers** (`explorer-levers.test.ts`) — `leaderFlip` returns
+    the min-λ threshold over the strictly cheaper challengers, the current
+    `wPrice`, the distance and the challenger; `null` when no cheaper challenger
+    exists; the degenerate case (value leader = quality leader) is handled by the
+    same min formula, not `0/0`. `thinkingLevelEffect` returns one row per level
+    with the engine's own factor and the leader at that level, and `null` for a
+    bare role.
+35. **As-written pool** (`explorer-pool.test.ts`) — `asWrittenPool` applies the
+    catalog/tier gate (`resolveVariant`) and the allowed-providers prune
+    (`providerAllowed`), leaves the routes untouched on a `null` whitelist,
+    yields an empty pool on `tier: "none"`, and never mutates its input.
 
 ## Live checks
 
@@ -244,6 +273,18 @@ passing.
   derived metadata.
 - **Agent removal** — `/remove-agent --name <n>` in a session deletes both
   artifacts and the updater pass removes the config entries.
+- **Explorer pool / per-task / levers** — `/explore-roles` in a session with a
+  recorded usage ledger: confirm the header's pool toggle switches the table
+  between the raw and as-written pools (the model count and the leader change),
+  the `$/task` column renders a value (or `—` with no profile), and the explain
+  panel shows the per-task breakdown and the **Price levers** section (the
+  leader-flip line and the per-level leader table). Verify in headless Chromium
+  (the SPA is not unit-tested).
+- **Usage ledger** — run a real omp turn, then confirm `llm-role-usage.jsonl`
+  gained one row per assistant turn (the model, the role, the provider, the
+  token counts, the cost) in the plugin's state dir (`<project>/.omp` in project
+  mode, `agentDir()` otherwise), and that the explorer's `$/task` column then
+  fills for that role. A session with no completed turn writes no rows.
 - **CI/CD** — push a branch and open a PR (or push to `main`) and `gh run watch`
   the `test` job green; push a tag that disagrees with the package version and
   confirm the `release` job fails in the `notes` guard *before* any publish;
