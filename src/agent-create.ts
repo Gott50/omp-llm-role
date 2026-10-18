@@ -424,8 +424,10 @@ function coveredValues(models: readonly Model[], metric: string, fill: number): 
   return values;
 }
 
-/** Linear-interpolated quantile (R type 7) of a value list. */
-function quantile(values: readonly number[], p: number): number {
+/** Linear-interpolated quantile (R type 7) of a value list — the repo's one
+ * quantile convention: the focus-axis dispersion stats and the usage ledger's
+ * per-turn median (`quantile(values, 0.5)`) both read it. */
+export function quantile(values: readonly number[], p: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   const h = (sorted.length - 1) * p;
   const lo = Math.floor(h);

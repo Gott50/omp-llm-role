@@ -15,6 +15,7 @@
 
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { quantile } from "./agent-create.ts";
 import { isRecord } from "./guards.ts";
 
 export type UsageRow = {
@@ -104,23 +105,15 @@ export function readUsageRows(dir: string): UsageRow[] {
   return rows;
 }
 
-/** The repo's quantile convention (linear interpolation, `agent-create.ts`'s
- *  `quantile`); at p = 0.5 it is the median, interpolating an even sample. */
-function median(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const h = (sorted.length - 1) / 2;
-  const lo = Math.floor(h);
-  const hi = Math.ceil(h);
-  return sorted[lo] + (h - lo) * (sorted[hi] - sorted[lo]);
-}
-
-/** The role's median per-turn input/output counts, or null when it has no rows. */
+/** The role's median per-turn input/output counts, or null when it has no rows.
+ *  The median is `agent-create.ts`'s `quantile(values, 0.5)` — the repo's one
+ *  quantile convention (linear interpolation), not a second implementation. */
 export function roleTokenProfile(rows: readonly UsageRow[], role: string): TokenProfile | null {
   const mine = rows.filter((r) => r.role === role);
   if (mine.length === 0) return null;
   return {
-    inputTokens: median(mine.map((r) => r.input)),
-    outputTokens: median(mine.map((r) => r.output)),
+    inputTokens: quantile(mine.map((r) => r.input), 0.5),
+    outputTokens: quantile(mine.map((r) => r.output), 0.5),
   };
 }
 
