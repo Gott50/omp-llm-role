@@ -5,14 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { type KeyAvailability } from "../src/availability.ts";
-import { cardinalMetric, rankRole, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
+import { cardinalMetric, rankRole, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
-import { explainModel, inverseCardinal, METRIC_META, rankRows } from "../src/explorer/explain.ts";
+import { explainModel, inverseCardinal, METRIC_META, perTaskPrice, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer, type ExplorerOpts } from "../src/explorer/server.ts";
 import { readScopeRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
 import { DEFAULT_ROLES, KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
+import { type TokenProfile } from "../src/usage-ledger.ts";
 import { makeModel } from "./helpers.ts";
 
 /** A single-scope (user-level) explorer server over a temp lock file. */
@@ -934,5 +935,173 @@ test("explain returns the automatic pin only when preferOwnProvider is on and no
     assert.equal(off.autoPin, null);
   } finally {
     await handle.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Per-task price (issue #81, ticket #85)
+// ---------------------------------------------------------------------------
+
+/** A standard-tier route whose billed price (3:1 blend) and input price differ,
+ * so the derived output price `4·price − 3·weightPrice` is a distinct number. */
+function pricedRoute(id: string, price: number, weightPrice: number, over: Partial<OpenRouterEndpointRecord> = {}): OpenRouterEndpointRecord {
+  return { id, providerSlug: "org", serviceTier: null, status: 0, free: false, variant: "standard", price, weightPrice, cacheReadPrice: null, tput: 100, latency: null, contextLength: 200000, maxCompletionTokens: 100000, supportsTools: true, ...over };
+}
+
+// A role that prices on its soft best route (preferOwnProvider), so `roleRoute`
+// returns the model's route rather than the 1/price² blend.
+const TASK_DEF = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"], preferOwnProvider: true };
+// Billed $1.75/M, input $1/M → output $4/M (4·1.75 − 3·1).
+const TASK_MODEL: Model = { ...makeModel("m", 80, 1.75, 100), routes: [pricedRoute("m-r", 1.75, 1)] };
+const PROFILE: TokenProfile = { inputTokens: 1000, outputTokens: 1000 };
+
+test("perTaskPrice: the priced route's input and output prices drive the total", () => {
+  const p = perTaskPrice(TASK_MODEL, TASK_DEF, PROFILE);
+  assert.ok(p);
+  assert.equal(p.inputPrice, 1); // route.weightPrice
+  assert.equal(p.outputPrice, 4); // 4·1.75 − 3·1
+  assert.equal(p.thinkingFactor, 1); // bare role
+  assert.equal(p.total, (1000 * 1 + 1000 * 4) / 1e6); // dollars per task
+});
+
+test("perTaskPrice: the output term is scaled by the role's thinking factor", () => {
+  // A model that runs at the role's level (supports_reasoning) carries the factor.
+  const thinkingModel: Model = { ...makeModel("tm", 80, 1.75, 100, true), routes: [pricedRoute("tm-r", 1.75, 1)] };
+  const bare = perTaskPrice(thinkingModel, TASK_DEF, PROFILE);
+  const high = perTaskPrice(thinkingModel, { ...TASK_DEF, thinking: "high" }, PROFILE);
+  assert.ok(bare && high);
+  assert.equal(bare.thinkingFactor, 1);
+  assert.equal(high.thinkingFactor, thinkingPriceFactor("high"));
+  // Only the output term carries the factor; the input term is untouched.
+  assert.equal(high.inputPrice, bare.inputPrice);
+  assert.equal(high.total, (1000 * 1 + 1000 * 4 * thinkingPriceFactor("high")) / 1e6);
+});
+
+test("perTaskPrice: the thinking factor is gated on the model running at the level", () => {
+  // TASK_MODEL does not support reasoning, so the role's level is inert for it —
+  // the same gating the ranking applies (thinkingAdjustedPrice).
+  const gated = perTaskPrice(TASK_MODEL, { ...TASK_DEF, thinking: "high" }, PROFILE);
+  const bare = perTaskPrice(TASK_MODEL, TASK_DEF, PROFILE);
+  assert.ok(gated && bare);
+  assert.equal(gated.thinkingFactor, 1);
+  assert.equal(gated.total, bare.total);
+  // A model that runs at the level gets the factor.
+  const thinkingModel: Model = { ...makeModel("tm", 80, 1.75, 100, true), routes: [pricedRoute("tm-r", 1.75, 1)] };
+  const scaled = perTaskPrice(thinkingModel, { ...TASK_DEF, thinking: "high" }, PROFILE);
+  assert.ok(scaled);
+  assert.equal(scaled.thinkingFactor, thinkingPriceFactor("high"));
+});
+
+test("perTaskPrice: the total reflects the role's token profile", () => {
+  const small = perTaskPrice(TASK_MODEL, TASK_DEF, { inputTokens: 1000, outputTokens: 1000 });
+  const big = perTaskPrice(TASK_MODEL, TASK_DEF, { inputTokens: 10000, outputTokens: 2000 });
+  assert.ok(small && big);
+  assert.equal(big.total, (10000 * 1 + 2000 * 4) / 1e6);
+  assert.ok(big.total > small.total);
+});
+
+test("perTaskPrice: the role's cache-hit rate blends the cache-read price into the input term", () => {
+  const model: Model = { ...makeModel("c", 80, 1.75, 100), routes: [pricedRoute("c-r", 1.75, 1, { cacheReadPrice: 0.1 })] };
+  const p = perTaskPrice(model, { ...TASK_DEF, cacheHitRate: 0.5 }, PROFILE);
+  assert.ok(p);
+  // effInput = 0.5·0.1 + 0.5·1 = 0.55; blend = 1.75 + 3·(0.55 − 1)/4 = 1.4125.
+  assert.ok(Math.abs(p.inputPrice - 0.55) < 1e-9);
+  assert.ok(Math.abs(p.outputPrice - (4 * 1.4125 - 3 * 0.55)) < 1e-9);
+});
+
+test("perTaskPrice: the 1/price² blend case uses the model's blended input and billed prices", () => {
+  // No pin, no preferOwnProvider: `roleRoute` is null, so the blend stands in.
+  const def = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+  const model: Model = { ...makeModel("blend", 80, 2, 100), routes: [pricedRoute("a", 1.75, 1), pricedRoute("b", 3.5, 2)] };
+  const p = perTaskPrice(model, def, PROFILE);
+  assert.ok(p);
+  // 1/weightPrice² weights 1 and 0.25 → input blend (1·1 + 0.25·2)/1.25 = 1.2.
+  assert.ok(Math.abs(p.inputPrice - 1.2) < 1e-9);
+  // The billed blend is the model's own price (2), so output = 4·2 − 3·1.2 = 4.4.
+  assert.ok(Math.abs(p.outputPrice - 4.4) < 1e-9);
+});
+
+test("perTaskPrice: the blend case uses the role's endpoint-filtered blend", () => {
+  // A role with an endpoint filter but no pin/preference prices on the filtered
+  // blend; the per-task price must use the same basis in the table and the panel.
+  const def = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"], filters: { tools: true } };
+  const model: Model = { ...makeModel("f", 80, 2, 100), routes: [pricedRoute("a", 1.75, 1, { supportsTools: true }), pricedRoute("b", 3.5, 2, { supportsTools: false })] };
+  const p = perTaskPrice(model, def, PROFILE);
+  assert.ok(p);
+  // Only route a survives the tools filter, so the billed blend is 1.75, not the
+  // raw model price 2: output = 4·1.75 − 3·input.
+  assert.equal(p.outputPrice, 4 * 1.75 - 3 * p.inputPrice);
+  const rows = rankRows(def, [model], rankRole(def, [model]), undefined, PROFILE);
+  const ex = explainModel(def, [model], "f", "f", undefined, PROFILE);
+  if (!ex.eligible) throw new Error("unexpected ineligible");
+  assert.equal(rows[0].perTask, ex.perTask?.total);
+});
+
+test("perTaskPrice: a model whose every route fails the role's filters is absent", () => {
+  const def = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"], filters: { tools: true } };
+  const model: Model = { ...makeModel("nf", 80, 2, 100), routes: [pricedRoute("a", 1.75, 1, { supportsTools: false })] };
+  assert.equal(perTaskPrice(model, def, PROFILE), null);
+});
+
+test("perTaskPrice: the blend case cache-adjusts the input term too", () => {
+  // A blend-case role with a cache-hit rate: the billed blend and the input blend
+  // must both carry the cache adjustment, so p_out is the routes' output price.
+  const def = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"], cacheHitRate: 0.5 };
+  const model: Model = { ...makeModel("bc", 80, 1.4125, 100), routes: [pricedRoute("a", 1.75, 1, { cacheReadPrice: 0.1 })] };
+  const p = perTaskPrice(model, def, PROFILE);
+  assert.ok(p);
+  // effInput = 0.5·0.1 + 0.5·1 = 0.55; blend = 1.75 + 3·(0.55 − 1)/4 = 1.4125.
+  assert.ok(Math.abs(p.inputPrice - 0.55) < 1e-9);
+  assert.ok(Math.abs(p.outputPrice - 4) < 1e-9); // the route's output price
+});
+
+test("perTaskPrice: no usable route price is absent, never zero", () => {
+  // No routes at all: the blend case has no input price to derive from.
+  assert.equal(perTaskPrice(makeModel("bare", 80, 1, 100), TASK_DEF, PROFILE), null);
+  // A pinned route with no billed price: the route case has no blend.
+  const noPrice: Model = { ...makeModel("np", 80, 1, 100), routes: [pricedRoute("np-r", 1, 1, { price: null })] };
+  assert.equal(perTaskPrice(noPrice, { ...TASK_DEF, providerPin: "org" }, PROFILE), null);
+  // A pinned route with no input price.
+  const noInput: Model = { ...makeModel("ni", 80, 1, 100), routes: [pricedRoute("ni-r", 1, 1, { weightPrice: null })] };
+  assert.equal(perTaskPrice(noInput, { ...TASK_DEF, providerPin: "org" }, PROFILE), null);
+});
+
+test("rankRows and explainModel carry the per-task price when a profile is given", () => {
+  const models: Model[] = [TASK_MODEL, { ...makeModel("cheap", 60, 0.5, 200), routes: [pricedRoute("cheap-r", 0.5, 0.5)] }];
+  const baseline = rankRole(TASK_DEF, models);
+  const rows = rankRows(TASK_DEF, models, baseline, undefined, PROFILE);
+  for (const row of rows) assert.equal(typeof row.perTask, "number");
+  const m = rows.find((r) => r.id === "m");
+  assert.ok(m);
+  assert.equal(m.perTask, (1000 * 1 + 1000 * 4) / 1e6);
+
+  const ex = explainModel(TASK_DEF, models, "m", "task", undefined, PROFILE);
+  if (!ex.eligible) throw new Error(`unexpected ineligible: ${ex.reasons.join(", ")}`);
+  assert.ok(ex.perTask);
+  assert.equal(ex.perTask.total, m.perTask);
+  assert.equal(ex.perTask.inputPrice, 1);
+  assert.equal(ex.perTask.outputPrice, 4);
+});
+
+test("rankRows and explainModel omit the per-task price without a profile", () => {
+  const baseline = rankRole(TASK_DEF, [TASK_MODEL]);
+  assert.equal(rankRows(TASK_DEF, [TASK_MODEL], baseline)[0].perTask, null);
+  assert.equal(rankRows(TASK_DEF, [TASK_MODEL], baseline, undefined, null)[0].perTask, null);
+  const ex = explainModel(TASK_DEF, [TASK_MODEL], "m", "task");
+  if (!ex.eligible) throw new Error("unexpected ineligible");
+  assert.equal(ex.perTask, null);
+});
+
+test("the per-task price never changes the ranking", () => {
+  const models: Model[] = [TASK_MODEL, { ...makeModel("cheap", 60, 0.5, 200), routes: [pricedRoute("cheap-r", 0.5, 0.5)] }];
+  const baseline = rankRole(TASK_DEF, models);
+  const plain = rankRows(TASK_DEF, models, baseline);
+  const withProfile = rankRows(TASK_DEF, models, baseline, undefined, PROFILE);
+  assert.deepEqual(withProfile.map((r) => r.id), plain.map((r) => r.id));
+  for (let i = 0; i < plain.length; i++) {
+    assert.equal(withProfile[i].value, plain[i].value);
+    assert.equal(withProfile[i].q, plain[i].q);
+    assert.equal(withProfile[i].priceEff, plain[i].priceEff);
+    assert.equal(withProfile[i].rank, plain[i].rank);
   }
 });
