@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { SUFFIX_LEVELS, type RoleDef } from "./engine.ts";
 import { FEATURES, expandFeatures, featureById } from "./features.ts";
 import { isRecord } from "./guards.ts";
+import type { TokenProfile } from "./usage-ledger.ts";
 
 /** User-level plugin settings lock file (the explorer's read/export target and
  * the default source for `readPluginSettingsMap`). */
@@ -244,6 +245,9 @@ export type ResolvedSettings = {
   /** Global capability flags (`features.<id>`); a role's `features.<id>` overrides
    * the global in either direction. Expanded per role by `resolveSettings`. */
   features: Record<string, boolean>;
+  /** Per-task token mix for the per-task price, used when the role has no
+   *  recorded usage. `null` = no profile (the per-task price is absent). */
+  tokenProfile: TokenProfile | null;
 };
 
 export const DEFAULT_SETTINGS: ResolvedSettings = {
@@ -255,6 +259,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   activateDefaultOnEmptySession: true,
   errorReporting: "off",
   features: {},
+  tokenProfile: null,
 };
 
 /** One row of the plugin's settings schema (omp's `PluginSettingSchema`): the
@@ -311,6 +316,16 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       description: "File unexpected plugin errors as GitHub issues (off, ask, auto)",
       default: DEFAULT_SETTINGS.errorReporting,
       values: ["off", "ask", "auto"],
+    },
+    "tokenProfile.inputTokens": {
+      type: "number",
+      description: "Input tokens per task for the per-task price (used when the role has no recorded usage)",
+      min: 0,
+    },
+    "tokenProfile.outputTokens": {
+      type: "number",
+      description: "Output tokens per task for the per-task price (used when the role has no recorded usage)",
+      min: 0,
     },
   };
   for (const row of FEATURES) {
@@ -571,6 +586,22 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   }
   if (merged.errorReporting !== "off" && merged.errorReporting !== "ask" && merged.errorReporting !== "auto") {
     errors.push(`errorReporting: must be one of off, ask, auto, got ${JSON.stringify(merged.errorReporting)}`);
+  }
+
+  // The per-task token profile: null (no profile), or a record whose two counts
+  // are finite numbers >= 0. One error string per violation.
+  const tokenProfile: unknown = merged.tokenProfile;
+  if (tokenProfile !== null) {
+    if (!isRecord(tokenProfile)) {
+      errors.push(`tokenProfile: must be null or an object with inputTokens/outputTokens, got ${JSON.stringify(tokenProfile)}`);
+    } else {
+      for (const key of ["inputTokens", "outputTokens"] as const) {
+        const v = tokenProfile[key];
+        if (typeof v !== "number" || !Number.isFinite(v) || v < 0) {
+          errors.push(`tokenProfile.${key}: must be a number >= 0, got ${JSON.stringify(v)}`);
+        }
+      }
+    }
   }
 
   // Global capability flags (`features.<id>`): an unknown id or a non-boolean
