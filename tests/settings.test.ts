@@ -246,3 +246,38 @@ test("feature bundles are pairwise leaf-disjoint", () => {
     }
   }
 });
+
+test("tokenProfile defaults to null and accepts a valid profile", () => {
+  assert.equal(DEFAULT_SETTINGS.tokenProfile, null);
+  assert.equal(resolveSettings({}).settings.tokenProfile, null);
+  assert.deepEqual(resolveSettings({ tokenProfile: null }).errors, []);
+
+  // Flat dotted keys (omp /settings) and a nested object both resolve.
+  for (const raw of [
+    { "tokenProfile.inputTokens": 1200, "tokenProfile.outputTokens": 300 },
+    { tokenProfile: { inputTokens: 1200, outputTokens: 300 } },
+  ]) {
+    const { settings, errors } = resolveSettings(raw);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(settings.tokenProfile, { inputTokens: 1200, outputTokens: 300 });
+  }
+  // Zero is a valid count (an explicit profile, not an absent one).
+  assert.deepEqual(resolveSettings({ tokenProfile: { inputTokens: 0, outputTokens: 0 } }).errors, []);
+});
+
+test("tokenProfile rejects a malformed profile with a named error", () => {
+  for (const bad of ["x", 5, [], {}, { inputTokens: 1 }, { inputTokens: 1, outputTokens: "2" }]) {
+    const { errors } = resolveSettings({ tokenProfile: bad });
+    assert.ok(
+      errors.some((e) => e.startsWith("tokenProfile")),
+      `expected a tokenProfile error for ${JSON.stringify(bad)}, got ${JSON.stringify(errors)}`,
+    );
+  }
+  for (const bad of [-1, "10", Number.NaN, Number.POSITIVE_INFINITY]) {
+    const { errors } = resolveSettings({ "tokenProfile.inputTokens": bad, "tokenProfile.outputTokens": 1 });
+    assert.ok(
+      errors.some((e) => e.startsWith("tokenProfile.inputTokens")),
+      `expected a tokenProfile.inputTokens error for ${JSON.stringify(bad)}, got ${JSON.stringify(errors)}`,
+    );
+  }
+});

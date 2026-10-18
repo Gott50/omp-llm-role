@@ -78,6 +78,16 @@
           "auto"
         ]
       },
+      "tokenProfile.inputTokens": {
+        "type": "number",
+        "description": "Input tokens per task for the per-task price (used when the role has no recorded usage)",
+        "min": 0
+      },
+      "tokenProfile.outputTokens": {
+        "type": "number",
+        "description": "Output tokens per task for the per-task price (used when the role has no recorded usage)",
+        "min": 0
+      },
       "features.endpointCeilings": {
         "type": "boolean",
         "description": "Drop routes that cannot call tools and routes whose output ceiling is below 16 384 tokens",
