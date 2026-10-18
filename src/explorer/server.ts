@@ -10,9 +10,13 @@
  *                             capability flags, and the feature registry
  *   POST /api/scope        -> { scope } -> switch the active scope, return the
  *                             new bootstrap payload
- *   POST /api/rank         -> { role, def } -> rows with baseline deltas and a
- *                             per-row `key` badge (usable/blocked/unknown)
- *   POST /api/explain      -> { role, def, modelId } -> full decomposition
+ *   POST /api/pool         -> { mode } -> switch the ranked pool (raw vs
+ *                             as-written), return the new bootstrap payload
+ *   POST /api/rank         -> { role, def } -> rows with baseline deltas, a
+ *                             per-row `key` badge (usable/blocked/unknown), and
+ *                             the display-only per-task price
+ *   POST /api/explain      -> { role, def, modelId } -> full decomposition plus
+ *                             the two price-lever readouts
  *   POST /api/export       -> { roles } -> validated, backed-up write of the
  *                             active scope's lock file
  *   POST /api/refresh      -> refetch the dataset, return the bootstrap payload
@@ -31,7 +35,10 @@ import { expandFeatures, FEATURES } from "../features.ts";
 import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
 import { KNOWN_METRICS, type UniverseEntry } from "../settings.ts";
+import { resolveTokenProfile, type TokenProfile, type UsageRow } from "../usage-ledger.ts";
 import { explainModel, focusAssessments, metricMetaFor, rankRows, weightableMetrics } from "./explain.ts";
+import { leaderFlip, thinkingLevelEffect } from "./levers.ts";
+import { asWrittenPool, type PoolInputs, type PoolMode } from "./pool.ts";
 import type { Scope } from "./scopes.ts";
 
 export type ExplorerOpts = {
@@ -63,10 +70,33 @@ export type ExplorerOpts = {
   };
   /** Re-runs loadRankData({ refresh: true }) and swaps the snapshot. */
   refresh(): Promise<void>;
+  /**
+   * The inputs the `as-written` pool ranks with: the omp catalog, the key's
+   * tier, and the account's allowed-providers whitelist (`null` = no whitelist /
+   * harvest failed, which leaves every route in place). Re-derived per call, so
+   * a project's whitelist can never leak into another scope's view.
+   */
+  getPoolInputs(): PoolInputs;
+  /**
+   * The recorded usage rows the per-task price resolves its token profile from,
+   * for the request's active scope — a project scope reads its own
+   * `<root>/.omp` ledger, so a project's usage never leaks into the user-level
+   * view. Optional: a host without a ledger supplies none, and the profile falls
+   * back to `tokenProfile` (or stays absent). Re-read per call, so a turn
+   * recorded while the explorer is open shows up without a restart.
+   */
+  getUsageRows?(scope: Scope): readonly UsageRow[];
+  /**
+   * The user-set token profile — the fallback when a role has no recorded usage
+   * (the `tokenProfile` setting). `null` (the default) = unset.
+   */
+  tokenProfile?: TokenProfile | null;
 };
 
-/** Per-server mutable state: the active scope id (null = the default scope). */
-type ExplorerSession = { activeScopeId: string | null };
+/** Per-server mutable state: the active scope id (null = the default scope) and
+ * the ranked pool. Both are session state, so a scope switch and a refresh keep
+ * them (the pool inputs themselves are re-derived per call). */
+type ExplorerSession = { activeScopeId: string | null; poolMode: PoolMode };
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -157,8 +187,18 @@ function activeScope(opts: ExplorerOpts, session: ExplorerSession): Scope {
   return scope;
 }
 
-function bootstrapPayload(opts: ExplorerOpts, scope: Scope): object {
+/** The dataset the session's pool mode ranks: the raw fetch, or the
+ * gated+pruned pool the updater writes from. Applied before ranking, never to
+ * the export path (which validates a pin against the raw dataset). */
+function poolRank(opts: ExplorerOpts, session: ExplorerSession, rank: RankData): RankData {
+  return session.poolMode === "as-written" ? asWrittenPool(rank, opts.getPoolInputs()) : rank;
+}
+
+function bootstrapPayload(opts: ExplorerOpts, session: ExplorerSession, scope: Scope): object {
   const state = opts.getState(scope);
+  // Every count and assessment below describes the pool the user is looking at,
+  // so the header's model count matches the table's rows.
+  const rank = poolRank(opts, session, state.rank);
   // The metric universe the UI may weight: the shipped keys plus any external
   // metric a resolved role weights, with a derived metadata entry for each.
   const external = new Set<string>();
@@ -170,7 +210,7 @@ function bootstrapPayload(opts: ExplorerOpts, scope: Scope): object {
   // Five-axis assessment of each role's focus metrics, over the same resolved
   // dataset the updater ranks on (so the explorer and the updater agree).
   const focus = Object.fromEntries(
-    Object.entries(state.roles).map(([role, def]) => [role, focusAssessments(state.rank.models, def, declared)]),
+    Object.entries(state.roles).map(([role, def]) => [role, focusAssessments(rank.models, def, declared)]),
   );
   return {
     roles: state.roles,
@@ -185,10 +225,14 @@ function bootstrapPayload(opts: ExplorerOpts, scope: Scope): object {
     focusAssessments: focus,
     levels: Object.keys(SUFFIX_LEVELS),
     thinkingFactors: thinkingFactors(),
-    fetchedAt: state.rank.fetchedAt,
-    modelCount: state.rank.models.length,
-    orMatched: state.rank.orMatched,
-    orPriced: state.rank.orPriced,
+    fetchedAt: rank.fetchedAt,
+    modelCount: rank.models.length,
+    orMatched: rank.orMatched,
+    orPriced: rank.orPriced,
+    // The ranked pool the counts above describe; the SPA's header toggle reads it.
+    poolMode: session.poolMode,
+    // The user-set token profile the per-task column falls back to (null = unset).
+    tokenProfile: opts.tokenProfile ?? null,
     availability: {
       active: state.availability.active,
       reason: state.availability.reason,
@@ -210,7 +254,16 @@ async function handleScope(req: IncomingMessage, res: ServerResponse, opts: Expl
   if (scope === undefined) throw new HttpError(404, `unknown scope: ${body.scope}`);
   if (!scope.present) throw new HttpError(409, `scope unavailable: ${body.scope}`);
   session.activeScopeId = scope.id;
-  sendJson(res, 200, bootstrapPayload(opts, scope));
+  sendJson(res, 200, bootstrapPayload(opts, session, scope));
+}
+
+async function handlePool(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
+  const body = await readJson(req);
+  if (!isRecord(body) || (body.mode !== "raw" && body.mode !== "as-written")) {
+    throw new HttpError(400, 'expected { mode: "raw" | "as-written" }');
+  }
+  session.poolMode = body.mode;
+  sendJson(res, 200, bootstrapPayload(opts, session, activeScope(opts, session)));
 }
 
 async function handleRank(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
@@ -220,7 +273,9 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   }
   const role = body.role;
   const authored = body.def as unknown as RoleDef;
-  const state = opts.getState(activeScope(opts, session));
+  const scope = activeScope(opts, session);
+  const state = opts.getState(scope);
+  const rank = poolRank(opts, session, state.rank);
   // The posted def is AUTHORED (flags + explicit keys); expand it with the
   // scope's global flags so the preview matches the resolved baseline
   // (`state.roles[role]`) — otherwise every row's Δ would be a lie.
@@ -229,8 +284,8 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   // role against its effective def (shipped defaults merged with its overrides) so
   // selecting it still shows deltas, not an empty baseline.
   const baselineDef = state.roles[role] ?? state.universe[role]?.def ?? state.defaults[role];
-  const baseline = baselineDef ? rankRole(baselineDef, state.rank.models) : [];
-  const rows = rankRows(def, state.rank.models, baseline, state.availability);
+  const baseline = baselineDef ? rankRole(baselineDef, rank.models) : [];
+  const rows = rankRows(def, rank.models, baseline, state.availability, resolveTokenProfile(role, opts.getUsageRows?.(scope) ?? [], opts.tokenProfile ?? null));
   sendJson(res, 200, {
     eligible: rows.length,
     lambda: roleLambda(def),
@@ -248,12 +303,22 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
     throw new HttpError(400, "expected { role: string, def: object, modelId: string }");
   }
   const authored = body.def as unknown as RoleDef;
-  const state = opts.getState(activeScope(opts, session));
+  const scope = activeScope(opts, session);
+  const state = opts.getState(scope);
+  const rank = poolRank(opts, session, state.rank);
   // Same expansion as handleRank: the posted def is authored, the baseline is
   // resolved, so the preview must apply the scope's global flags first.
   const def = expandFeatures(authored, state.features ?? {});
-  const explanation = explainModel(def, state.rank.models, body.modelId, body.role, state.availability);
-  sendJson(res, 200, { ...explanation, errors: validateRole(body.role, authored) });
+  const explanation = explainModel(def, rank.models, body.modelId, body.role, state.availability, resolveTokenProfile(body.role, opts.getUsageRows?.(scope) ?? [], opts.tokenProfile ?? null));
+  // The two price-lever readouts are role-level, so they ride beside the
+  // per-model decomposition — computed on the active pool, so the readout and
+  // the ranking above it agree.
+  sendJson(res, 200, {
+    ...explanation,
+    leaderFlip: leaderFlip(def, rank.models),
+    thinkingLevels: thinkingLevelEffect(def, rank.models),
+    errors: validateRole(body.role, authored),
+  });
 }
 
 async function handleExport(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
@@ -286,11 +351,15 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerO
   if (path.startsWith("/api/")) {
     if (path === "/api/bootstrap") {
       if (method !== "GET") return sendText(res, 405, "method not allowed");
-      return sendJson(res, 200, bootstrapPayload(opts, activeScope(opts, session)));
+      return sendJson(res, 200, bootstrapPayload(opts, session, activeScope(opts, session)));
     }
     if (path === "/api/scope") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");
       return handleScope(req, res, opts, session);
+    }
+    if (path === "/api/pool") {
+      if (method !== "POST") return sendText(res, 405, "method not allowed");
+      return handlePool(req, res, opts, session);
     }
     if (path === "/api/rank") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");
@@ -307,7 +376,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerO
     if (path === "/api/refresh") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");
       await opts.refresh();
-      return sendJson(res, 200, bootstrapPayload(opts, activeScope(opts, session)));
+      return sendJson(res, 200, bootstrapPayload(opts, session, activeScope(opts, session)));
     }
     return sendText(res, 404, "not found");
   }
@@ -317,7 +386,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerO
 }
 
 export function createExplorerServer(opts: ExplorerOpts): Server {
-  const session: ExplorerSession = { activeScopeId: null };
+  // `raw` is the historical behaviour, so a fresh server ranks exactly what it
+  // ranked before the pool toggle existed.
+  const session: ExplorerSession = { activeScopeId: null, poolMode: "raw" };
   return createServer((req, res) => {
     handle(req, res, opts, session).catch((err: unknown) => {
       if (res.headersSent) {

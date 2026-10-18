@@ -212,8 +212,13 @@ function writePatch(configPath: string, dir: string, patch: ConfigPatch): { stat
  * behavior applies. omp resolves the project dir as `<cwd>/.omp` with no
  * walk-up, so the plugin's project-scope read must use the same dir (not the
  * walk-up anchor `findProjectAnchor` returns).
+ *
+ * Exported as the one home for "where this session's plugin state lives": the
+ * updater scopes config/state/history/lock to it, and the extension records the
+ * usage ledger there too, so a project's usage is separate from the user-level
+ * profile.
  */
-function resolveProjectDir(): string | null {
+export function resolveProjectDir(): string | null {
   const projectDir = join(process.cwd(), ".omp");
   const raw = readPluginSettingsMap({ global: join(projectDir, "plugins", "omp-plugins.lock.json"), project: null });
   return Object.keys(raw).length > 0 ? projectDir : null;
