@@ -313,6 +313,19 @@ export type OpenRouterEndpointPages = Record<string, OpenRouterEndpointRecord[]>
 
 export type OrEnrichment = { tput: number; latency: number | null; price: number | null; thinking: boolean; routes: OpenRouterEndpointRecord[] };
 
+/** The route's input (prompt) $/M under an assumed cache-hit rate: the input term
+ * `routeEffectivePrice` blends into the billed price. A hit rate `h` blends the
+ * cache-read input in, `h·cacheRead + (1−h)·input`; with `h = 0` or no cache-read
+ * price this is the listed input price, and a route with no input price has none —
+ * missing data keeps the full input price, never a silent discount. The single
+ * accessor for the input term: the billed blend, the output-price inverse
+ * (`routeOutputPrice`) and the explorer's per-task price all read it. */
+export function routeInputPrice(route: OpenRouterEndpointRecord, cacheHitRate = 0): number | null {
+  if (route.weightPrice == null) return null;
+  if (cacheHitRate <= 0 || route.cacheReadPrice == null) return route.weightPrice;
+  return cacheHitRate * route.cacheReadPrice + (1 - cacheHitRate) * route.weightPrice;
+}
+
 /** The effective billed $/M of one route under an assumed cache-hit rate. The route's
  * billed 3:1 price is `price = (3·input + output)/4` on the listed input price; a hit
  * rate `h` blends the cache-read input into the input term,
@@ -320,13 +333,31 @@ export type OrEnrichment = { tput: number; latency: number | null; price: number
  * (the output term is unchanged). With `h = 0`, no cache-read price, or no input price
  * this is the route's listed `price` — missing data keeps the full input price, never a
  * silent discount. Shared by the blend (`blendRoutePool`), the pin path (`rankRole`) and
- * `roleMetricValue`. */
+ * `roleMetricValue`; the input term itself is `routeInputPrice`. */
 export function routeEffectivePrice(route: OpenRouterEndpointRecord, cacheHitRate = 0): number | null {
   if (route.price == null) return null;
   if (cacheHitRate <= 0 || route.cacheReadPrice == null || route.weightPrice == null) return route.price;
   const input = route.weightPrice;
-  const effInput = cacheHitRate * route.cacheReadPrice + (1 - cacheHitRate) * input;
+  const effInput = routeInputPrice(route, cacheHitRate) as number;
   return route.price + (3 * (effInput - input)) / 4;
+}
+
+/** The output (completion) $/M implied by a billed 3:1 blend and the input price
+ * behind it: the inverse of `billed = IO_PRICE_RATIO·(3·input + output)`, i.e.
+ * `output = billed/IO_PRICE_RATIO − (1−IO_PRICE_RATIO)/IO_PRICE_RATIO · input`.
+ * The 3:1 ratio lives here (and in `IO_PRICE_RATIO`), not in the callers; dividing
+ * by `IO_PRICE_RATIO` (2⁻²) is exact, so this is the plain `4·billed − 3·input`. */
+export function blendOutputPrice(billed: number, input: number): number {
+  return billed / IO_PRICE_RATIO - ((1 - IO_PRICE_RATIO) / IO_PRICE_RATIO) * input;
+}
+
+/** The route's output (completion) $/M: the inverse blend of its own billed and
+ * input prices (see `blendOutputPrice`). Null when either of them is missing. */
+export function routeOutputPrice(route: OpenRouterEndpointRecord, cacheHitRate = 0): number | null {
+  const billed = routeEffectivePrice(route, cacheHitRate);
+  const input = routeInputPrice(route, cacheHitRate);
+  if (billed === null || input === null) return null;
+  return blendOutputPrice(billed, input);
 }
 
 /** Expected price/throughput/latency of one request over a route pool under the

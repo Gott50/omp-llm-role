@@ -8,6 +8,27 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **The explorer ranks the as-written pool, shows a per-task price, and reads
+  out the price levers** — the ranking UI gains a **pool toggle** (raw vs
+  as-written), a **`$/task` column**, and two **price-lever readouts**. The
+  as-written pool applies the same two filters the daily updater applies before
+  ranking — the catalog/tier gate and the account's allowed-providers whitelist
+  — so the leader the explorer shows is the model the updater will write (the
+  raw pool's leader differed from the config's for 6 of 10 roles). The per-task
+  price is `inputTokens·p_in + outputTokens·p_out·thinkingFactor` over the
+  role's priced route, using the plugin's own recorded per-role usage (the
+  median per-turn counts) or the new `tokenProfile` setting; it is
+  **display-only** — the price axis stays `$/M` and the reported `$/M` keeps its
+  billed 3:1 blend. The readouts are the **leader-flip threshold** (the price
+  weight at which a cheaper challenger overtakes the leader, with the challenger
+  named and the distance shown) and the **thinking level's effect** on the
+  leader (the leader and price factor per level). A new append-only, capped,
+  best-effort **usage ledger** (`llm-role-usage.jsonl`, one row per assistant
+  turn) follows the plugin's state dir (`<project>/.omp` in project mode,
+  `agentDir()` otherwise) and feeds the per-task column. (spec #81)
+
 ## [1.2.0] - 2026-10-12
 
 ### Added

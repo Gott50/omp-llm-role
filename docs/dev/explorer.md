@@ -12,7 +12,9 @@ explorer never reimplements `value = q − λ·$/M`.
 | File | Role |
 |---|---|
 | `src/explorer/server.ts` | Zero-dependency `node:http` surface: static SPA + JSON API. Exports `createExplorerServer`, `ExplorerOpts`. |
-| `src/explorer/explain.ts` | Pure explanation layer (no I/O): rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, and the keyed-catalog availability overlay. Exports `rankRows`, `explainModel`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`. |
+| `src/explorer/explain.ts` | Pure explanation layer (no I/O): rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, the keyed-catalog availability overlay, and the display-only per-task price. Exports `rankRows`, `explainModel`, `perTaskPrice`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`. |
+| `src/explorer/levers.ts` | Pure price-lever readouts (no I/O): the leader-flip threshold and the thinking level's effect on the leader, computed on the pool they are handed. Exports `leaderFlip`, `thinkingLevelEffect`, `LeaderFlip`, `ThinkingLevelRow`. |
+| `src/explorer/pool.ts` | The as-written pool (no I/O): the dataset filtered exactly as the updater filters it before ranking (catalog/tier gate + allowed-providers prune). Exports `asWrittenPool`, `PoolMode`, `PoolInputs`. |
 | `src/explorer/scopes.ts` | Scope resolution (no HTTP): the user-level scope, the registry's projects, and the session's project; the per-scope read; the dataset union. Exports `Scope`, `resolveScopes`, `defaultScopeId`, `resolveScope`, `readScopeRoles`, `unionRoles`. |
 | `src/explorer/boot.ts` | Shared launcher: bind/port fallback, scope resolution, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, `ExplorerHandle`, `ExplorerBootOpts`. |
 | `src/project-registry.ts` | The global project registry (`llm-role-projects.json` in the agent dir): read/register/prune, atomic write. Exports `PROJECT_REGISTRY_FILE`, `readProjectRegistry`, `registerProject`. |
@@ -47,12 +49,29 @@ type ExplorerOpts = {
     availability: KeyAvailability;            // keyed-catalog overlay (re-derived on refresh)
   };
   refresh(): Promise<void>;                   // re-runs loadRankData({ refresh: true, roles, extraMetrics }) and swaps rank
+  // The as-written pool's inputs: the omp catalog, the key's tier, and the
+  // account's allowed-providers whitelist (null = no whitelist / harvest failed,
+  // which leaves every route in place). Re-derived per call, so a project's
+  // whitelist cannot leak into another scope's view.
+  getPoolInputs(): PoolInputs;
+  // The recorded usage rows the per-task price resolves its token profile from,
+  // for the request's active scope (a project scope reads its own `<root>/.omp`
+  // ledger). Optional: a host without a ledger supplies none.
+  getUsageRows?(scope: Scope): readonly UsageRow[];
+  // The user-set token profile the per-task column falls back to (the
+  // `tokenProfile` setting); null (the default) = unset.
+  tokenProfile?: TokenProfile | null;
 };
 ```
 
-The server holds the active scope id as mutable state (alongside the mutable
-`rank`/`availability`); `activeScope` resolves it per request, persisting the
-fallback when the active scope became unavailable.
+The server holds the active scope id **and the pool mode** as mutable state
+(alongside the mutable `rank`/`availability`); `activeScope` resolves the scope
+per request, persisting the fallback when the active scope became unavailable.
+`poolRank` applies the session's pool mode to the dataset before ranking — the
+`as-written` mode runs `asWrittenPool(rank, opts.getPoolInputs())`, the `raw`
+mode (the default, the historical behaviour) passes the fetch through. The pool
+mode is **never** applied to the export path, which validates a pin against the
+raw dataset.
 
 Endpoints:
 
@@ -62,8 +81,9 @@ Endpoints:
 | `GET /app.js`, `/style.css` | — | static asset (traversal-guarded) |
 | `GET /api/bootstrap` | — | `bootstrapPayload(opts, activeScope)` |
 | `POST /api/scope` | `{scope}` | switch the active scope, then the bootstrap payload (404 unknown id, 409 non-present) |
-| `POST /api/rank` | `{role, def}` | `{eligible, lambda, derivedLambda, rows, errors}` |
-| `POST /api/explain` | `{role, def, modelId}` | `explainModel(...)` spread + `errors` |
+| `POST /api/pool` | `{mode}` | switch the ranked pool (`"raw"` \| `"as-written"`), then the bootstrap payload (400 on any other mode) |
+| `POST /api/rank` | `{role, def}` | `{eligible, lambda, derivedLambda, rows, errors}` — each row carries the display-only `perTask` |
+| `POST /api/explain` | `{role, def, modelId}` | `explainModel(...)` spread + `leaderFlip` + `thinkingLevels` + `errors` |
 | `POST /api/export` | `{roles}` | `{ok:true, backupPath, roles, lockPath}` or `{ok:false, errors}` |
 | `POST /api/refresh` | — | `await opts.refresh()` (re-ranks and re-derives the availability overlay) then the bootstrap payload |
 
@@ -75,7 +95,9 @@ Endpoints:
   focus metrics over the resolved dataset), `levels` (`Object.keys(SUFFIX_LEVELS)`), `thinkingFactors`
   (per-level billed-blend multiplier from the engine's own `thinkingPriceFactor`,
   so the UI readout cannot drift), `fetchedAt`, `modelCount`, `orMatched`,
-  `orPriced`, `lockPath` (the **active scope's** lock file), `scopes` (id, label,
+  `orPriced`, `poolMode` (the ranked pool the counts describe — `"raw"` or
+  `"as-written"`), `tokenProfile` (the user-set per-task token profile, or
+  `null`), `lockPath` (the **active scope's** lock file), `scopes` (id, label,
   kind, present per known scope), `activeScope` (the active scope id),
   the active scope's global capability flags and the feature registry (the
   `FEATURES` rows: id, label, description, recommended bundle, buys), so the SPA
@@ -124,28 +146,48 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   declared?)`** merges the shipped table with a derived entry per external metric.
 - **`weightableMetrics(extra?)`** — the shipped keys plus any external metric in
   `extra`; exactly what the validator accepts.
-- **`rankRows(def, models, baseline, availability?)`** — `rankRole(def, models)` +
+- **`rankRows(def, models, baseline, availability?, profile?)`** — `rankRole(def, models)` +
   `paretoFrontier`, annotating each row with `baselineRank`/`delta`
   (`baselineRank − rank`; positive = moved up) against the effective role's
   ranking. Rows carry `priceEff` (the thinking-adjusted price the ranking
   penalized), `parts`, `missing` (weighted non-price metrics whose raw value is
-  null), `frontier`, and `key` — the availability overlay verdict
+  null), `frontier`, `key` — the availability overlay verdict
   (`usable`/`blocked`/`unknown`), orthogonal to `missing` and to the eligibility
-  gates. `availability` is optional and pure (no I/O); omitted or inactive ⇒
-  every row reads `unknown`.
+  gates — and `perTask` (the display-only dollars-per-task, or `null`).
+  `availability` and `profile` are optional and pure (no I/O); omitted or
+  inactive ⇒ every row reads `unknown` / `perTask: null`. Neither affects the
+  ranking order or the deltas.
 - **`inverseCardinal(metric, t)`** — inverse of `cardinalMetric` for the "what
   would it take" targets: `index` → `t*80 − 20`; `throughput` → `10 * 30**t`
   (null outside `[0,1]`, because the forward transform clamps); everything else
   (benchmark, percentile, price) → identity. See *Open defect* below for the
   `gpqa` exception.
-- **`explainModel(def, models, modelId, roleName, availability?)`** — the full
+- **`perTaskPrice(model, def, profile)`** — the display-only dollars-per-task:
+  `p_in` is the role's priced route's input price (cache-adjusted by the role's
+  `cacheHitRate`, `routeInputPrice`) and `p_out` that same route's output price —
+  the inverse 3:1 blend of it (`routeOutputPrice`), never re-derived here — and
+  the output term is scaled by the role's thinking factor
+  (`thinkingAdjustedPrice(model, def, 1)`, so the per-task price and the row's
+  `priceEff` cannot disagree). When the role prices on the `1/price²` blend
+  (`roleRoute` returns `null`) the model's billed blend and the input blend over
+  the routes that survive the role's endpoint filters stand in — the same pool the
+  ranking prices on, so `p_in` and the billed blend never mix two route pools.
+  `null` when there is no usable route price — **absent, never a silent
+  zero**. The SPA renders `—` in both cases: no token profile resolves (no
+  recorded usage and no `tokenProfile` set), **or** the model has no usable
+  route price (e.g. every route pruned by the as-written whitelist — the model
+  still ranks on its blend price, but the per-task column has no route to
+  price). It never feeds the ranking's sort key, `value`, or the explanation's
+  `cost` block.
+- **`explainModel(def, models, modelId, roleName, availability?, profile?)`** — the full
   decomposition, or the eligibility gates it failed (same gates `rankRole`
   applies, same order: missing required, image filter, no billed price). On
   success: `contributions`
   (raw → cardinal `t` → renormalized weight → contribution → share of `q`, with
   a `fillNote` when the value is a capability fill), `cost` (`priceEff`, the
   cache-adjusted billed price, λ, penalty, `q`, `value`), `role.cacheHitRate`,
-  `gapAbove`/`gapToTop`/`above`, `closing` (the
+  `perTask` (the `PerTaskPrice` breakdown, or `null` when no profile was
+  supplied or the model has no usable route price), `gapAbove`/`gapToTop`/`above`, `closing` (the
   per-metric raw target that would close the gap, via `inverseCardinal`, with
   unreachable/extrapolated notes), `dominators` (models both cheaper and at
   least as good on `q`, top 3), `ownProvider` (true when the model was priced on
@@ -156,6 +198,15 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   availability overlay `key`/`keyReason`
   (the same verdict as `rankRows`, plus the reason it reads that way). It mirrors
   `rankRole`'s capability fill so the contributions sum exactly to `q`.
+- **`leaderFlip(def, models)`** / **`thinkingLevelEffect(def, models)`**
+  (`src/explorer/levers.ts`) — the two price-lever readouts, computed on the pool
+  they are handed (so the readout and the ranking above it agree). `leaderFlip`
+  returns the price weight at which a cheaper challenger overtakes the value
+  leader (`{ wPrice, flipW, distance, challenger }`), or `null` when no cheaper
+  challenger exists. `thinkingLevelEffect` returns one `{ level, factor, leader }`
+  row per thinking level, or `null` for a bare role. Both reuse the engine's own
+  `roleLambda`/`rankRole`/`SUFFIX_LEVELS`/`thinkingPriceFactor`; the formulas are
+  in [`scoring.md`](scoring.md).
 
 ## Shared boot path (`src/explorer/boot.ts`)
 
@@ -202,6 +253,22 @@ launcher `/explore-roles` uses.
   factor on the omp catalog; `refresh()` re-runs `opts.reload(true)`,
   re-enriches, and — when `opts.reloadAvailability` is supplied — re-derives the
   availability overlay.
+- **As-written pool inputs.** `ExplorerBootOpts` carries `tier` (default
+  `"billed"`), `allowedProviders` (`null` = no pruning), and
+  `reloadAllowedProviders` (re-derived on `refresh()`). `getPoolInputs()` returns
+  `{ catalog: opts.catalog, tier, allowed }` per call, so a project's whitelist
+  cannot leak into another scope's view. Both are **best-effort**: an absent tier
+  reads as `billed`, and a failed re-harvest (`reloadAllowedProviders` throwing
+  or returning `null`) degrades the as-written pool to no route pruning rather
+  than failing the refresh. `/explore-roles` builds them in-process from the
+  session's OpenRouter key (the canary must be a **catalog** slug, not a ranking
+  id).
+- **Usage ledger.** `getUsageRows(scope)` reads the active scope's ledger: a
+  project scope reads its own `<root>/.omp` ledger, the user scope reads
+  `usageDir` (default `agentDir()`), so a project's usage never mixes with the
+  user-level profile. Re-read per call, so a turn recorded while the explorer is
+  open shows up without a restart. `tokenProfile` is the user-set fallback the
+  per-task column uses when a role has no recorded usage.
 - `opts.availability` is the boot-time keyed-catalog overlay; `getState(scope)`
   returns it on every request, so `/api/rank` and `/api/explain` annotate rows
   without a second fetch. It is scope-independent and carried across switches
@@ -246,12 +313,23 @@ a scraped third-party site, so the DOM is built with
 `textContent`/`createElement` only (the `el()` helper).
 
 - **Boot**: `boot()` → `GET /api/bootstrap` → `applyBootstrap(data)`, which fills
-  `state` (`scopes`, `activeScope`, `universe`, `effective` = each entry's `def`,
+  `state` (`scopes`, `activeScope`, `poolMode`, `tokenProfile`, `universe`,
+  `effective` = each entry's `def`,
   `defs` = a structuredClone of it, `defaults`, `metrics`, `metricMeta`,
   `focusAssessments`, `levels`, `thinkingFactors`, `lockPath`, `availability`),
   renders the header/roles/table, and selects the previously selected role when
   the new scope has it, else the first role. `boot()` then wires the
   filter/topn/hide-key-blocked/export/copy/download controls.
+- **Pool toggle**: the header renders a `#pool` `<select>` (`raw` / `as-written`)
+  from `state.poolMode`. Changing it confirms first when there are unsaved edits
+  (mirroring the scope switcher), then `POST /api/pool {mode}` and
+  `applyBootstrap` on the returned payload — so the header's model count, the
+  table, the focus assessments and the two readouts all describe the pool the
+  user is now looking at. The toggle is **session-level** state — the server
+  holds one pool mode, kept across scope switches (not persisted) — while the
+  pool *inputs* are re-derived per call, so a project's whitelist never leaks
+  into another scope's view. Export is unaffected: it always
+  writes the authored def, never the pool.
 - **Scope switcher**: the header renders a `#scope` `<select>` from
   `state.scopes` (the user-level scope plus every known project); a scope whose
   lock file is gone is `disabled` with a reason `title`. Changing the selection
@@ -282,15 +360,24 @@ a scraped third-party site, so the DOM is built with
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
   `recompute()`. `recompute()` → `POST /api/rank {role, def}` → `state.rows`,
   `lambda`, `derivedLambda`, `errors`; re-renders the table and readouts, and
-  reloads the explain panel if the selected model is still present. Editor
-  changes call `scheduleRecompute()` (120 ms debounce).
+  reloads the explain panel if the selected model is still present. The table
+  gains a **`$/task`** column (`r.perTask`, rendered `—` when `null`), beside the
+  `$/M` column. Editor changes call `scheduleRecompute()` (120 ms debounce).
 - **Explain**: `selectModel(id)` → `POST /api/explain {role, def, modelId}` →
-  `renderExplain()` (composition table, cost line, "why not higher",
-  dominators, and the availability line). The cost line appends `· best route`
+  `renderExplain()` (composition table, cost line, **per-task price** line, "why
+  not higher", dominators, the **Price levers** section, and the availability
+  line). The cost line appends `· best route`
   when the model was priced on the soft best route (`ownProvider`), and a
   **pin line** shows the pin in force: `pin: <slug> (manual)` when the edited def
   carries a `providerPin`, else `auto pin: <slug>` from the explanation's
-  `autoPin` (read-only — the manual field is the only way to set one).
+  `autoPin` (read-only — the manual field is the only way to set one). The
+  per-task line shows the breakdown (`<in> in × $<p_in>/M + <out> out ×
+  $<p_out>/M × <factor> = $<total>`), or `— (no token profile — record usage or
+  set tokenProfile)` when `perTask` is `null`. The **Price levers** section
+  renders the leader-flip line (`w* = <flipW> · now <wPrice> · distance
+  <±distance> (<ratio>)`) and a per-level table of the thinking level's effect on
+  the leader; each is omitted when the server sends `null` (no cheaper
+  challenger, or a bare role).
 - **Provider pin field**: the editor renders a text input for
   `roles.<role>.providerPin` (a tiered slug like `deepinfra/fp8` is kept
   verbatim; empty clears the key, resuming the automatic choice). It is the

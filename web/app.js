@@ -23,6 +23,11 @@ const state = {
   lockPath: "",
   scopes: [],
   activeScope: "",
+  // The ranked pool the server is serving (raw | as-written) and the user-set
+  // token profile the per-task price falls back to (null = unset). Both come
+  // from the bootstrap payload, so a refresh keeps them.
+  poolMode: "raw",
+  tokenProfile: null,
   features: {},
   featureRegistry: [],
   filter: "",
@@ -82,6 +87,26 @@ function fmtCtx(value) {
   return value >= 1000 ? Math.round(value / 1000) + "K" : String(value);
 }
 
+/** Dollars per task, at a precision that keeps the small values readable: a
+ * per-task price spans roughly $0.0001 (a cheap model, a short task) to $1+. */
+function fmtUsd(value) {
+  if (value === null || value === undefined) return "—";
+  const abs = Math.abs(value);
+  if (abs >= 1) return "$" + value.toFixed(2);
+  if (abs >= 0.01) return "$" + value.toFixed(3);
+  if (abs > 0) return "$" + value.toFixed(4);
+  return "$0";
+}
+
+/** Token counts, compact: 20000 → "20K", 1500 → "1.5K", 800 → "800". */
+function fmtTokens(value) {
+  if (value >= 1000) {
+    const k = value / 1000;
+    return (k >= 10 ? Math.round(k) : Math.round(k * 10) / 10) + "K";
+  }
+  return String(value);
+}
+
 function deltaText(delta) {
   if (delta === null || delta === undefined || delta === 0) return "·";
   return delta > 0 ? "+" + delta : "−" + Math.abs(delta);
@@ -121,6 +146,7 @@ const TIPS = {
   hideBlocked: "Drop rows your OpenRouter key cannot run (key = blocked). Applied after the text filter and the top-n slice.",
   lock: "Plugin settings lock file that Export writes to (the active scope's lock file).",
   scope: "Role-config source: the user-level scope, or a project where /project-roles was used. Switching re-reads that scope's roles and universe from disk and points Export at its lock file. A project whose lock file is gone is unavailable.",
+  pool: "Ranked pool. raw = the full cached dataset (account-agnostic). as-written = the same catalog/tier gate and allowed-providers whitelist prune the updater applies before writing, so the leader you see is the model you will get. Best-effort: a failed whitelist fetch degrades to the raw pool. Export is unaffected — it always writes the authored role.",
   refresh: "Refetch llm-stats and OpenRouter data (hits the network).",
   rank: "Rank among this role's eligible models, by value, descending.",
   delta: "Rank change against the role's saved (effective) definition: + means this definition ranks the model higher than the plugin does today.",
@@ -128,6 +154,7 @@ const TIPS = {
   value: "Sort key: value = q − λ·$/M on the thinking-adjusted effective price. λ is the price of one quality point, in $/M.",
   q: "Quality q = Σ (wᵢ/(1−w_price))·tᵢ over the weighted quality metrics. Price is not blended in — it is the penalty axis.",
   price: "Effective price in $/M: OpenRouter standard-route blend (3:1 in:out) scaled by the role's thinking factor when the model supports thinking; unadjusted for bare/off roles.",
+  perTask: "Dollars per task: your own token mix (the role's recorded usage, else the tokenProfile setting) × the role's priced route, thinking-adjusted. Display-only — the ranking still sorts on $/M. — when no token profile is available (no recorded usage and no tokenProfile set).",
   throughput: "Output throughput in tok/s (OpenRouter p50 when matched, else llm-stats).",
   context: "Context window in tokens.",
   explainSub: "value = q − λ·$/M (effective price), where q is the weighted quality sum and λ the price of one quality point.",
@@ -141,6 +168,9 @@ const TIPS = {
   whyNotHigher: "The value gap to the model ranked above, and the per-metric raw target that would close it (inverse of the cardinal transform).",
   dominated: "Models that are both cheaper and at least as good on q.",
   lambda: "λ = price of one quality point, in $/M. Derived as " + LAMBDA_DERIVATION + " unless the role overrides lambda.",
+  leaderFlip: "The price weight w* at which a cheaper challenger overtakes the value leader: λ* = min over cheaper challengers X of (q_L − q_X)/(pEff_L − pEff_X), then w* = 20λ*/(1+20λ*). Absent when no cheaper challenger exists. Exact for the 1/price² blend or a hard provider pin; a first-order estimate under the soft best-route basis (the route choice itself moves with the price weight).",
+  levers: "Two price-lever readouts, computed on the pool you are viewing: the leader-flip threshold (the price weight at which a cheaper challenger overtakes the leader) and the thinking level's effect on the leader. Each is absent when the server sends null — no cheaper challenger, or a bare role.",
+  thinkingLevels: "The leader at each thinking level, with the level's price factor (3ρ+1+T)/(3ρ+1). The factor multiplies the price axis, so it penalizes expensive models more in absolute λ-units — that is why auto favours the cheap model. Absent for a bare role (no thinking level).",
   sum: "Weights must sum to 1.0 (±0.01) or the plugin rejects the role.",
   required: "Eligibility gate, not a weight: a model missing this metric is not ranked at all for the role.",
   focus: "Nine-axis audit of each weighted benchmark/percentile metric, over the same pool the updater ranks on. A below-bar axis is warned; unknown means the metric's scores were not loaded (never a silent ok).",
@@ -267,6 +297,20 @@ function scopeSelect() {
   return sel;
 }
 
+/** The pool selector: the raw dataset (account-agnostic) or the as-written pool
+ * (the catalog/tier gate + allowed-providers prune the updater ranks on). The
+ * value is the server's mode, so the header always names the active pool. */
+function poolSelect() {
+  const sel = el("select", { id: "pool", "data-tip": TIPS.pool });
+  sel.append(
+    el("option", { value: "raw", text: "raw pool" }),
+    el("option", { value: "as-written", text: "as-written pool" }),
+  );
+  sel.value = state.poolMode;
+  sel.addEventListener("change", onPoolChange);
+  return sel;
+}
+
 function renderMeta(data) {
   const meta = document.getElementById("meta");
   meta.textContent = "";
@@ -274,6 +318,8 @@ function renderMeta(data) {
     el("span", { class: "brand", text: "omp-llm-role explorer" }),
     el("span", { class: "sep", text: "·" }),
     scopeSelect(),
+    el("span", { class: "sep", text: "·" }),
+    poolSelect(),
     el("span", { class: "sep", text: "·" }),
     el("span", { "data-tip": TIPS.models, text: data.modelCount + " models" }),
     el("span", { class: "sep", text: "·" }),
@@ -426,6 +472,7 @@ function renderTable() {
       el("th", { class: "num", "data-tip": TIPS.value, text: "value" }),
       el("th", { class: "num", "data-tip": TIPS.q, text: "q" }),
       el("th", { class: "num", "data-tip": TIPS.price, text: "$/M" }),
+      el("th", { class: "num", "data-tip": TIPS.perTask, text: "$/task" }),
       el("th", { class: "num", "data-tip": TIPS.throughput, text: "tok/s" }),
       el("th", { class: "num", "data-tip": TIPS.context, text: "ctx" }),
     ])),
@@ -450,6 +497,7 @@ function renderTable() {
         el("td", { class: "num", text: fmt(r.value, 3) }),
         el("td", { class: "num", text: fmt(r.q, 3) }),
         el("td", { class: "num", text: fmt(r.priceEff, 2) }),
+        el("td", { class: "num", text: fmtUsd(r.perTask) }),
         el("td", { class: "num", text: r.throughput === null ? "—" : fmt(r.throughput, 0) }),
         el("td", { class: "num", text: r.context === null ? "—" : fmtCtx(r.context) }),
       ]),
@@ -562,6 +610,23 @@ function renderExplain() {
   const ownNote = ex.ownProvider ? " · best route" : "";
   panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × " + thinkNote + ")" : " (" + thinkNote + ")") + cacheNote + ownNote + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
 
+  // The per-task price breakdown: display-only, so it sits apart from the
+  // ranking's cost line. A muted note when no token profile resolved (never a
+  // silent zero).
+  panel.append(el("h3", { "data-tip": TIPS.perTask, text: "Per-task price" }));
+  if (ex.perTask) {
+    const p = ex.perTask;
+    panel.append(
+      el("p", {
+        class: "cost",
+        "data-tip": TIPS.perTask,
+        text: "per task: " + fmtTokens(p.inputTokens) + " in × $" + fmt(p.inputPrice, 3) + "/M + " + fmtTokens(p.outputTokens) + " out × $" + fmt(p.outputPrice, 3) + "/M × " + p.thinkingFactor.toFixed(3) + " = " + fmtUsd(p.total),
+      }),
+    );
+  } else {
+    panel.append(el("p", { class: "cost muted", "data-tip": TIPS.perTask, text: "per task: — (no token profile — record usage or set tokenProfile)" }));
+  }
+
   panel.append(el("h3", { "data-tip": TIPS.whyNotHigher, text: "Why not higher" }));
   if (ex.gapAbove === null) {
     panel.append(el("p", { class: "muted", text: "Already #1 for this role." }));
@@ -592,6 +657,53 @@ function renderExplain() {
     const ul = el("ul", { class: "dominators" });
     for (const d of ex.dominators) ul.append(el("li", { text: d.name + " — $" + fmt(d.priceEff, 2) + "/M, q " + fmt(d.q, 3) }));
     panel.append(ul);
+  }
+
+  // The two price-lever readouts are role-level (computed on the pool the
+  // ranking above uses), so they close the panel. Each is absent when the
+  // server sends null: no cheaper challenger, or a bare role.
+  const flip = ex.leaderFlip;
+  const levels = ex.thinkingLevels;
+  if (flip || levels) {
+    panel.append(el("h3", { "data-tip": TIPS.levers, text: "Price levers" }));
+    if (flip) {
+      const ratio = flip.wPrice > 0 ? (flip.flipW / flip.wPrice).toFixed(2) + "×" : "—";
+      panel.append(
+        el("p", {
+          class: "cost",
+          "data-tip": TIPS.leaderFlip,
+          text: "leader flip: w* = " + flip.flipW.toFixed(3) + " · now " + flip.wPrice.toFixed(3) + " · distance " + (flip.distance >= 0 ? "+" : "−") + Math.abs(flip.distance).toFixed(3) + " (" + ratio + ")",
+        }),
+      );
+      panel.append(
+        el("p", {
+          class: "cost",
+          text: "challenger: " + flip.challenger.name + " — $" + fmt(flip.challenger.priceEff, 2) + "/M, value " + fmt(flip.challenger.value, 3),
+        }),
+      );
+    }
+    if (levels) {
+      const t = el("table", { class: "comp" });
+      t.append(
+        el("thead", {}, el("tr", {}, [
+          el("th", { text: "level" }),
+          el("th", { class: "num", "data-tip": TIPS.thinking, text: "×price" }),
+          el("th", { "data-tip": TIPS.thinkingLevels, text: "leader" }),
+        ])),
+      );
+      const tb = el("tbody");
+      for (const row of levels) {
+        tb.append(
+          el("tr", { class: row.level === ex.role.thinking ? "active-level" : "" }, [
+            el("td", { text: row.level }),
+            el("td", { class: "num", text: "×" + row.factor.toFixed(3) }),
+            el("td", { text: row.leader ? row.leader.name + " (" + fmt(row.leader.value, 3) + ")" : "—" }),
+          ]),
+        );
+      }
+      t.append(tb);
+      panel.append(t);
+    }
   }
 }
 
@@ -1185,6 +1297,24 @@ async function onScopeChange(event) {
   }
 }
 
+/** Switch the ranked pool (raw ↔ as-written). Unsaved edits are confirmed first
+ * (mirroring the scope switcher); the returned payload rebuilds every panel, so
+ * the header's model count and the table describe the new pool. */
+async function onPoolChange(event) {
+  const mode = event.target.value;
+  if (mode === state.poolMode) return;
+  if (Object.keys(dirtyRoles()).length > 0 && !confirm("Discard unsaved role edits and switch pool?")) {
+    event.target.value = state.poolMode;
+    return;
+  }
+  try {
+    applyBootstrap(await api("/api/pool", { mode }));
+  } catch (err) {
+    alert("Pool switch failed: " + err.message);
+    event.target.value = state.poolMode;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
@@ -1196,6 +1326,8 @@ function applyBootstrap(data) {
   const previousRole = state.role;
   state.scopes = data.scopes || [];
   state.activeScope = data.activeScope;
+  state.poolMode = data.poolMode || "raw";
+  state.tokenProfile = data.tokenProfile ?? null;
   state.universe = data.universe;
   state.effective = {};
   for (const [name, entry] of Object.entries(state.universe)) state.effective[name] = entry.def;

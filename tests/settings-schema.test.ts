@@ -20,6 +20,8 @@ test("schema covers every global knob and every shipped role field", () => {
     "fallbackChainDepth",
     "activateDefaultOnEmptySession",
     "errorReporting",
+    "tokenProfile.inputTokens",
+    "tokenProfile.outputTokens",
   ]) {
     assert.ok(key in schema, `missing global ${key}`);
   }
@@ -83,6 +85,18 @@ test("resolveSettings rejects bad preferredMinThroughput values", () => {
       errors.some((e) => e.includes("filters.preferredMinThroughput must be a number ≥ 0")),
       `expected rejection for ${String(bad)}`,
     );
+  }
+});
+
+test("schema exposes the token profile rows with min 0 and no default", () => {
+  const schema = deriveSettingsSchema();
+  for (const key of ["tokenProfile.inputTokens", "tokenProfile.outputTokens"]) {
+    const row = schema[key];
+    assert.ok(row, `missing ${key}`);
+    assert.equal(row.type, "number");
+    assert.equal(row.min, 0);
+    // No default: an absent profile is not a silent zero.
+    assert.equal(row.default, undefined);
   }
 });
 

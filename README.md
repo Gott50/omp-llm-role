@@ -63,6 +63,13 @@ omp plugin install omp-llm-role@gott50-plugins
   unknown keys stay byte-identical, and a no-change run writes nothing.
   `~/.omp/agent/llm-role-state.json` snapshots the previous `modelRoles` block
   on every write as a rollback aid.
+- **Usage ledger.** The plugin appends one row per assistant turn (the model,
+  the role, the provider, the token counts and the cost) to
+  `llm-role-usage.jsonl` beside its other state — `<project>/.omp` in project
+  mode, `~/.omp/agent` otherwise. It is append-only, capped at the newest 2000
+  rows, and best-effort (a recording failure never breaks a session). The
+  explorer's `$/task` column reads it to learn your own token mix; nothing else
+  uses it.
 
 ## Roles
 
@@ -120,6 +127,7 @@ Global knobs:
 | `writeFallbackChains` | `true` | Write per-role fallback chains into `config.yml` |
 | `fallbackChainDepth` | `2` | Fallback models per role chain |
 | `activateDefaultOnEmptySession` | `true` | Reapply the new `default` selector to an empty session's active model |
+| `tokenProfile` | unset | `{ inputTokens, outputTokens }` per task for the explorer's `$/task` column, used when a role has no recorded usage. Display-only; the recorded usage takes precedence. Unset = the column reads `—` |
 | `errorReporting` | `off` | Opt-in reporting of **unexpected** plugin errors as GitHub issues on `Gott50/omp-llm-role`; one of `off`, `ask`, `auto` (see below) |
 
 Per-role knobs (`roles.<name>.*`):
@@ -421,21 +429,31 @@ editing source and re-running the CLI.
   that scope's lock file — a project scope resolves as the project lock merged
   over the user-level lock, exactly what the updater ranks. A project whose lock
   file is gone is shown disabled. Switching with unsaved edits asks first.
+- **Pool toggle** — the header switches the ranked pool between **raw** (the
+  account-agnostic fetch) and **as-written** (the pool the updater actually
+  writes from: the catalog/tier gate plus your account's allowed-providers
+  whitelist). The as-written pool is what you will get, so its leader is the
+  model the next `/refresh-roles` will pick; the raw pool shows the
+  account-agnostic ranking. The toggle is best-effort (a failed whitelist fetch
+  degrades to the raw pool) and per-scope, and it never affects **Export** —
+  Export always writes the role you authored, from either pool.
 - **Role tabs** — every role the plugin knows: the nine omp built-in roles, the
   shipped opt-in `designer`, and any role present only in the lock file. Each
   tab is tinted by provenance — `default` (omp built-in), `plugin` (shipped but
   opt-in), `user` (lock-file only) — and a disabled role is muted and dashed.
   Selecting a disabled role still ranks its models.
 - **Rank table** — every eligible model for the selected role, with `value`,
-  `q`, `$/M` (effective, thinking-adjusted), `tok/s`, `ctx`, a `★` Pareto
+  `q`, `$/M` (effective, thinking-adjusted), **`$/task`** (what you actually pay
+  per task under your own token mix — see below), `tok/s`, `ctx`, a `★` Pareto
   marker, and a `Δ` column showing the rank delta against the role's effective
   def (what the plugin does today).
 - **Explain panel** — click a row for the full decomposition: each weighted
   metric's raw value → cardinal transform → renormalized weight → contribution,
   the cost block (`λ`, effective vs billed price, `penalty = λ·price`,
-  `value = q − penalty`), "why not higher" (the value gap to the model above
-  plus the per-metric target that would close it), and the models that dominate
-  it on (price, q).
+  `value = q − penalty`), the **per-task price** breakdown, "why not higher"
+  (the value gap to the model above plus the per-metric target that would close
+  it), the models that dominate it on (price, q), and the **Price levers**
+  section (below).
 - **Weight editor** — edit the role's description, weights, `required` set,
   `filters.image`, `thinking` level, and `λ` override live; the table re-ranks
   on every change. Weights are edited freely (no implicit rescaling): the `Σ`
@@ -457,8 +475,30 @@ editing source and re-running the CLI.
 - **Hover explanations** — every column header, metric name, role tab, and
   control carries a tooltip explaining its semantics.
 
+**The per-task price (`$/task`).** The `$/M` column is the reported price — the
+billed 3:1 input:output blend OpenRouter charges, scaled by the role's thinking
+factor. The `$/task` column is what *you* pay per task: your own input:output
+token mix applied to the role's priced route. The mix comes from the plugin's
+own recorded usage (the role's median per-turn counts, from the
+`llm-role-usage.jsonl` ledger the plugin appends to as you work), falling back
+to the `tokenProfile` setting when a role has no recorded usage. It is
+**display-only** — the ranking still sorts on `$/M` — and it reads `—` when no
+profile is available (no recorded usage and no `tokenProfile` set) or the model
+has no usable route price. A model that is cheaper per token but
+more verbose can cost more per task; this column is where that shows up.
+
+**The price levers.** The explain panel's **Price levers** section makes the
+price posture visible. The **leader flip** is the price weight `w*` at which a
+cheaper challenger overtakes the current leader, with the challenger named and
+the distance from your current weight — so you can see whether your price
+posture binds (a small bump flips the pick) or is slack. It is absent when no
+cheaper challenger exists. The **thinking level** table shows which model wins
+at each level, with the level's price factor — the factor multiplies the price
+axis, so it penalizes expensive models more, which is why `auto` favours the
+cheap model. Both readouts are computed on the pool you are viewing.
+
 The UI never reimplements the ranking math: the numbers on screen are exactly
-the numbers the plugin would use. The server binds `127.0.0.1` only (no auth)
+the numbers the plugin would use. The server binds `[IP_ADDRESS]` only (no auth)
 and serves the SPA with no build step and no external requests.
 
 ## Availability

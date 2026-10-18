@@ -39,6 +39,7 @@ body {
 #meta .sep { color: var(--line); }
 #meta .lock { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 #meta #scope { max-width: 340px; }
+#meta #pool { max-width: 200px; }
 #meta button { margin-left: auto; }
 
 #roles {
@@ -189,6 +190,8 @@ table.comp th { text-align: left; color: var(--muted); font-weight: 500; font-si
 table.comp td.num, table.comp th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 table.comp tr.missing-row td { color: var(--muted); }
 table.comp tr.note-row td { border-bottom: none; font-size: 11px; padding-top: 0; }
+/* The thinking-level readout: the role's current level is the row that matters. */
+table.comp tr.active-level td { color: var(--accent); }
 
 /* Focus-metric audit: one row per weighted benchmark/percentile metric, four
    signal cells. ok = up, below-bar = warn + glyph, unknown = muted (never ok). */

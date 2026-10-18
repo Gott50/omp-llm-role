@@ -15,8 +15,9 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { autoPinApplies, BENCHMARK_CHANCE, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, thinkingAdjustedPrice, type Model, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { autoPinApplies, BENCHMARK_CHANCE, blendOutputPrice, blendRoutePool, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, routeInputPrice, routeOutputPrice, routePassesEndpointFilters, thinkingAdjustedPrice, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
+import { type TokenProfile } from "../usage-ledger.ts";
 
 // ---------------------------------------------------------------------------
 // Metric metadata (the UI's picklists and formula legends)
@@ -127,6 +128,79 @@ export function focusAssessments(
 }
 
 // ---------------------------------------------------------------------------
+// Per-task price (display-only)
+// ---------------------------------------------------------------------------
+
+/** The per-task price of one model under a role: the role's priced route's input
+ * and output prices applied to the role's token profile, with the output term
+ * scaled by the role's thinking factor. Display-only — it never feeds the
+ * ranking's sort key, `value`, or the explanation's `cost` block. */
+export type PerTaskPrice = {
+  inputTokens: number;
+  outputTokens: number;
+  /** the route's input price, $/M (cache-adjusted by the role's cache-hit rate) */
+  inputPrice: number;
+  /** the route's output price, $/M (derived from the billed blend and the input price) */
+  outputPrice: number;
+  /** the role's thinking factor (1 for a bare role) */
+  thinkingFactor: number;
+  /** dollars per task */
+  total: number;
+};
+
+/** The model's blended input price: the 1/weightPrice²-weighted mean of the
+ * routes' cache-adjusted input prices (`routeInputPrice`) — the same weighting
+ * `blendRoutePool` uses (the router's sort key), so price each route at its input
+ * price and read the blend back. The cache-hit rate must reach this term too, or
+ * `p_out` would mix a cache-adjusted billed blend with an unadjusted input price. */
+function blendedInputPrice(routes: readonly OpenRouterEndpointRecord[], cacheHitRate: number): number | null {
+  const priced = routes.map((r) => ({ ...r, price: routeInputPrice(r, cacheHitRate) }));
+  return blendRoutePool(priced, 0).price;
+}
+
+/** The per-task price of `model` under `def` for a token profile: `p_in` is the
+ * role's priced route's input price (cache-adjusted), `p_out` its output price
+ * (the inverse 3:1 blend of the same route, `routeOutputPrice`), and the output
+ * term is scaled by the role's thinking factor. When the role prices on the
+ * 1/price² blend (`roleRoute` returns null) the model's billed blend and the input
+ * blend over the routes that survive the role's endpoint filters stand in — the
+ * same pool the ranking prices on, so `p_in` and the billed blend never mix two
+ * route pools. `null` when there is no usable route price (absent, never a silent
+ * zero). */
+export function perTaskPrice(model: Model, def: RoleDef, profile: TokenProfile): PerTaskPrice | null {
+  const cacheHitRate = def.cacheHitRate ?? 0;
+  // A role with endpoint filters prices on the routes that survive them; a model
+  // whose every route fails is ineligible (the ranking drops it), so its per-task
+  // price is absent, not the unfiltered blend.
+  const em = endpointFilteredModel(model, def.filters, cacheHitRate);
+  if (em === null) return null;
+  const route = roleRoute(model, def);
+  let inputPrice: number | null;
+  let outputPrice: number | null;
+  if (route !== null) {
+    // The role prices this model on one route: that route's own input and output
+    // prices, the same pair the billed blend comes from.
+    inputPrice = routeInputPrice(route, cacheHitRate);
+    outputPrice = routeOutputPrice(route, cacheHitRate);
+  } else {
+    // The 1/price² blend case: the billed blend `em` is priced on and the input
+    // blend over exactly the routes it blended — the endpoint-filtered pool, never
+    // the model's full route list (a dropped route's input price belongs to no
+    // route's output price).
+    const pool = (model.routes ?? []).filter((r) => routePassesEndpointFilters(r, def.filters));
+    inputPrice = blendedInputPrice(pool, cacheHitRate);
+    outputPrice = inputPrice === null || em.price === null ? null : blendOutputPrice(em.price, inputPrice);
+  }
+  if (inputPrice === null || outputPrice === null) return null;
+  // The same gated factor the ranking applies: `thinkingAdjustedPrice(model, def, 1)`
+  // is 1 unless the model actually runs at the role's level, so the per-task price
+  // and the row's `priceEff` can never disagree for a non-thinking model.
+  const thinkingFactor = thinkingAdjustedPrice(model, def, 1);
+  const total = (profile.inputTokens * inputPrice + profile.outputTokens * outputPrice * thinkingFactor) / 1e6;
+  return { inputTokens: profile.inputTokens, outputTokens: profile.outputTokens, inputPrice, outputPrice, thinkingFactor, total };
+}
+
+// ---------------------------------------------------------------------------
 // Rank rows (table data with baseline deltas)
 // ---------------------------------------------------------------------------
 
@@ -156,6 +230,9 @@ export type RankRow = {
   baselineRank: number | null;
   /** baselineRank − rank; positive = moved up */
   delta: number | null;
+  /** dollars per task under the role's token profile, or null when no profile
+   * was supplied or the model has no usable route price. Display-only. */
+  perTask: number | null;
 };
 
 /** The availability overlay verdict for one model id: `"usable"` when the keyed
@@ -172,8 +249,9 @@ function keyVerdict(availability: KeyAvailability | undefined, id: string): "usa
 /** Rank `models` under `def`, annotating each row with its rank delta against
  * `baseline` (the effective role's ranking, i.e. what the plugin does today) and
  * its keyed-catalog availability overlay. Ranking order, deltas, and every other
- * field are unaffected by `availability`. */
-export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], availability?: KeyAvailability): RankRow[] {
+ * field are unaffected by `availability` or `profile`; `profile` only fills the
+ * display-only `perTask` column. */
+export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], availability?: KeyAvailability, profile?: TokenProfile | null): RankRow[] {
   const ranked = rankRole(def, models);
   const frontier = paretoFrontier(ranked);
   const baselineRank = new Map<string, number>();
@@ -200,6 +278,7 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], avai
       rank,
       baselineRank: b,
       delta: b == null ? null : b - rank,
+      perTask: profile == null ? null : perTaskPrice(r.model, def, profile)?.total ?? null,
     };
   });
 }
@@ -275,6 +354,10 @@ export type Explanation =
       role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
       contributions: Contribution[];
       cost: { priceEff: number; billedPrice: number; lambda: number; penalty: number; q: number; value: number };
+      /** the per-task price breakdown under the role's token profile, or null
+       * when no profile was supplied or the model has no usable route price.
+       * Display-only — never part of `cost` or the ranking. */
+      perTask: PerTaskPrice | null;
       gapAbove: number | null;
       gapToTop: number;
       above: { id: string; name: string; value: number } | null;
@@ -284,8 +367,9 @@ export type Explanation =
 
 /** Full decomposition of one model's rank for a role, or the eligibility gates it
  * failed (same gates `rankRole` applies, listed in the same order). The eligible
- * branch also carries the keyed-catalog availability overlay (`key`/`keyReason`). */
-export function explainModel(def: RoleDef, models: Model[], modelId: string, roleName = "", availability?: KeyAvailability): Explanation {
+ * branch also carries the keyed-catalog availability overlay (`key`/`keyReason`)
+ * and, when a token `profile` is supplied, the display-only per-task price. */
+export function explainModel(def: RoleDef, models: Model[], modelId: string, roleName = "", availability?: KeyAvailability, profile?: TokenProfile | null): Explanation {
   const model = models.find((m) => m.id === modelId);
   if (!model) return { eligible: false, reasons: ["model not found in today's dataset"] };
 
@@ -424,6 +508,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking, cacheHitRate },
     contributions,
     cost: { priceEff: self.priceEff, billedPrice: route !== null ? routeEffectivePrice(route, cacheHitRate) ?? eff.price : eff.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
+    perTask: profile == null ? null : perTaskPrice(model, def, profile),
     gapAbove,
     gapToTop,
     above,
