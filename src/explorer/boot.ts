@@ -13,10 +13,12 @@
 
 import { execFile } from "node:child_process";
 import type { Server } from "node:http";
-import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability } from "../availability.ts";
+import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
 import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH } from "../settings.ts";
 import { agentDir } from "../state.ts";
+import { readUsageRows, type TokenProfile } from "../usage-ledger.ts";
+import type { PoolInputs } from "./pool.ts";
 import { readScopeRoles, resolveScope, resolveScopes, type Scope, type ScopeInputs } from "./scopes.ts";
 import { createExplorerServer } from "./server.ts";
 
@@ -49,6 +51,24 @@ export type ExplorerBootOpts = {
   reload(refresh: boolean): Promise<RankData>;
   /** Re-derive the key-availability overlay for `POST /api/refresh` (best-effort). */
   reloadAvailability?: () => Promise<KeyAvailability>;
+  /**
+   * The as-written pool's inputs (spec #81): the key's tier and the account's
+   * allowed-providers whitelist. Both are best-effort — an absent tier reads as
+   * `billed` (the ordinary account), and an absent/null whitelist leaves every
+   * route in place, so a failed harvest degrades to the raw pool instead of
+   * breaking the explorer.
+   */
+  tier?: Tier;
+  allowedProviders?: ReadonlySet<string> | null;
+  /** Re-derive the whitelist for `POST /api/refresh` (best-effort: a throw or a
+   *  null result degrades the as-written pool to no route pruning). */
+  reloadAllowedProviders?: () => Promise<ReadonlySet<string> | null>;
+  /** The user-set token profile the per-task price falls back to (the
+   *  `tokenProfile` setting); absent = unset. */
+  tokenProfile?: TokenProfile | null;
+  /** Dir holding the usage ledger the per-task price resolves its profile from
+   *  (default: `agentDir()`, beside the plugin's other state). */
+  usageDir?: string;
   port?: number;
   /** Open the URL in the default browser (macOS only). */
   open?: boolean;
@@ -93,6 +113,11 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   const scopeInputs: ScopeInputs = { userLockPath, cwd, registryDir: opts.registryDir };
   let rank = opts.rank;
   let availability = opts.availability;
+  // The as-written pool's mutable half: the whitelist is re-derived on refresh,
+  // the catalog and tier are boot-time facts. `null` = no pruning.
+  let allowed = opts.allowedProviders ?? null;
+  const tier = opts.tier ?? "billed";
+  const usageDir = opts.usageDir ?? agentDir();
   enrichThinkingLevels(rank.models, opts.catalog);
 
   // Scope resolution is boot's job: the user-level scope, the registry's
@@ -117,7 +142,19 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
       rank = await opts.reload(true);
       enrichThinkingLevels(rank.models, opts.catalog);
       if (opts.reloadAvailability) availability = await opts.reloadAvailability();
+      // Best-effort: the whitelist is account state, so a failed re-harvest must
+      // leave the explorer usable (routes unpruned) rather than fail the refresh.
+      if (opts.reloadAllowedProviders) {
+        try {
+          allowed = await opts.reloadAllowedProviders();
+        } catch {
+          allowed = null;
+        }
+      }
     },
+    getPoolInputs: (): PoolInputs => ({ catalog: opts.catalog, tier, allowed }),
+    getUsageRows: () => readUsageRows(usageDir),
+    tokenProfile: opts.tokenProfile ?? null,
   });
   // Optional detach (extension only): never hold the host process open on the
   // server's account, so a short-lived `omp -p` run cannot hang.

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { type KeyAvailability } from "../src/availability.ts";
-import { cardinalMetric, rankRole, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
+import { cardinalMetric, rankRole, SUFFIX_LEVELS, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, METRIC_META, perTaskPrice, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer, type ExplorerOpts } from "../src/explorer/server.ts";
@@ -13,11 +13,12 @@ import { readScopeRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
 import { DEFAULT_ROLES, KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
-import { type TokenProfile } from "../src/usage-ledger.ts";
-import { makeModel } from "./helpers.ts";
+import { type TokenProfile, type UsageRow } from "../src/usage-ledger.ts";
+import { makeCatalog, makeModel } from "./helpers.ts";
 
-/** A single-scope (user-level) explorer server over a temp lock file. */
-function userScopeOpts(lockPath: string, getState: ExplorerOpts["getState"]): ExplorerOpts {
+/** A single-scope (user-level) explorer server over a temp lock file. `extra`
+ * overrides any opt (the pool inputs, the usage rows, the token profile). */
+function userScopeOpts(lockPath: string, getState: ExplorerOpts["getState"], extra: Partial<ExplorerOpts> = {}): ExplorerOpts {
   const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
   return {
     webDir: join(process.cwd(), "web"),
@@ -25,6 +26,9 @@ function userScopeOpts(lockPath: string, getState: ExplorerOpts["getState"]): Ex
     resolveScope: () => scope,
     getState,
     refresh: async () => {},
+    // The default pool: nothing gated, nothing pruned — i.e. the raw dataset.
+    getPoolInputs: () => ({ catalog: [], tier: "billed", allowed: null }),
+    ...extra,
   };
 }
 
@@ -661,11 +665,11 @@ const CACHE_MODELS: Model[] = [
 ];
 
 /** Boot a single-scope explorer over a temp lock file with a fixed getState. */
-async function bootWithState(getState: ExplorerOpts["getState"]): Promise<{ url: string; close: () => Promise<void> }> {
+async function bootWithState(getState: ExplorerOpts["getState"], extra: Partial<ExplorerOpts> = {}): Promise<{ url: string; close: () => Promise<void> }> {
   const dir = mkdtempSync(join(tmpdir(), "explorer-features-"));
   const lockPath = join(dir, "omp-plugins.lock.json");
   writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
-  const server = createExplorerServer(userScopeOpts(lockPath, getState));
+  const server = createExplorerServer(userScopeOpts(lockPath, getState, extra));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -1103,5 +1107,258 @@ test("the per-task price never changes the ranking", () => {
     assert.equal(withProfile[i].q, plain[i].q);
     assert.equal(withProfile[i].priceEff, plain[i].priceEff);
     assert.equal(withProfile[i].rank, plain[i].rank);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The HTTP surface (spec #81): the pool toggle, the per-task price column, and
+// the two price-lever readouts.
+// ---------------------------------------------------------------------------
+
+/** POST a JSON body to the explorer API and read the JSON reply. */
+async function postJson(url: string, path: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await fetch(`${url}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const parsed: unknown = await res.json();
+  if (!isRecord(parsed)) throw new Error(`${path} did not return a JSON object`);
+  return { status: res.status, body: parsed };
+}
+
+async function getJson(url: string, path: string): Promise<Record<string, unknown>> {
+  const parsed: unknown = await (await fetch(`${url}${path}`)).json();
+  if (!isRecord(parsed)) throw new Error(`${path} did not return a JSON object`);
+  return parsed;
+}
+
+/** The rank rows' model ids, in ranking order. */
+function rowIds(body: Record<string, unknown>): string[] {
+  const rows = body.rows;
+  if (!Array.isArray(rows)) throw new Error("no rows in the rank response");
+  return rows.map((r) => {
+    if (!isRecord(r) || typeof r.id !== "string") throw new Error("malformed rank row");
+    return r.id;
+  });
+}
+
+/** The rank row for `id`, or a thrown error naming the response. */
+function rowOf(body: Record<string, unknown>, id: string): Record<string, unknown> {
+  const rows = body.rows;
+  if (!Array.isArray(rows)) throw new Error("no rows in the rank response");
+  const row = rows.find((r) => isRecord(r) && r.id === id);
+  if (!isRecord(row)) throw new Error(`no rank row for ${id}`);
+  return row;
+}
+
+/** The state the pool tests serve: the pin fixtures, the same for every scope. */
+const PIN_STATE = { rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} };
+
+/** `value` as a number, or a thrown error naming the field. */
+function numOf(value: unknown, label: string): number {
+  if (typeof value !== "number") throw new Error(`${label} is not a number`);
+  return value;
+}
+
+test("POST /api/pool switches the ranked pool and the bootstrap payload reports it", async () => {
+  const handle = await bootWithState(
+    () => PIN_STATE,
+    // Only alpha is tier-eligible, so the as-written gate drops beta.
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha"]), tier: "billed", allowed: null }) },
+  );
+  try {
+    const before = await getJson(handle.url, "/api/bootstrap");
+    assert.equal(before.poolMode, "raw");
+    assert.equal(before.modelCount, 2);
+    // On the raw pool beta is a cheaper challenger, so the flip readout exists.
+    const rawFlip = (await postJson(handle.url, "/api/explain", { role: "tiny", def: TINY, modelId: "alpha" })).body.leaderFlip;
+    assert.ok(isRecord(rawFlip));
+    const rawChallenger = rawFlip.challenger;
+    assert.ok(isRecord(rawChallenger));
+    assert.equal(rawChallenger.id, "beta");
+
+    const switched = await postJson(handle.url, "/api/pool", { mode: "as-written" });
+    assert.equal(switched.status, 200);
+    assert.equal(switched.body.poolMode, "as-written");
+    assert.equal(switched.body.modelCount, 1);
+
+    // Rank and explain both rank the gated dataset …
+    assert.deepEqual(rowIds((await postJson(handle.url, "/api/rank", { role: "tiny", def: TINY })).body), ["alpha"]);
+    assert.equal((await postJson(handle.url, "/api/explain", { role: "tiny", def: TINY, modelId: "beta" })).body.eligible, false);
+    // … and the role-level readouts follow the same pool: with beta gone, alpha
+    // has no cheaper challenger, so the flip is absent rather than invented.
+    assert.equal((await postJson(handle.url, "/api/explain", { role: "tiny", def: TINY, modelId: "alpha" })).body.leaderFlip, null);
+
+    // The mode survives a refresh.
+    const refreshed = await postJson(handle.url, "/api/refresh", {});
+    assert.equal(refreshed.body.poolMode, "as-written");
+    assert.equal(refreshed.body.modelCount, 1);
+
+    // A bad body is rejected and does not switch.
+    const bad = await postJson(handle.url, "/api/pool", { mode: "gated" });
+    assert.equal(bad.status, 400);
+    assert.equal((await getJson(handle.url, "/api/bootstrap")).poolMode, "as-written");
+
+    // Back to raw: the full dataset again.
+    const back = await postJson(handle.url, "/api/pool", { mode: "raw" });
+    assert.equal(back.body.modelCount, 2);
+    assert.deepEqual(rowIds((await postJson(handle.url, "/api/rank", { role: "tiny", def: TINY })).body).sort(), ["alpha", "beta"]);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("the as-written pool prunes the routes the account cannot use", async () => {
+  const def = { ...PIN_DEF, preferOwnProvider: true };
+  const handle = await bootWithState(
+    () => PIN_STATE,
+    // The account may only use priceyco, so alpha's cheap route must not lower
+    // the price the explorer shows.
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["priceyco/fp8"]) }) },
+  );
+  const priceEffOf = async (id: string): Promise<unknown> => rowOf((await postJson(handle.url, "/api/rank", { role: "tiny", def })).body, id).priceEff;
+  try {
+    assert.equal(await priceEffOf("alpha"), 1);
+    await postJson(handle.url, "/api/pool", { mode: "as-written" });
+    assert.equal(await priceEffOf("alpha"), 9);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("a null whitelist degrades the as-written pool to the raw dataset", async () => {
+  const def = { ...PIN_DEF, preferOwnProvider: true };
+  const handle = await bootWithState(
+    () => PIN_STATE,
+    // The catalog covers both models (so the tier gate drops nothing) and the
+    // whitelist harvest failed: no route is pruned.
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: null }) },
+  );
+  try {
+    await postJson(handle.url, "/api/pool", { mode: "as-written" });
+    assert.equal((await getJson(handle.url, "/api/bootstrap")).modelCount, 2);
+    const body = (await postJson(handle.url, "/api/rank", { role: "tiny", def })).body;
+    assert.equal(rowOf(body, "alpha").priceEff, 1);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("Export is unaffected by the pool mode", async () => {
+  // `beta`'s only route is outside the account's whitelist, so the as-written
+  // pool holds no route matching the pin below — the raw dataset still does.
+  const models: Model[] = [
+    { ...makeModel("alpha", 80, 5, 100), routes: [endpoint("alpha-cheap", "cheapco/fp8", 1, 100)] },
+    { ...makeModel("beta", 60, 3, 100), routes: [endpoint("beta-excl", "exclusiveco/fp8", 2, 100)] },
+  ];
+  const rank: RankData = { models, fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await bootWithState(
+    () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }),
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["cheapco/fp8"]) }) },
+  );
+  try {
+    await postJson(handle.url, "/api/pool", { mode: "as-written" });
+    const exported = await postJson(handle.url, "/api/export", { roles: { pinned: { ...PIN_DEF, providerPin: "exclusiveco/fp8" } } });
+    assert.equal(exported.body.ok, true);
+    // The pool mode is untouched by the write.
+    assert.equal((await getJson(handle.url, "/api/bootstrap")).poolMode, "as-written");
+  } finally {
+    await handle.close();
+  }
+});
+
+// Two turns for role `tiny`: the median per-turn counts are 2000 in / 500 out.
+const USAGE_ROWS: UsageRow[] = [
+  { ts: "2026-10-18T10:00:00.000Z", role: "tiny", model: "m", provider: "openrouter", input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, cost: 0.001 },
+  { ts: "2026-10-18T11:00:00.000Z", role: "tiny", model: "m", provider: "openrouter", input: 3000, output: 900, cacheRead: 0, cacheWrite: 0, cost: 0.003 },
+];
+const TASK_RANK: RankData = { models: [TASK_MODEL], fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 1, orPriced: 1 };
+
+test("the rank and explain responses carry the per-task price from the recorded usage, then the setting", async () => {
+  const handle = await bootWithState(
+    () => ({ rank: TASK_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }),
+    { getUsageRows: () => USAGE_ROWS, tokenProfile: { inputTokens: 1000, outputTokens: 1000 } },
+  );
+  try {
+    // TASK_MODEL's priced route: $1/M in, $1.75/M billed → $4/M out.
+    // `tiny` has recorded usage, so its median per-turn counts win over the setting.
+    const tiny = await postJson(handle.url, "/api/rank", { role: "tiny", def: TASK_DEF });
+    assert.ok(Math.abs(numOf(rowOf(tiny.body, "m").perTask, "perTask") - (2000 * 1 + 500 * 4) / 1e6) < 1e-12);
+    // A role with no recorded rows falls back to the setting (1000 in / 1000 out).
+    const other = await postJson(handle.url, "/api/rank", { role: "other", def: TASK_DEF });
+    assert.ok(Math.abs(numOf(rowOf(other.body, "m").perTask, "perTask") - (1000 * 1 + 1000 * 4) / 1e6) < 1e-12);
+
+    // The explain panel carries the same total with its breakdown.
+    const perTask = (await postJson(handle.url, "/api/explain", { role: "tiny", def: TASK_DEF, modelId: "m" })).body.perTask;
+    assert.ok(isRecord(perTask));
+    assert.equal(perTask.total, rowOf(tiny.body, "m").perTask);
+    assert.equal(perTask.inputPrice, 1);
+    assert.equal(perTask.outputPrice, 4);
+    assert.equal(perTask.thinkingFactor, 1);
+    // The bootstrap reports the setting the column falls back to.
+    assert.deepEqual((await getJson(handle.url, "/api/bootstrap")).tokenProfile, { inputTokens: 1000, outputTokens: 1000 });
+  } finally {
+    await handle.close();
+  }
+});
+
+test("the per-task price is absent when neither recorded usage nor a setting exists", async () => {
+  const handle = await bootWithState(() => ({ rank: TASK_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  try {
+    const ranked = await postJson(handle.url, "/api/rank", { role: "tiny", def: TASK_DEF });
+    assert.equal(rowOf(ranked.body, "m").perTask, null);
+    assert.equal((await postJson(handle.url, "/api/explain", { role: "tiny", def: TASK_DEF, modelId: "m" })).body.perTask, null);
+    assert.equal((await getJson(handle.url, "/api/bootstrap")).tokenProfile, null);
+  } finally {
+    await handle.close();
+  }
+});
+
+// `alpha` out-values `beta` on quality; `beta` is the cheaper challenger.
+const FLIP_MODELS: Model[] = [makeModel("alpha", 90, 10, 100), makeModel("beta", 70, 1, 100)];
+const FLIP_DEF = { description: "", weights: { general: 0.8, price: 0.2 }, required: ["general", "price"] };
+
+test("the explain response carries the leader-flip and thinking-level readouts", async () => {
+  const rank: RankData = { models: FLIP_MODELS, fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await bootWithState(() => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  try {
+    // λ = 0.2/0.8/20 = 0.0125; q(alpha) = (90+20)/80 = 1.375, q(beta) = 1.125.
+    // The cheaper challenger flips at λ* = (1.375−1.125)/(10−1), i.e. w* = 5/14.
+    const flip = (await postJson(handle.url, "/api/explain", { role: "flip", def: FLIP_DEF, modelId: "alpha" })).body.leaderFlip;
+    assert.ok(isRecord(flip));
+    assert.equal(flip.wPrice, 0.2);
+    assert.ok(Math.abs(numOf(flip.flipW, "flipW") - 5 / 14) < 1e-12);
+    assert.ok(Math.abs(numOf(flip.distance, "distance") - (5 / 14 - 0.2)) < 1e-12);
+    const challenger = flip.challenger;
+    assert.ok(isRecord(challenger));
+    assert.equal(challenger.id, "beta");
+    assert.equal(challenger.priceEff, 1);
+
+    // A bare role has no thinking level: the readout is inert.
+    assert.equal((await postJson(handle.url, "/api/explain", { role: "flip", def: FLIP_DEF, modelId: "alpha" })).body.thinkingLevels, null);
+
+    // A role that runs at a level reports every level's factor and leader, and the
+    // leader agrees with the ranking above it (same pool, same level).
+    const def = { ...FLIP_DEF, thinking: "high" };
+    const levels = (await postJson(handle.url, "/api/explain", { role: "flip", def, modelId: "alpha" })).body.thinkingLevels;
+    assert.ok(Array.isArray(levels));
+    assert.equal(levels.length, Object.keys(SUFFIX_LEVELS).length);
+    const high = levels.find((l) => isRecord(l) && l.level === "high");
+    assert.ok(isRecord(high));
+    assert.equal(high.factor, thinkingPriceFactor("high"));
+    assert.ok(isRecord(high.leader));
+    assert.equal(high.leader.id, rowIds((await postJson(handle.url, "/api/rank", { role: "flip", def })).body)[0]);
+
+    // No cheaper challenger: the readout is absent, never invented.
+    const bestIsCheapest: Model[] = [makeModel("best", 90, 1, 100), makeModel("worse", 50, 10, 100)];
+    const noFlip = await bootWithState(() => ({ rank: { ...rank, models: bestIsCheapest }, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+    try {
+      assert.equal((await postJson(noFlip.url, "/api/explain", { role: "flip", def: FLIP_DEF, modelId: "best" })).body.leaderFlip, null);
+    } finally {
+      await noFlip.close();
+    }
+  } finally {
+    await handle.close();
   }
 });
