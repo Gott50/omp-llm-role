@@ -191,6 +191,54 @@ filter, not a re-pricing: the role-independent `1/price²` blend (`m.price`/
 `m.throughput`) is left as the account-agnostic expected value, and a model with
 no allowed route keeps that blend (the soft basis never drops a model).
 
+## Price levers (the explorer's readouts)
+
+Two readouts make the price posture visible (spec #81). Both are pure
+(`src/explorer/levers.ts`), computed on the pool the explorer is viewing, and
+reuse the engine's own `roleLambda`/`rankRole`/`SUFFIX_LEVELS`/
+`thinkingPriceFactor` — never a re-derivation.
+
+### The leader-flip threshold
+
+The price weight at which a **cheaper** challenger overtakes the value leader.
+Let `L = rankRole(def, models)[0]` (the value leader). For every challenger `X`
+with `pEff_X < pEff_L` (strictly cheaper), the flip λ is
+`(q_L − q_X)/(pEff_L − pEff_X)`; the threshold is the minimum over those
+challengers:
+
+```
+λ* = min over cheaper challengers X of (q_L − q_X)/(pEff_L − pEff_X)
+w* = 20·λ* / (1 + 20·λ*)
+```
+
+`w*` is the inverse of `roleLambda`'s `λ = w/(1−w)/20` (`P_REF_USD = 20`). The
+readout reports the role's current `wPrice`, the flip `w*`, the distance
+`w* − wPrice`, and the challenger that would take over. **No cheaper challenger
+⇒ `null`** — the readout is absent, never invented. The degenerate case (the
+value leader is also the quality leader, where the naive
+`(q_QL − q_VL)/(p_QL − p_VL)` is `0/0`) is handled by this same min formula: it
+is *undefined*, not zero.
+
+**Exactness.** The threshold is exact when the role's price basis is
+weight-independent — the `1/price²` blend, or a hard `providerPin`. Under the
+soft `preferOwnProvider` basis the route choice itself moves with the price
+weight, so the threshold is a **first-order estimate**: measured on `smol`,
+moving `w` from 0.45 to 0.9586 moves the leader's route `coreweave/fp8 →
+decart/fp4`, so the flip is approximate there.
+
+### The thinking level's effect
+
+`thinkingLevelEffect(def, models)` re-ranks the role at each thinking level and
+reports the leader per level, with the level's price factor
+`thinkingPriceFactor(level) = (1 + 3·0.25 + THINKING_TOKEN_OVERHEAD[level]) /
+(1 + 3·0.25)`. It is **inert for a bare role** (no thinking level) — the readout
+is `null`. The factor is a **price-sensitivity amplifier, not a hidden cost**: it
+is multiplicative on `priceEff`, so it penalizes expensive models more in
+absolute λ-units — which is why `auto` favours the cheap model. On the user's
+live `default` def: `off` → Gemini 4 Argon $2.99, `auto` → Gemini 4 Argon $5.55,
+`high` → DeepSeek-V4.1-Flash $0.17. The readout shows this effect; it never
+frames the level as a cost to remove.
+
 ## Capability presets (feature flags)
 
 One named flag per opt-in capability (`features.<id>` global,
