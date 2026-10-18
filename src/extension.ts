@@ -32,7 +32,7 @@ import { applyProviderDisplay, providerPinOf, providerPinOfSelector } from "./pr
 import { applyProfileOverrides, formatProjectRolesReport, parseProjectRolesArgs, PROJECT_ROLES_USAGE, setupProject, type ProjectProfile } from "./project-setup.ts";
 import { DEFAULT_ROLES, findProjectAnchor, KNOWN_METRICS, PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings } from "./settings.ts";
 import { agentDir } from "./state.ts";
-import { runUpdater, type Deps } from "./updater.ts";
+import { resolveProjectDir, runUpdater, type Deps } from "./updater.ts";
 import { appendUsageRow, readUsageRows, type UsageRow } from "./usage-ledger.ts";
 
 /** SPA directory shipped beside this extension (repo `web/`). */
@@ -119,6 +119,11 @@ function applyProviderDisplayFor(ctx: ExtContext, selector?: string): void {
  * usage block omp billed. Rows already in the ledger (same timestamp + model)
  * are skipped, so firing this on several events cannot double-record a turn.
  *
+ * The ledger follows the plugin's state location: a project session records into
+ * `<cwd>/.omp`, so a project's usage stays separate from the user-level profile
+ * (the same dir the updater writes config/state/history to, and the same dir the
+ * role map is read from).
+ *
  * Best-effort: a recording failure never breaks a session (and `appendUsageRow`
  * never throws either).
  */
@@ -126,7 +131,7 @@ function recordUsage(ctx: ExtContext): void {
   try {
     const branch = ctx.sessionManager?.getBranch();
     if (branch === undefined) return;
-    const dir = agentDir();
+    const dir = resolveProjectDir() ?? agentDir();
     const roleByModel = configuredRoles(dir);
     const seen = new Set(readUsageRows(dir).map((row) => `${row.ts}|${row.model}`));
     for (const entry of branch) {
@@ -637,8 +642,8 @@ export default function (pi: ExtensionAPI) {
           allowedProviders: pool.allowed,
           reloadAllowedProviders: async () => (await loadPoolInputs()).allowed,
           tokenProfile: resolveSettings(readPluginSettingsMap({ global: PLUGIN_SETTINGS_PATH, project: projectLockPath(ctx.cwd) })).settings.tokenProfile,
-          // The ledger lives beside the plugin's other state, so the per-task
-          // column reads exactly what this session records.
+          // The user-level ledger (the project scopes read their own
+          // `<root>/.omp` ledger, so the per-task column follows the scope).
           usageDir: agentDir(),
           reload: (refresh) => loadRankData({ refresh, roles: explorerRoles(), extraMetrics: Object.keys(KNOWN_METRICS) }),
           port,

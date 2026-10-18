@@ -9,6 +9,7 @@ import { startExplorer, type ExplorerBootOpts } from "../src/explorer/boot.ts";
 import { resolveScopes, unionRoles } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { PROJECT_REGISTRY_FILE } from "../src/project-registry.ts";
+import { USAGE_LEDGER_FILE } from "../src/usage-ledger.ts";
 import { makeCatalog, makeModel } from "./helpers.ts";
 
 const MODELS = [makeModel("premium", 90, 20, 50), makeModel("budget", 60, 0.5, 200)];
@@ -333,6 +334,67 @@ async function refresh(url: string): Promise<Record<string, unknown>> {
 function route(id: string, providerSlug: string, price: number): OpenRouterEndpointRecord {
   return { id, providerSlug, serviceTier: null, status: 0, free: false, variant: "standard", price, weightPrice: price, cacheReadPrice: price, tput: 100, latency: null, contextLength: 200000, maxCompletionTokens: 100000, supportsTools: true };
 }
+
+/** One ledger row per `{role, input, output}` in `dir`, in the plugin's usage
+ * ledger format (the file the explorer reads per scope). */
+function writeLedger(dir: string, rows: Array<{ role: string; input: number; output: number }>): void {
+  mkdirSync(dir, { recursive: true });
+  const lines = rows.map((r, i) =>
+    JSON.stringify({ ts: `2026-10-18T0${i}:00:00.000Z`, role: r.role, model: "org/alpha", provider: "openrouter", input: r.input, output: r.output, cacheRead: 0, cacheWrite: 0, cost: 0 }),
+  );
+  writeFileSync(join(dir, USAGE_LEDGER_FILE), `${lines.join("\n")}\n`);
+}
+
+test("a project scope's per-task price reads the project's ledger, not the user-level one", async () => {
+  const root = tempDir("explorer-ledger-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLock(userLock, { userrole: USER_ROLE });
+  const project = join(root, "proj");
+  writeProjectLock(project, { projrole: PROJECT_ROLE });
+  const registryDir = join(root, "agent");
+  writeRegistry(registryDir, [project]);
+
+  // The two ledgers hold the same role names with different counts, so either
+  // scope reading the wrong file shows up as the wrong per-task price.
+  writeLedger(join(project, ".omp"), [
+    { role: "projrole", input: 1000, output: 500 },
+    { role: "userrole", input: 2000, output: 2000 },
+  ]);
+  writeLedger(registryDir, [
+    { role: "projrole", input: 4000, output: 1000 },
+    { role: "userrole", input: 6000, output: 6000 },
+  ]);
+
+  // One route billed at $1/M in and out, so per-task = (input + output)/1e6.
+  const models: Model[] = [{ ...makeModel("alpha", 80, 1, 100), routes: [route("alpha-r", "cheapco/fp8", 1)] }];
+  const rank: RankData = { models, fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 1, orPriced: 1 };
+  // `usageDir` is the user-level default (a temp dir); a project scope must win.
+  const handle = await boot({ userLock, cwd: project, registryDir }, { rank, catalog: makeCatalog(["alpha"]), usageDir: registryDir });
+  const def = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"], preferOwnProvider: true };
+  const perTaskOf = async (role: string): Promise<unknown> => {
+    const res = await fetch(`${handle.url}/api/rank`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role, def }),
+    });
+    const body: unknown = await res.json();
+    if (!isRecord(body) || !Array.isArray(body.rows) || !isRecord(body.rows[0])) throw new Error("malformed rank response");
+    return body.rows[0].perTask;
+  };
+  try {
+    // cwd = the project, so the session scope is the project: its ledger wins.
+    assert.equal((await bootstrap(handle.url)).activeScope, `project:${project}`);
+    assert.equal(await perTaskOf("projrole"), (1000 + 500) / 1e6);
+    assert.equal(await perTaskOf("userrole"), (2000 + 2000) / 1e6);
+
+    // The user-level scope reads the user-level ledger for the same role names.
+    await switchScope(handle.url, "user");
+    assert.equal(await perTaskOf("projrole"), (4000 + 1000) / 1e6);
+    assert.equal(await perTaskOf("userrole"), (6000 + 6000) / 1e6);
+  } finally {
+    await handle.close();
+  }
+});
 
 test("the pool toggle survives a scope switch and a refresh", async () => {
   const root = tempDir("explorer-pool-");

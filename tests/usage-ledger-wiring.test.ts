@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import extension from "../src/extension.ts";
 import { USAGE_LEDGER_FILE, type UsageRow } from "../src/usage-ledger.ts";
-import { runInTempDir, setupAgentDir } from "./helpers.ts";
+import { setupAgentDir } from "./helpers.ts";
 
 // Extension wiring for the per-role usage ledger (spec #81): the extension
 // records one row per assistant turn in the session branch, on turn_end, with
@@ -45,6 +45,56 @@ async function fireAll(handlers: Record<string, Handler[]>, event: string, ctx: 
   const list = handlers[event];
   assert.ok(list && list.length > 0, `no handler registered for ${event}`);
   for (const handler of list) await handler({ type: event }, ctx);
+}
+
+/** Run `fn` with cwd and the global agent dir pointed at `dir`, restoring both
+ * afterwards. The temp dir carries no `.omp`, so the session has no project
+ * entry and the plugin's state dir is the global agent dir. */
+async function runInAgentDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  const prevCwd = process.cwd();
+  const prevAgent = process.env.OMP_LLM_ROLE_AGENT_DIR;
+  process.chdir(dir);
+  process.env.OMP_LLM_ROLE_AGENT_DIR = dir;
+  try {
+    return await fn();
+  } finally {
+    process.chdir(prevCwd);
+    if (prevAgent === undefined) delete process.env.OMP_LLM_ROLE_AGENT_DIR;
+    else process.env.OMP_LLM_ROLE_AGENT_DIR = prevAgent;
+  }
+}
+
+/** A temp project root whose `.omp` carries an `omp-llm-role` settings entry,
+ * plus a sibling global agent dir (the fixture `tests/project-updater.test.ts`
+ * uses). */
+function projectWorkspace(): { root: string; projectDir: string; globalDir: string } {
+  const root = mkdtempSync(join(tmpdir(), "usage-ledger-project-"));
+  const projectDir = join(root, ".omp");
+  mkdirSync(join(projectDir, "plugins"), { recursive: true });
+  writeFileSync(
+    join(projectDir, "plugins", "omp-plugins.lock.json"),
+    JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { "roles.default.thinking": "high" } } }, null, 2),
+  );
+  const globalDir = join(root, "global-agent-dir");
+  mkdirSync(globalDir, { recursive: true });
+  return { root, projectDir, globalDir };
+}
+
+/** Run `fn` with cwd = the project root and the global agent dir pointed at a
+ * sibling temp dir, so the updater's own `resolveProjectDir` picks the project
+ * (mirrors `tests/project-updater.test.ts`'s `runInProject`). */
+async function runInProject<T>(root: string, globalDir: string, fn: () => Promise<T>): Promise<T> {
+  const prevCwd = process.cwd();
+  const prevAgent = process.env.OMP_LLM_ROLE_AGENT_DIR;
+  process.chdir(root);
+  process.env.OMP_LLM_ROLE_AGENT_DIR = globalDir;
+  try {
+    return await fn();
+  } finally {
+    process.chdir(prevCwd);
+    if (prevAgent === undefined) delete process.env.OMP_LLM_ROLE_AGENT_DIR;
+    else process.env.OMP_LLM_ROLE_AGENT_DIR = prevAgent;
+  }
 }
 
 /** The ledger's rows, read straight from the temp agent dir. */
@@ -103,7 +153,7 @@ const BRANCH: readonly unknown[] = [
 
 test("an assistant turn appends one ledger row with the turn's role, model and usage", async () => {
   const dir = setupAgentDir(CONFIG);
-  await runInTempDir(dir, async () => {
+  await runInAgentDir(dir, async () => {
     const { handlers, pi } = mockPi();
     extension(pi as never);
     await fireAll(handlers, "turn_end", mockCtx(BRANCH));
@@ -138,7 +188,7 @@ test("an assistant turn appends one ledger row with the turn's role, model and u
 
 test("the backstop hooks do not double-record a turn", async () => {
   const dir = setupAgentDir(CONFIG);
-  await runInTempDir(dir, async () => {
+  await runInAgentDir(dir, async () => {
     const { handlers, pi } = mockPi();
     extension(pi as never);
     const ctx = mockCtx(BRANCH);
@@ -152,7 +202,7 @@ test("the backstop hooks do not double-record a turn", async () => {
 
 test("an unreadable config records the turn with no role", async () => {
   const dir = setupAgentDir(null);
-  await runInTempDir(dir, async () => {
+  await runInAgentDir(dir, async () => {
     const { handlers, pi } = mockPi();
     extension(pi as never);
     await fireAll(handlers, "turn_end", mockCtx(BRANCH));
@@ -166,7 +216,7 @@ test("an unreadable config records the turn with no role", async () => {
 
 test("a recording failure never escapes the hook", async () => {
   const dir = setupAgentDir(CONFIG);
-  await runInTempDir(dir, async () => {
+  await runInAgentDir(dir, async () => {
     const { handlers, pi } = mockPi();
     extension(pi as never);
     // A branch read that throws, and a ledger path that is a directory (so the
@@ -184,7 +234,7 @@ test("a recording failure never escapes the hook", async () => {
 
 test("a session with no branch records nothing", async () => {
   const dir = setupAgentDir(CONFIG);
-  await runInTempDir(dir, async () => {
+  await runInAgentDir(dir, async () => {
     const { handlers, pi } = mockPi();
     extension(pi as never);
     await fireAll(handlers, "turn_end", { hasUI: false, cwd: process.cwd(), ui: { notify: () => {} }, setTimeout: () => 0 });
@@ -195,11 +245,34 @@ test("a session with no branch records nothing", async () => {
 
 test("the ledger lives in the agent dir beside the plugin's other state", async () => {
   const dir = mkdtempSync(join(tmpdir(), "llm-role-ledger-"));
-  await runInTempDir(dir, async () => {
+  await runInAgentDir(dir, async () => {
     const { handlers, pi } = mockPi();
     extension(pi as never);
     await fireAll(handlers, "turn_end", mockCtx(BRANCH));
   });
 
   assert.equal(ledgerRows(dir).length, 2);
+});
+
+test("a project session records into the project's ledger, not the global one", async () => {
+  const ws = projectWorkspace();
+  // The two configs name the turn's model differently, so the recorded role
+  // proves which config (and therefore which state dir) the session used.
+  writeFileSync(join(ws.projectDir, "config.yml"), CONFIG);
+  writeFileSync(join(ws.globalDir, "config.yml"), "modelRoles:\n  globalrole: openrouter/deepseek/deepseek-v4.1-flash\n");
+
+  await runInProject(ws.root, ws.globalDir, async () => {
+    const { handlers, pi } = mockPi();
+    extension(pi as never);
+    await fireAll(handlers, "turn_end", mockCtx(BRANCH));
+  });
+
+  const rows = ledgerRows(ws.projectDir);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].role, "default");
+  assert.equal(rows[0].model, "deepseek/deepseek-v4.1-flash");
+  assert.equal(rows[0].cost, 0.0033);
+  // The global ledger stays absent: a project's usage is separate from the
+  // user-level profile (the fixture the updater's own state scoping pins).
+  assert.equal(existsSync(join(ws.globalDir, USAGE_LEDGER_FILE)), false);
 });

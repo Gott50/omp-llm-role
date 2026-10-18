@@ -78,12 +78,14 @@ export type ExplorerOpts = {
    */
   getPoolInputs(): PoolInputs;
   /**
-   * The recorded usage rows the per-task price resolves its token profile from.
-   * Optional: a host without a ledger supplies none, and the profile falls back
-   * to `tokenProfile` (or stays absent). Re-read per call, so a turn recorded
-   * while the explorer is open shows up without a restart.
+   * The recorded usage rows the per-task price resolves its token profile from,
+   * for the request's active scope — a project scope reads its own
+   * `<root>/.omp` ledger, so a project's usage never leaks into the user-level
+   * view. Optional: a host without a ledger supplies none, and the profile falls
+   * back to `tokenProfile` (or stays absent). Re-read per call, so a turn
+   * recorded while the explorer is open shows up without a restart.
    */
-  getUsageRows?(): readonly UsageRow[];
+  getUsageRows?(scope: Scope): readonly UsageRow[];
   /**
    * The user-set token profile — the fallback when a role has no recorded usage
    * (the `tokenProfile` setting). `null` (the default) = unset.
@@ -271,7 +273,8 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   }
   const role = body.role;
   const authored = body.def as unknown as RoleDef;
-  const state = opts.getState(activeScope(opts, session));
+  const scope = activeScope(opts, session);
+  const state = opts.getState(scope);
   const rank = poolRank(opts, session, state.rank);
   // The posted def is AUTHORED (flags + explicit keys); expand it with the
   // scope's global flags so the preview matches the resolved baseline
@@ -282,7 +285,7 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   // selecting it still shows deltas, not an empty baseline.
   const baselineDef = state.roles[role] ?? state.universe[role]?.def ?? state.defaults[role];
   const baseline = baselineDef ? rankRole(baselineDef, rank.models) : [];
-  const rows = rankRows(def, rank.models, baseline, state.availability, resolveTokenProfile(role, opts.getUsageRows?.() ?? [], opts.tokenProfile ?? null));
+  const rows = rankRows(def, rank.models, baseline, state.availability, resolveTokenProfile(role, opts.getUsageRows?.(scope) ?? [], opts.tokenProfile ?? null));
   sendJson(res, 200, {
     eligible: rows.length,
     lambda: roleLambda(def),
@@ -300,12 +303,13 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
     throw new HttpError(400, "expected { role: string, def: object, modelId: string }");
   }
   const authored = body.def as unknown as RoleDef;
-  const state = opts.getState(activeScope(opts, session));
+  const scope = activeScope(opts, session);
+  const state = opts.getState(scope);
   const rank = poolRank(opts, session, state.rank);
   // Same expansion as handleRank: the posted def is authored, the baseline is
   // resolved, so the preview must apply the scope's global flags first.
   const def = expandFeatures(authored, state.features ?? {});
-  const explanation = explainModel(def, rank.models, body.modelId, body.role, state.availability, resolveTokenProfile(body.role, opts.getUsageRows?.() ?? [], opts.tokenProfile ?? null));
+  const explanation = explainModel(def, rank.models, body.modelId, body.role, state.availability, resolveTokenProfile(body.role, opts.getUsageRows?.(scope) ?? [], opts.tokenProfile ?? null));
   // The two price-lever readouts are role-level, so they ride beside the
   // per-model decomposition — computed on the active pool, so the readout and
   // the ranking above it agree.

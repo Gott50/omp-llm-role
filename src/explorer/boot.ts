@@ -13,6 +13,7 @@
 
 import { execFile } from "node:child_process";
 import type { Server } from "node:http";
+import { join } from "node:path";
 import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
 import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH } from "../settings.ts";
@@ -66,8 +67,9 @@ export type ExplorerBootOpts = {
   /** The user-set token profile the per-task price falls back to (the
    *  `tokenProfile` setting); absent = unset. */
   tokenProfile?: TokenProfile | null;
-  /** Dir holding the usage ledger the per-task price resolves its profile from
-   *  (default: `agentDir()`, beside the plugin's other state). */
+  /** Dir holding the user-level usage ledger the per-task price resolves its
+   *  profile from (default: `agentDir()`, beside the plugin's other state). A
+   *  project scope reads its own `<root>/.omp` ledger instead. */
   usageDir?: string;
   port?: number;
   /** Open the URL in the default browser (macOS only). */
@@ -153,7 +155,10 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
       }
     },
     getPoolInputs: (): PoolInputs => ({ catalog: opts.catalog, tier, allowed }),
-    getUsageRows: () => readUsageRows(usageDir),
+    // The ledger follows the plugin's state location: a project scope keeps its
+    // usage in its own `<root>/.omp`, so its per-task column never mixes with
+    // the user-level profile.
+    getUsageRows: (scope) => readUsageRows(scope.kind === "project" && scope.root !== undefined ? join(scope.root, ".omp") : usageDir),
     tokenProfile: opts.tokenProfile ?? null,
   });
   // Optional detach (extension only): never hold the host process open on the
