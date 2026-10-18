@@ -374,6 +374,8 @@ test("startExplorer serves lock-file roles and releases its port on close", asyn
     webDir: join(process.cwd(), "web"),
     lockPath,
     registryDir: dir,
+    // Hermetic: a booted explorer must never read the developer's real ledger.
+    usageDir: dir,
     rank,
     catalog: [],
     availability: NO_AVAILABILITY,
@@ -454,6 +456,8 @@ test("a bootstrap after Export reflects the new lock state", async () => {
     webDir: join(process.cwd(), "web"),
     lockPath,
     registryDir: dir,
+    // Hermetic: a booted explorer must never read the developer's real ledger.
+    usageDir: dir,
     rank,
     catalog: [],
     availability: NO_AVAILABILITY,
@@ -507,6 +511,8 @@ test("startExplorer falls back to an ephemeral port when the preferred one is bu
     webDir: join(process.cwd(), "web"),
     lockPath,
     registryDir: dir,
+    // Hermetic: a booted explorer must never read the developer's real ledger.
+    usageDir: dir,
     rank,
     catalog: [],
     availability: NO_AVAILABILITY,

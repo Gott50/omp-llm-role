@@ -63,6 +63,9 @@ async function boot(
     rank: RANK,
     catalog: [],
     availability: NO_AVAILABILITY,
+    // Hermetic: the ledger dir defaults to `agentDir()`, so a booted explorer
+    // would otherwise read the developer's real ledger.
+    usageDir: opts.registryDir,
     reload: async () => RANK,
     port: 0,
     open: false,

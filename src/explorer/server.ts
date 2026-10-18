@@ -227,9 +227,9 @@ function bootstrapPayload(opts: ExplorerOpts, session: ExplorerSession, scope: S
     modelCount: rank.models.length,
     orMatched: rank.orMatched,
     orPriced: rank.orPriced,
-    /** the ranked pool the counts above describe; the SPA's header toggle reads it */
+    // The ranked pool the counts above describe; the SPA's header toggle reads it.
     poolMode: session.poolMode,
-    /** the user-set token profile the per-task column falls back to (null = unset) */
+    // The user-set token profile the per-task column falls back to (null = unset).
     tokenProfile: opts.tokenProfile ?? null,
     availability: {
       active: state.availability.active,
