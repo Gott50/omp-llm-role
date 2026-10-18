@@ -20,7 +20,8 @@ import { generateAgentSpec, generateProjectProfile } from "./agent-architect.ts"
 import { authorBenchmarkSource } from "./benchmark-author.ts";
 import { applyBenchmarkScores, BENCHMARK_ENTRY_CAP, cachedSourceInfo, declarationToSource, declaredSourceForLink, dryRunDeclaration, fetchJson, loadBenchmarkCatalog, loadBenchmarkScores, loadDeclaredSources, resolveBenchmarkSource, saveDeclaredSource, sourceForMetric, validateDeclaration, type BenchmarkCatalogEntry, type BenchmarkPayloadMeta, type BenchmarkSource, type SourceDeclaration } from "./benchmark-sources.ts";
 import { judgeBenchmarkRelevance } from "./benchmark-discovery.ts";
-import { catalogFromOmpModelsJson, fetchKeyAvailability, splitThinkingSuffix, type KeyAvailability } from "./availability.ts";
+import { catalogFromOmpModelsJson, currentRankingId, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, splitThinkingSuffix, tierGate, type KeyAvailability, type Tier } from "./availability.ts";
+import { parseConfig } from "./config-edit.ts";
 import { loadRankData, rankRole, type Model } from "./engine.ts";
 import { defaultErrorReportDeps, reportUnexpectedError, type ErrorReportInput } from "./error-report.ts";
 import { formatFeatures } from "./features.ts";
@@ -30,7 +31,9 @@ import { isRecord } from "./guards.ts";
 import { applyProviderDisplay, providerPinOf, providerPinOfSelector } from "./provider-display.ts";
 import { applyProfileOverrides, formatProjectRolesReport, parseProjectRolesArgs, PROJECT_ROLES_USAGE, setupProject, type ProjectProfile } from "./project-setup.ts";
 import { DEFAULT_ROLES, findProjectAnchor, KNOWN_METRICS, PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings } from "./settings.ts";
+import { agentDir } from "./state.ts";
 import { runUpdater, type Deps } from "./updater.ts";
+import { appendUsageRow, readUsageRows, type UsageRow } from "./usage-ledger.ts";
 
 /** SPA directory shipped beside this extension (repo `web/`). */
 const WEB_DIR = fileURLToPath(new URL("../web", import.meta.url));
@@ -107,6 +110,88 @@ function applyProviderDisplayFor(ctx: ExtContext, selector?: string): void {
   } catch {
     // display-only; never let a failure escape into omp's dispatch
   }
+}
+
+/**
+ * Append one usage-ledger row per assistant turn in the session's branch
+ * (spec #81). The branch is the session's own record — the same entries the
+ * session jsonl persists — so each row carries the model, the provider, and the
+ * usage block omp billed. Rows already in the ledger (same timestamp + model)
+ * are skipped, so firing this on several events cannot double-record a turn.
+ *
+ * Best-effort: a recording failure never breaks a session (and `appendUsageRow`
+ * never throws either).
+ */
+function recordUsage(ctx: ExtContext): void {
+  try {
+    const branch = ctx.sessionManager?.getBranch();
+    if (branch === undefined) return;
+    const dir = agentDir();
+    const roleByModel = configuredRoles(dir);
+    const seen = new Set(readUsageRows(dir).map((row) => `${row.ts}|${row.model}`));
+    for (const entry of branch) {
+      const row = usageRowOf(entry, roleByModel);
+      if (row === null) continue;
+      const key = `${row.ts}|${row.model}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      appendUsageRow(dir, row);
+    }
+  } catch {
+    // best-effort: the ledger never owns a session's fate
+  }
+}
+
+/**
+ * The config's role→selector map inverted to model slug → role: a turn's
+ * `message.model` names the selector's ranking id, and `currentRankingId`
+ * strips the provider prefix, the `@pin`, and the `:level` from the configured
+ * selector, so the two join. The first role wins when two share a model; an
+ * unreadable config maps nothing, so every row's role is "".
+ */
+function configuredRoles(dir: string): Map<string, string> {
+  const byModel = new Map<string, string>();
+  let text: string;
+  try {
+    text = readFileSync(join(dir, "config.yml"), "utf8");
+  } catch {
+    return byModel;
+  }
+  for (const [role, selector] of Object.entries(parseConfig(text).modelRoles)) {
+    const id = currentRankingId(selector);
+    if (id !== "" && !byModel.has(id)) byModel.set(id, role);
+  }
+  return byModel;
+}
+
+/**
+ * The ledger row for one session branch entry: an assistant message carrying a
+ * usage block. Null for every other entry (user turns, tool results, custom
+ * entries) and for a message with no usage to record.
+ */
+function usageRowOf(entry: unknown, roleByModel: ReadonlyMap<string, string>): UsageRow | null {
+  if (!isRecord(entry) || entry.type !== "message") return null;
+  const message = entry.message;
+  if (!isRecord(message) || message.role !== "assistant" || typeof message.model !== "string") return null;
+  const usage = message.usage;
+  if (!isRecord(usage)) return null;
+  const cost = isRecord(usage.cost) ? usage.cost.total : 0;
+  return {
+    ts: typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
+    role: roleByModel.get(currentRankingId(message.model)) ?? "",
+    model: message.model,
+    provider: typeof message.provider === "string" ? message.provider : "",
+    input: usageNumber(usage.input),
+    output: usageNumber(usage.output),
+    cacheRead: usageNumber(usage.cacheRead),
+    cacheWrite: usageNumber(usage.cacheWrite),
+    cost: usageNumber(cost),
+  };
+}
+
+/** A usage field as a finite number; an absent field records 0. */
+function usageNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 /**
@@ -461,6 +546,14 @@ export default function (pi: ExtensionAPI) {
     applyProviderDisplayFor(ctx);
   });
 
+  // Usage ledger (spec #81): one row per assistant turn, read from the session
+  // branch. turn_end records the turn that just finished; session_shutdown is
+  // the backstop for a headless one-turn run (a short-lived `omp -p` may exit
+  // before another turn_end). The file-side dedupe makes the second hook
+  // harmless.
+  pi.on("turn_end", async (_event, ctx: ExtContext) => recordUsage(ctx));
+  pi.on("session_shutdown", async (_event, ctx: ExtContext) => recordUsage(ctx));
+
   pi.registerCommand("refresh-roles", {
     description: "Refresh model roles from today's llm-stats/OpenRouter rankings",
     handler: async (_args, ctx: ExtContext) => {
@@ -508,6 +601,31 @@ export default function (pi: ExtensionAPI) {
             ? fetchKeyAvailability(token)
             : { active: false, reason: "unavailable", allowed: new Set(), blocked: new Set(), publicCount: 0, keyedCount: 0, fetchedAt: new Date().toISOString() };
         };
+        // Best-effort account-scoped inputs for the as-written pool: the key's
+        // tier gates the catalog, and the allowed-providers whitelist prunes the
+        // routes the account cannot call. The canary must be a CATALOG slug
+        // (`eligible[0].id`) — a ranking id 400s before the whitelist body, so
+        // the harvest would silently return nothing. Any failure (no key, an
+        // unreachable endpoint, no whitelist) degrades the pool to the raw
+        // dataset instead of blocking Explorer boot.
+        const loadPoolInputs = async (): Promise<{ tier: Tier; allowed: ReadonlySet<string> | null }> => {
+          const token = await ctx.modelRegistry.getApiKeyForProvider("openrouter").catch(() => undefined);
+          if (!token) return { tier: "billed", allowed: null };
+          let tier: Tier = "billed";
+          try {
+            tier = tierGate(await fetchKeyMeta(token));
+          } catch {
+            // an unreachable key endpoint leaves the ordinary account's tier
+          }
+          const canary = filterCatalog(catalog, tier)[0]?.id;
+          if (canary === undefined) return { tier, allowed: null };
+          try {
+            return { tier, allowed: await fetchAllowedProviders(token, canary) };
+          } catch {
+            return { tier, allowed: null };
+          }
+        };
+        const pool = await loadPoolInputs();
         explorer = await startExplorer({
           webDir: WEB_DIR,
           cwd: ctx.cwd,
@@ -515,6 +633,13 @@ export default function (pi: ExtensionAPI) {
           catalog,
           availability: await loadAvailability(),
           reloadAvailability: loadAvailability,
+          tier: pool.tier,
+          allowedProviders: pool.allowed,
+          reloadAllowedProviders: async () => (await loadPoolInputs()).allowed,
+          tokenProfile: resolveSettings(readPluginSettingsMap({ global: PLUGIN_SETTINGS_PATH, project: projectLockPath(ctx.cwd) })).settings.tokenProfile,
+          // The ledger lives beside the plugin's other state, so the per-task
+          // column reads exactly what this session records.
+          usageDir: agentDir(),
           reload: (refresh) => loadRankData({ refresh, roles: explorerRoles(), extraMetrics: Object.keys(KNOWN_METRICS) }),
           port,
           open,
