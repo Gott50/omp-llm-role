@@ -18,6 +18,7 @@ test("schema covers every global knob and every shipped role field", () => {
     "priceSwitchFraction",
     "writeFallbackChains",
     "fallbackChainDepth",
+    "fallbackQualityFloor",
     "activateDefaultOnEmptySession",
     "errorReporting",
     "tokenProfile.inputTokens",
@@ -85,6 +86,37 @@ test("resolveSettings rejects bad preferredMinThroughput values", () => {
       errors.some((e) => e.includes("filters.preferredMinThroughput must be a number ≥ 0")),
       `expected rejection for ${String(bad)}`,
     );
+  }
+});
+
+test("schema exposes the fallback quality floor row", () => {
+  const row = deriveSettingsSchema().fallbackQualityFloor;
+  assert.ok(row, "missing fallbackQualityFloor");
+  assert.equal(row.type, "number");
+  assert.equal(row.min, 0);
+  assert.equal(row.max, 1);
+  assert.equal(row.step, 0.001);
+  assert.equal(row.default, DEFAULT_SETTINGS.fallbackQualityFloor);
+});
+
+test("resolveSettings accepts the fallback quality floor bounds", () => {
+  for (const value of [0, 1]) {
+    const { settings, errors } = resolveSettings({ fallbackQualityFloor: value });
+    assert.deepEqual(errors, []);
+    assert.equal(settings.fallbackQualityFloor, value);
+  }
+});
+
+test("resolveSettings rejects bad fallbackQualityFloor values", () => {
+  const cases: Array<[unknown, string]> = [
+    [-0.1, "fallbackQualityFloor: must be a number in [0, 1], got -0.1"],
+    [1.1, "fallbackQualityFloor: must be a number in [0, 1], got 1.1"],
+    [Number.NaN, "fallbackQualityFloor: must be a number in [0, 1], got null"],
+    ["0.9", 'fallbackQualityFloor: must be a number in [0, 1], got "0.9"'],
+  ];
+  for (const [bad, expected] of cases) {
+    const { errors } = resolveSettings({ fallbackQualityFloor: bad });
+    assert.deepEqual(errors, [expected]);
   }
 });
 

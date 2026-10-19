@@ -126,6 +126,7 @@ Global knobs:
 | `priceSwitchFraction` | `0.5` | Inside the margin, adopt a challenger at least this fraction cheaper (0.5 = half the $/M); `0` disables |
 | `writeFallbackChains` | `true` | Write per-role fallback chains into `config.yml` |
 | `fallbackChainDepth` | `2` | Fallback models per role chain |
+| `fallbackQualityFloor` | `0.9` | A cheaper-or-equal fallback must retain at least this fraction of the chosen model's quality; `0` disables |
 | `activateDefaultOnEmptySession` | `true` | Reapply the new `default` selector to an empty session's active model |
 | `tokenProfile` | unset | `{ inputTokens, outputTokens }` per task for the explorer's `$/task` column, used when a role has no recorded usage. Display-only; the recorded usage takes precedence. Unset = the column reads `—` |
 | `errorReporting` | `off` | Opt-in reporting of **unexpected** plugin errors as GitHub issues on `Gott50/omp-llm-role`; one of `off`, `ask`, `auto` (see below) |
