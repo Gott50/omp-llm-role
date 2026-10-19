@@ -122,6 +122,36 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   push publishes to npm over OIDC and creates the GitHub Release. The guard was
   verified with a negative control — tag `v0.0.1` against version `1.1.0` failed
   in `notes` before any publish.
+- **1.4.0 published by CD 2026-10-19** (run 39310823843, tag push): the guard
+  and the npm floor passed, `npm publish` completed over OIDC trusted publishing
+  with a provenance attestation (transparency log
+  `https://search.sigstore.dev/?logIndex=3325500853`), and the GitHub Release
+  was created with the 1.4.0 CHANGELOG section as its body
+  (`https://github.com/Gott50/omp-llm-role/releases/tag/v1.4.0`). Verified:
+  `dist-tags.latest` = `1.4.0`, npm's `gitHead` = `2f141c6` (the tag's commit),
+  and the publish step's log carries the direct-publish signature (`Publishing
+  to https://registry.npmjs.org/ with tag latest and default access`, `Signed
+  provenance statement`, `+ omp-llm-role@1.4.0`, 60 files / 354.7 kB). The cut
+  (`2f141c6`, tagged `v1.4.0`) bumped the four lockstep fields, renamed
+  `## [Unreleased]` to `## [1.4.0] - 2026-10-19`, and regenerated the report
+  (408 models, matched 149/408, priced 148 — byte-identical to the 1.3.0
+  report, as expected: the chain is a write-side shape, not a ranking input).
+  The release carries two specs, merged to `main` in the same push: spec #90
+  (the routability-verified auto-pin) and spec #95 (the fallback chain's
+  cheaper-or-equal guarantee with a quality floor).
+- **1.4.0 install routes smoke-tested** (2026-10-19, omp 18.12.2, throwaway
+  `HOME`s, cwd outside the real home tree): npm
+  (`omp plugin install omp-llm-role`), git
+  (`omp plugin install github:Gott50/omp-llm-role`) and marketplace
+  (`omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins`) each installed 1.4.0
+  (`omp plugin doctor`: 4 ok / 0 warnings / 0 errors for npm and git; the
+  marketplace install's one warning is the expected
+  `package_manifest: Not created yet`). The post-install session run was **not**
+  exercised: the account's OpenRouter key hit its $100 daily cap
+  (`403 Key limit exceeded`, resets 2026-10-20T00:00:00Z), so the
+  `modelRoles` + `retry.fallbackChains` write and the history row are unverified
+  for 1.4.0 — re-run the session smoke after the cap resets.
 - **1.3.0 published by CD 2026-10-19** (run 39222193609, tag push): the guard
   and the npm floor passed, `npm publish` completed over OIDC trusted publishing
   with a provenance attestation (`npm audit signatures`: 1 package has a
@@ -233,7 +263,7 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 - **Stray registry placeholder.** The registry also carries a `0.0.0-stage`
   version ("Temporary package placeholder for staged publishing", 334 B,
   published 2026-10-03). It is not from this tree and does not affect installs
-  (`latest` is `1.3.0`).
-- **Next release: none owed.** `## [Unreleased]` is empty — the 1.3.0 cut moved
-  its entries under `## [1.3.0] - 2026-10-19`; the number comes from the
+  (`latest` is `1.4.0`).
+- **Next release: none owed.** `## [Unreleased]` is empty — the 1.4.0 cut moved
+  its entries under `## [1.4.0] - 2026-10-19`; the number comes from the
   Unreleased scope, not from the open issues.
