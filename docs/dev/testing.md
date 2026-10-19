@@ -228,8 +228,10 @@ passing.
     position) then of each fallback model, in score order (the `vfm` route
     score desc, spec #71), deduped by
     provider slug; a degraded / over-`maxPriceUsdPerM` / endpoint-filter-failing /
-    whitelist-blocked route is excluded; the manual pin wins and the no-pin path
-    is bare; a re-run is idempotent and a pin change prunes the old key.
+    whitelist-blocked route is excluded; the manual pin wins (its chain is the
+    fallback models only, every value carrying the manual slug) and the no-pin
+    path is bare (fallback models only); a re-run is idempotent and a pin change
+    prunes the old key.
 32. **Provider display** (`provider-display.test.ts`,
     `provider-display-wiring.test.ts`) — `providerPinOf` reads the single
     `openRouterRouting.only[0]` (else `vercelGatewayRouting`), preferring

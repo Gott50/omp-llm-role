@@ -171,10 +171,10 @@ verdict vocabulary is `probeModel`'s:
 
 - `blocked` — the narrow no-allowed-providers 404 — skips the route and the walk
   continues to the next candidate;
-- `ok` and **`unknown` are both usable**. A non-404, a 404 with any other body, a
-  transport throw (a 429, a timeout, a 5xx) is `unknown`: a transient blip must
-  never silently unpin a role, and a rate limit is omp's runtime-fallback
-  domain, not this plugin's.
+- `ok` and **`unknown` are both usable**. A non-404 status (a 429, a 5xx), a 404
+  whose body does not carry the pattern, and a transport throw (a timeout, a
+  connection reset) are all `unknown`: a transient blip must never silently unpin
+  a role, and a rate limit is omp's runtime-fallback domain, not this plugin's.
 
 Verdicts are cached per run by `catalogId@slug`, so a route shared by several
 roles is probed once, and the walk is capped per role at **`ROUTE_PROBE_BUDGET =
@@ -212,13 +212,14 @@ itself chooses; clearing the manual pin resumes the automatic choice.
 
 The exclusion is **by pinned slug, not by position**: the probe can pin a route
 other than the score leader (so the leader rides as a fallback entry while the
-pinned route does not), and with a dropped pin (or the capability off, or a
-manual pin) **no** route is excluded — the primary contributes every gate-passing
-route. Length = `(R_primary − 1) + Σ R_fallback` (`R_primary + Σ R_fallback` with
-no pinned slug), where `R` is the number of distinct gate-passing provider slugs
-for that model — data-driven, not a fixed cap. Entries dedup by chain value, so
-two routes sharing a provider slug collapse to one. Every entry carries the same
-`@<slug>` suffix (and the role's thinking level where the target advertises it).
+pinned route does not), and with a **dropped pin** (the auto-pin applied, but no
+candidate was routable) **no** route is excluded — the primary contributes every
+gate-passing route. Length = `(R_primary − 1) + Σ R_fallback`, or `R_primary + Σ
+R_fallback` with a dropped pin, where `R` is the number of distinct gate-passing
+provider slugs for that model — data-driven, not a fixed cap. Entries dedup by
+chain value, so two routes sharing a provider slug collapse to one. Every entry
+carries the same `@<slug>` suffix (and the role's thinking level where the target
+advertises it).
 **Chain entries are not probed** — only the primary pin is: the chain carries
 many routes and one unroutable entry is survivable (omp fails over), so probing
 it would multiply the request cost for no benefit (out of scope, spec #90). A
@@ -233,6 +234,14 @@ whitelist is not a `rankedRoutes` filter: the updater prunes each model's route
 pool to allowed providers before ranking, which is what makes `rankedRoutes`
 whitelist-aware. The probe walk target is unchanged (`1 + fallbackChainDepth` —
 it counts models, not routes).
+
+**Outside the auto-pin.** The chosen model contributes nothing when the auto-pin
+does not apply: with a manual `providerPin` (`autoPinApplies` is false, so the
+route probe does not run either) or with the capability off, the chain carries
+**one entry per `fallbackChainDepth` fallback model** —
+`openrouter/<fallbackId>@<manualSlug>` with a manual pin, the bare
+`openrouter/<fallbackId>` with none — each with the role's thinking level where
+the target advertises it, and no route of the chosen model at all.
 
 **Prune on a pin change.** Because the chain key includes the pin, a pin change
 changes the key; the updater's chain prune (`state.pluginWrittenChainKeys`) drops
