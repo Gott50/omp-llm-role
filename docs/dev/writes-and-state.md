@@ -157,9 +157,12 @@ openrouter/<id>@<slug>:<level>
 ```
 
 omp's `splitUpstreamRouting` parses the trailing `@<slug>` and applies
-`compat.openRouterRouting = { only: [slug] }`, so the price the ranking assumed
-is the price the request pays. The pin is re-derived on every run, so it follows
-the ranking when the chosen model changes.
+`compat.openRouterRouting = { only: [slug] }`. The pin is the best route **the
+probe accepts**, which is the route the role was priced on — the route the walk
+tries first — so the price the ranking assumed is the price the request pays
+*only while the walk does not skip that candidate*; a skipped candidate means the
+route that replaced it pays, at its own price. The pin is re-derived on every
+run, so it follows the ranking when the chosen model changes.
 
 **The walk — the pin is probed before it is written.** The slug is **not** the
 score-max route unconditionally: the updater walks the role's route order
@@ -351,7 +354,7 @@ settings entry the global behavior is unchanged.
   ids the role's endpoint filters dropped (no capable standard-tier route), rendered
   `; endpoint-blocked: …` on the decision line; `pinBlocked[]` records the ranking ids
   the role's provider pin dropped (no route matching the pin), rendered
-  `; pin-blocked: …`. `routeBlocked[]` records the provider slugs the auto-pin's
+  `; pin-blocked: …`. `routeBlockedSlugs[]` records the provider slugs the auto-pin's
   route probe rejected on the chosen model, in walk order and deduped by slug
   (two routes of one model can share a slug), rendered `; route-blocked: …`;
   `pinDropped` is `true` when the auto-pin applies and the model has gate-passing

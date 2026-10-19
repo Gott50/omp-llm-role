@@ -111,6 +111,20 @@ function errorMessage(body: unknown): string {
 const BLOCKED_RE = /no allowed providers/i;
 
 /**
+ * The verdict a probe response carries, shared by `probeModel` and `probeRoute`
+ * so the model probe and the route probe cannot drift apart: a 2xx is `ok`, the
+ * narrow no-allowed-providers 404 is `blocked`, and everything else is
+ * `unknown` (usable) — any other status (a 429, a 5xx), a 404 with any other
+ * body, an unparseable body. Never throws.
+ */
+async function verdictOf(res: Response): Promise<ProbeVerdict> {
+  if (res.ok) return "ok";
+  if (res.status !== 404) return "unknown";
+  const body: unknown = await res.json().catch(() => null);
+  return BLOCKED_RE.test(errorMessage(body)) ? "blocked" : "unknown";
+}
+
+/**
  * One-token completion probe: the only reliable signal for
  * account-level provider restrictions — neither `/api/v1/key` nor the catalog
  * endpoints expose the allowed-providers whitelist, but a real request's 404
@@ -121,11 +135,7 @@ const BLOCKED_RE = /no allowed providers/i;
 export async function probeModel(token: string, catalogId: string, fetchImpl: typeof fetch = fetch): Promise<ProbeVerdict> {
   try {
     const res = await completionRequest(token, { model: catalogId, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }, fetchImpl);
-    if (res.ok) return "ok";
-    if (res.status !== 404) return "unknown";
-    const body: unknown = await res.json().catch(() => null);
-    const message = errorMessage(body);
-    return BLOCKED_RE.test(message) ? "blocked" : "unknown";
+    return await verdictOf(res);
   } catch {
     return "unknown";
   }
@@ -148,10 +158,7 @@ export async function probeRoute(token: string, catalogId: string, providerSlug:
       { model: catalogId, messages: [{ role: "user", content: "ok" }], max_tokens: 1, provider: { only: [providerSlug] } },
       fetchImpl,
     );
-    if (res.ok) return "ok";
-    if (res.status !== 404) return "unknown";
-    const body: unknown = await res.json().catch(() => null);
-    return BLOCKED_RE.test(errorMessage(body)) ? "blocked" : "unknown";
+    return await verdictOf(res);
   } catch {
     return "unknown";
   }
