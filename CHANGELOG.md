@@ -8,6 +8,19 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`/refresh-roles --no-margin` ignores `switchMargin` for that run** — the flag
+  treats the configured value as `0` for the run's per-role hysteresis only, so
+  every role whose current model is in its candidate pool adopts the pool leader
+  (a role already holding the leader stays `kept-eligible`; a locked, disabled or
+  out-of-pool-current role is unchanged, and `priceSwitchFraction` keeps its
+  value). The override is never written to the lock file or the state, so the
+  next session-start run uses the configured margin again; the notification notes
+  `switchMargin ignored for this run (--no-margin)` and the history row records
+  the effective `switchMargin` for auditing. An unrecognised token prints a usage
+  line and runs nothing. (spec #99)
+
 ## [1.4.0] - 2026-10-19
 
 ### Changed

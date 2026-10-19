@@ -318,11 +318,20 @@ settings entry the global behavior is unchanged.
 | File | Shape | Purpose |
 |---|---|---|
 | `llm-role-state.json` | `{ lastRunDay, managedRoles, roleLastSelector, pluginWrittenChainKeys, previousModelRoles, managedDisabledAgents }` | day gate, managed-role set, last selectors, plugin-owned chain keys, pre-write `modelRoles` snapshot, **managed `task.disabledAgents` names** |
-| `llm-role-history.jsonl` | one JSON row per completed run: `{ ts, trigger, keyMeta{isFreeTier, limitRemaining, creditsRemaining}, decisions[] }` | append-only decision log |
+| `llm-role-history.jsonl` | one JSON row per completed run: `{ ts, trigger, keyMeta{isFreeTier, limitRemaining, creditsRemaining}, decisions[], switchMargin? }` | append-only decision log |
 | `llm-role-usage.jsonl` | one JSON row per assistant turn: `{ ts, role, model, provider, input, output, cacheRead, cacheWrite, cost }` | the per-role usage ledger (spec #81) the explorer's per-task price resolves its token profile from |
 | `llm-role-projects.json` | `{ projects: [{ root, lastUsed }] }` | the plugin's memory of the projects where `/project-roles` was used (the explorer's scope list) |
 | `.llm-role-refresh.lock` | `O_EXCL` create, holds `"<pid> <iso>"` | serializes concurrent session starts; stale (> 60 s) locks are unlinked and retried once |
 | `llm-role-error-reports.json` | `{ reports: [{ fingerprint, label, title, firstSeen, lastSeen, createdDay?, offeredDay?, count, action, issueNumber?, issueUrl? }], dayCount: { day, count } }` | what the opt-in `errorReporting` path filed, offered or suppressed |
+
+- `switchMargin` is present on a history row **only** when a per-run override was
+  active — today that is `/refresh-roles --no-margin` (spec #99), which passes
+  `0`; the field records the effective margin the run's hysteresis used, so a
+  margin-free run is distinguishable from a normal one in the append-only log.
+  The same fact shows in the run's notification as a note line
+  (`switchMargin ignored for this run (--no-margin)`). The override never reaches
+  the lock file or `llm-role-state.json`: it is per-run, so the next run records
+  no field and uses the configured value.
 
 - `llm-role-projects.json` (issue #28) is **global knowledge** and lives in the
   agent dir, never a project's `.omp`. `registerProject(root)` (`src/project-registry.ts`)
