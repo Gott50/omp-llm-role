@@ -21,6 +21,15 @@ ref must be green first. `test` runs **exactly** the command the local
 pre-commit hook runs (`.githooks/pre-commit`), and `tests/ci.test.ts` fails when
 the two drift apart — "green locally" and "green in CI" cannot diverge.
 
+The hook scrubs `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and
+`GIT_OBJECT_DIRECTORY` before running the suite, and `tests/ci.test.ts` scrubs
+the same variables from every child process it spawns. Git exports `GIT_DIR` to
+every hook, and `GIT_DIR` overrides `cwd` — so without the scrub the test file's
+temp-repo `git init`/`config`/`add`/`commit` calls target the **real**
+repository, rewriting its config and moving a branch (issue #89). The test file
+carries the scrub because a test that shells out to git must not depend on its
+caller's environment; the hook carries it as defence in depth.
+
 The Node version comes from `.node-version` at the repo root (the exact local
 toolchain; bumping it is a normal commit). `engines` is deliberately not in
 `package.json`: the plugin executes inside omp's runtime, so an `engines` field

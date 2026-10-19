@@ -12,6 +12,10 @@ fi
 out=$(mktemp)
 trap 'rm -f "$out"' EXIT
 
+# The suite shells out to git in temp repos; the caller's GIT_* overrides would
+# point those calls at the real repository (issue #89).
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
+
 if ! node --test tests/ >"$out" 2>&1; then
 	cat "$out" >&2
 	echo "pre-commit: tests failed." >&2

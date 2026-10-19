@@ -27,8 +27,22 @@ interface Workflow {
   jobs: Record<string, Job>;
 }
 
+/**
+ * The caller's git environment must not reach the temp repos (issue #89): a
+ * hook exports `GIT_DIR`, which overrides `cwd` and points every git call —
+ * the release script's included — at the real repository.
+ */
+function cleanEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+}
+
+/** Run git against a temp repo, immune to the caller's `GIT_*` overrides. */
+function git(args: string[], cwd: string): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8", env: cleanEnv() });
+}
+
 function run(args: string[], cwd: string): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("node", [SCRIPT, ...args], { cwd, encoding: "utf8" });
+  const result = spawnSync("node", [SCRIPT, ...args], { cwd, encoding: "utf8", env: cleanEnv() });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -94,15 +108,15 @@ function makeRepo(options: TreeOptions = {}): string {
   const origin = join(dir, "origin.git");
   mkdirSync(repo);
   makeTree(repo, options);
-  execFileSync("git", ["init", "--bare", "--initial-branch=main", origin]);
-  execFileSync("git", ["init", "--initial-branch=main"], { cwd: repo });
-  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
-  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
-  execFileSync("git", ["add", "-A"], { cwd: repo });
-  execFileSync("git", ["commit", "-m", "init"], { cwd: repo });
-  execFileSync("git", ["remote", "add", "origin", origin], { cwd: repo });
-  execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repo });
+  git(["init", "--bare", "--initial-branch=main", origin], dir);
+  git(["init", "--initial-branch=main"], repo);
+  git(["config", "user.email", "test@example.com"], repo);
+  git(["config", "user.name", "Test"], repo);
+  git(["config", "commit.gpgsign", "false"], repo);
+  git(["add", "-A"], repo);
+  git(["commit", "-m", "init"], repo);
+  git(["remote", "add", "origin", origin], repo);
+  git(["push", "-u", "origin", "main"], repo);
   return repo;
 }
 
@@ -117,7 +131,7 @@ function snapshot(repo: string): string {
   ];
   const parts = files.map((file) => `${file}\n${readFileSync(join(repo, file), "utf8")}`);
   for (const args of [["rev-list", "--count", "HEAD"], ["tag", "-l"], ["status", "--porcelain"]]) {
-    parts.push(execFileSync("git", args, { cwd: repo, encoding: "utf8" }));
+    parts.push(git(args, repo));
   }
   return parts.join("\n---\n");
 }
@@ -218,7 +232,7 @@ test("the four lockstep version fields agree", () => {
 });
 
 test("no tracked file lives under cache/", () => {
-  assert.equal(execFileSync("git", ["ls-files", "cache/"], { cwd: ROOT, encoding: "utf8" }).trim(), "");
+  assert.equal(git(["ls-files", "cache/"], ROOT).trim(), "");
 });
 
 test("due exits 0 when ## [Unreleased] has entries and 1 when it is empty", () => {
@@ -290,7 +304,7 @@ test("notes refuses an empty CHANGELOG section", () => {
 
 test("cut bumps the four version fields, cuts the changelog, commits and tags", () => {
   const repo = makeRepo({ unreleased: "### Changed\n\n- next release\n" });
-  const before = execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+  const before = git(["rev-list", "--count", "HEAD"], repo).trim();
   const result = run(["cut", "minor"], repo);
   assert.equal(result.status, 0, result.stderr);
 
@@ -319,21 +333,21 @@ test("cut bumps the four version fields, cuts the changelog, commits and tags", 
   assert.ok(md.indexOf("## [Unreleased]") < md.indexOf("## [1.2.0] - "), "the fresh Unreleased is not above the cut");
 
   assert.equal(
-    execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(),
+    git(["rev-list", "--count", "HEAD"], repo).trim(),
     String(Number(before) + 1),
   );
-  assert.equal(execFileSync("git", ["log", "-1", "--format=%s"], { cwd: repo, encoding: "utf8" }).trim(), "Release 1.2.0");
-  assert.equal(execFileSync("git", ["cat-file", "-t", "v1.2.0"], { cwd: repo, encoding: "utf8" }).trim(), "tag");
+  assert.equal(git(["log", "-1", "--format=%s"], repo).trim(), "Release 1.2.0");
+  assert.equal(git(["cat-file", "-t", "v1.2.0"], repo).trim(), "tag");
   assert.match(readFileSync(join(repo, "docs/llm-role-rankings.md"), "utf8"), /regenerated/);
-  assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" }).trim(), "");
+  assert.equal(git(["status", "--porcelain"], repo).trim(), "");
 
   // Both the commit and the tag reached the origin.
   const origin = join(repo, "..", "origin.git");
   assert.equal(
-    execFileSync("git", ["rev-parse", "main"], { cwd: origin, encoding: "utf8" }).trim(),
-    execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(),
+    git(["rev-parse", "main"], origin).trim(),
+    git(["rev-parse", "HEAD"], repo).trim(),
   );
-  assert.equal(execFileSync("git", ["cat-file", "-t", "v1.2.0"], { cwd: origin, encoding: "utf8" }).trim(), "tag");
+  assert.equal(git(["cat-file", "-t", "v1.2.0"], origin).trim(), "tag");
 });
 
 test("cut --dry-run writes nothing and reports the target version", () => {
@@ -358,7 +372,7 @@ test("cut refuses a dirty tree", () => {
 
 test("cut refuses an existing tag", () => {
   const repo = makeRepo({ unreleased: "### Changed\n\n- next\n" });
-  execFileSync("git", ["tag", "-a", "v1.2.0", "-m", "existing"], { cwd: repo });
+  git(["tag", "-a", "v1.2.0", "-m", "existing"], repo);
   const before = snapshot(repo);
   const result = run(["cut", "minor"], repo);
   assert.equal(result.status, 1);
@@ -378,11 +392,46 @@ test("cut refuses an empty ## [Unreleased]", () => {
 test("cut refuses when HEAD is not origin/main", () => {
   const repo = makeRepo({ unreleased: "### Changed\n\n- next\n" });
   writeFileSync(join(repo, "docs/llm-role-rankings.md"), "# Rankings\n\nlocal only\n");
-  execFileSync("git", ["add", "-A"], { cwd: repo });
-  execFileSync("git", ["commit", "-m", "local only"], { cwd: repo });
+  git(["add", "-A"], repo);
+  git(["commit", "-m", "local only"], repo);
   const before = snapshot(repo);
   const result = run(["cut", "minor"], repo);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /origin\/main/);
   assert.equal(snapshot(repo), before);
+});
+
+test("the temp-repo git calls ignore the caller's GIT_* overrides (issue #89)", () => {
+  // A hook exports GIT_DIR, which overrides `cwd`; without the scrub in `git()`
+  // and `run()`, makeRepo's calls would target this decoy instead of its own
+  // temp repo — the corruption observed live on 2026-10-18.
+  const decoy = mkdtempSync(join(tmpdir(), "decoy-"));
+  git(["init", "--initial-branch=main"], decoy);
+  git(["config", "user.email", "decoy@example.com"], decoy);
+  git(["config", "user.name", "Decoy"], decoy);
+  writeFileSync(join(decoy, "decoy.txt"), "decoy\n");
+  git(["add", "-A"], decoy);
+  git(["commit", "-m", "decoy"], decoy);
+  const state = (): string =>
+    [
+      git(["config", "--list"], decoy),
+      git(["rev-list", "--count", "HEAD"], decoy),
+      git(["rev-parse", "HEAD"], decoy),
+      git(["status", "--porcelain"], decoy),
+    ].join("\n---\n");
+  const before = state();
+
+  const saved = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+  process.env.GIT_DIR = join(decoy, ".git");
+  process.env.GIT_WORK_TREE = decoy;
+  try {
+    makeRepo();
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  assert.equal(state(), before);
 });
