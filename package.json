@@ -63,6 +63,14 @@
         "min": 0,
         "step": 1
       },
+      "fallbackQualityFloor": {
+        "type": "number",
+        "description": "Quality floor for a cheaper-or-equal fallback: the fraction of the chosen model's quality it must retain (0 disables)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "activateDefaultOnEmptySession": {
         "type": "boolean",
         "description": "Reapply the new default selector to an empty session's active model",
