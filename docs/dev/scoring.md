@@ -152,9 +152,14 @@ while every other weighted metric stays the model's own.
 ### Route ordering (the value-for-money score)
 
 `rankedRoutes(model, def)` (`src/engine.ts`) is the one function that orders a
-model's candidate routes; `bestRoute` is `rankedRoutes[0]`, and `roleRoute` (the
-route `rankRole` prices the model on) and the updater's auto-pin both read it, so
-the priced route, the written pin and the fallback chain move together.
+model's candidate routes; `bestRoute` is `rankedRoutes[0]`, and both `roleRoute`
+(the route `rankRole` prices the model on) and the updater's auto-pin read that
+one order. The priced route is the score-max candidate; the **written pin is the
+first route in that order the route probe does not reject** (writes-and-state.md,
+*The provider-pin auto-configuration*), so the two can differ — the probe is a
+routability check on the write side only and never feeds the ranking. The
+fallback chain follows the pin: it excludes the route the pin names (by slug, not
+by position) and, with a dropped pin, excludes none.
 
 - **Candidates.** A route is a candidate when it is non-degraded (`status === 0`),
   passes `routePassesEndpointFilters(route, def.filters)`, carries a usable billed
@@ -283,7 +288,11 @@ on the 2026-10-11 cache):
   routes that pass the role's endpoint filters and the account's
   allowed-providers whitelist (see *Whitelist-aware route selection*) — falling
   back to
-  the default `1/price²` blend only when the model has no candidate route. It is
+  the default `1/price²` blend only when the model has no candidate route. The
+  **written** pin is the first route in that same order the route probe does not
+  reject (spec #90; writes-and-state.md, *The provider-pin auto-configuration*) —
+  the probe is a routability gate on the write side, so the priced (score-max)
+  route and the written pin can differ. It is
   a **per-model policy, not a scalar** — the sensible pin differs per model, so
   the bundle carries a policy field evaluated against the model's own routes at
   rank time, not a slug baked into the lock file. `bestRoute` (`src/engine.ts`)
