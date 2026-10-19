@@ -31,6 +31,23 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   written pin. A manual `roles.<role>.providerPin` is untouched: never probed,
   never replaced. (spec #90)
 
+- **The fallback chain's fallback models come from the role's ranking, with a
+  quality floor** — the chain no longer only reorders the probe window (that
+  window is `1 + fallbackChainDepth` models, the same size as the chain, so a
+  reorder could never reach a cheaper model at rank 4 or deeper). The
+  `fallbackChainDepth` fallback models are now drawn from the role's whole ranked
+  candidate list below the chosen model: the **cheaper-or-equal** candidates that
+  retain at least `fallbackQualityFloor` (new setting, default `0.9`; `0`
+  disables the floor, `1` requires an exact quality match) of the chosen model's
+  quality first, then the pricier ones, each bucket in value order, truncated to
+  the depth — so a cheap primary gets cheap-or-equal fallbacks of comparable
+  quality while a much weaker model is never chained, and the chain can still
+  escalate to a pricier model when no cheaper-or-equal candidate clears the
+  floor. Key-blocked and probe-blocked models are excluded; an unprobed candidate
+  stays eligible (chain entries are still not probed). The chain key, length,
+  route expansion, thinking levels and prune-on-pin-change are unchanged, as are
+  the manual-`providerPin` and no-pin paths. (spec #95)
+
 ## [1.3.0] - 2026-10-19
 
 ### Added

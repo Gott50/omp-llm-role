@@ -235,6 +235,13 @@ export type ResolvedSettings = {
   priceSwitchFraction: number;
   writeFallbackChains: boolean;
   fallbackChainDepth: number;
+  /**
+   * Quality floor for the fallback chain's cheaper-or-equal candidates: a
+   * candidate priced at or below the chosen model qualifies only if it retains
+   * at least this fraction of the chosen model's `q`. 0 disables the floor (any
+   * cheaper-or-equal candidate qualifies); 1 requires an exact quality match.
+   */
+  fallbackQualityFloor: number;
   roles: Record<string, RoleDef>;
   activateDefaultOnEmptySession: boolean;
   /** Opt-in reporting of unexpected plugin errors as GitHub issues on the
@@ -255,6 +262,7 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   priceSwitchFraction: 0.5,
   writeFallbackChains: true,
   fallbackChainDepth: 2,
+  fallbackQualityFloor: 0.9,
   roles: DEFAULT_ROLES,
   activateDefaultOnEmptySession: true,
   errorReporting: "off",
@@ -305,6 +313,14 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       default: DEFAULT_SETTINGS.fallbackChainDepth,
       min: 0,
       step: 1,
+    },
+    fallbackQualityFloor: {
+      type: "number",
+      description: "Quality floor for a cheaper-or-equal fallback: the fraction of the chosen model's quality it must retain (0 disables)",
+      default: DEFAULT_SETTINGS.fallbackQualityFloor,
+      min: 0,
+      max: 1,
+      step: 0.001,
     },
     activateDefaultOnEmptySession: {
       type: "boolean",
@@ -578,6 +594,9 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   }
   if (!Number.isInteger(merged.fallbackChainDepth) || merged.fallbackChainDepth < 0) {
     errors.push(`fallbackChainDepth: must be an integer >= 0, got ${JSON.stringify(merged.fallbackChainDepth)}`);
+  }
+  if (typeof merged.fallbackQualityFloor !== "number" || !Number.isFinite(merged.fallbackQualityFloor) || merged.fallbackQualityFloor < 0 || merged.fallbackQualityFloor > 1) {
+    errors.push(`fallbackQualityFloor: must be a number in [0, 1], got ${JSON.stringify(merged.fallbackQualityFloor)}`);
   }
   if (typeof merged.activateDefaultOnEmptySession !== "boolean") {
     errors.push(

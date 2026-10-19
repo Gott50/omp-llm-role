@@ -34,11 +34,15 @@ function route(over: Partial<OpenRouterEndpointRecord> = {}): OpenRouterEndpoint
   };
 }
 
-/** A model whose routes are `slugs`, priced 1..n (so the first slug is the best
- * route by value) at the model's own throughput. */
+/** A model whose routes are `slugs`, each priced at the model's own price plus
+ * its position (so the first slug is the best route by value) at the model's own
+ * throughput. Pricing the routes on the model's own price matters for the chain's
+ * cost-aware ordering (spec #95): under the auto-pin a role prices a model on its
+ * best route, so routes all priced 1..n would collapse every model to one
+ * effective price and the quality floor would drop the weaker fallbacks. */
 function routed(id: string, general: number, price: number, tput: number, slugs: string[]): Model {
   const m = makeModel(id, general, price, tput);
-  m.routes = slugs.map((slug, i) => route({ id: `${id}-${slug}`, providerSlug: slug, price: i + 1, tput }));
+  m.routes = slugs.map((slug, i) => route({ id: `${id}-${slug}`, providerSlug: slug, price: price + i, tput }));
   return m;
 }
 

@@ -14,6 +14,35 @@ spec #81's explorer surfaces — the ranking CLI itself is unchanged); the
 provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
 bullet). Neither is re-derived on read.
 
+- Fallback chain quality floor (2026-10-19, spec #95): a role's fallback chain no
+  longer only reorders the probe window — that window is `1 + fallbackChainDepth`
+  models, the same size as the chain, so the reorder could never reach a cheaper
+  model at rank 4 or deeper. The chain's fallback **models** now come from the
+  role's whole ranked candidate list below the chosen model: the
+  **cheaper-or-equal** ones first — a candidate qualifies only if it retains at
+  least `fallbackQualityFloor` (a new setting, default `0.9`; `0` disables the
+  floor, `1` requires an exact quality match) of the chosen model's own `q`, so a
+  failover never silently drops the role onto a much weaker model — then the
+  pricier ones, each bucket in value order, truncated to `fallbackChainDepth`.
+  Key-blocked and probe-`blocked` candidates are excluded; an **unprobed**
+  candidate stays eligible, so the chain can reach a cheaper-or-equal model ranked
+  below the probe window (chain entries are never probe-verified — spec #90). A
+  candidate priced exactly at the chosen model's price whose `q` is below the
+  floor lands in neither bucket and is dropped. The floor gates **chain
+  membership only**: the primary choice, the hysteresis decision, the ranking, the
+  probe walk's stop condition and budget, the chain key, the route expansion, the
+  thinking levels and the prune-on-pin-change are all unchanged, as are the
+  manual-`providerPin` and no-pin paths. Measured on the 2026-10-19 caches with
+  the live resolved defs (`fallbackQualityFloor` 0.9, depth 2): `slow`, `vision`
+  and `task` gain cheaper fallbacks, the other seven roles are byte-identical, and
+  no role is degraded. That is the **per-role** effect: in the written config only
+  the `vision` key changes, because `deepseek-v4.1-flash@coreweave/fp8` is claimed
+  by seven roles and carries the last claimer's chain (the shared-key behaviour
+  spec #95 leaves out of scope). The ranking numbers are unchanged — the chain is a
+  write-side shape, not a ranking input — so `docs/llm-role-rankings.md` is not
+  regenerated and the dated numbers below stand as written; the suite grew
+  652 → 666.
+
 - Routability-verified auto-pin (2026-10-19, spec #90): the `providerPinning`
   auto-pin no longer writes the score-max route blind. The daily update walks the
   chosen model's `vfm` route order and probes each candidate with a one-token
@@ -112,8 +141,11 @@ bullet). Neither is re-derived on read.
   switches models. Chain length is data-driven (`(R_primary − 1) + Σ R_fallback`,
   or `R_primary + Σ R_fallback` with a dropped pin) instead of the fixed
   `2 + 3·fallbackChainDepth`; the manual-`providerPin` and no-pin paths are
-  unchanged. The ranking numbers are unchanged — the chain is a write-side shape,
-  not a ranking input.
+  unchanged. Which `fallbackChainDepth` **models** each chain falls back to was
+  the probe window until spec #95, which draws them from the role's ranked
+  candidate list below the chosen model with the quality floor (see the top
+  bullet) — the route expansion above is unchanged. The ranking numbers are
+  unchanged — the chain is a write-side shape, not a ranking input.
 - Opt-in error reporting (2026-10-08, issue #48): a new `errorReporting` setting
   (`off` — the default — `ask`, `auto`) turns a genuinely unexpected failure — a
   command handler throwing, or a `runUpdater` abort whose `RunResult.defect` is
