@@ -8,6 +8,29 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The `providerPinning` auto-pin verifies a route is routable before it writes
+  it** — the daily update walks the chosen model's value-for-money route order
+  and probes each candidate with a one-token completion bound to it
+  (`provider: { only: [slug] }`), because OpenRouter's endpoints API can list a
+  route as healthy (non-degraded, full `supported_parameters`, 100 % uptime)
+  while its routing table excludes it — the pin then 404s on every request,
+  including every fallback revert. Only the narrow no-allowed-providers 404 skips
+  a route; a timeout, a 5xx, a 429 or a 404 with any other body counts as usable,
+  so a transient blip never unpins a role. Verdicts are cached per run and the
+  walk is capped at `ROUTE_PROBE_BUDGET = 12` probes per role. When no candidate
+  is routable the pin is dropped and the selector stays bare, so OpenRouter
+  routes the request itself instead of failing it; the fallback chain then
+  carries every gate-passing route of the primary (the exclusion is by pinned
+  slug, not by position — with a pin the leader can ride as a chain entry).
+  Chain entries are not probed: one unroutable entry is survivable. The run
+  notes name the rejected slugs (`; route-blocked: …`) and the dropped pin
+  (`; pin dropped (no routable route)`), and the explorer's auto-pin line now
+  reads as a **candidate** — the first route the walk tries, not a promise of the
+  written pin. A manual `roles.<role>.providerPin` is untouched: never probed,
+  never replaced. (spec #90)
+
 ## [1.3.0] - 2026-10-19
 
 ### Added

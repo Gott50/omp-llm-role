@@ -191,10 +191,14 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   per-metric raw target that would close the gap, via `inverseCardinal`, with
   unreachable/extrapolated notes), `dominators` (models both cheaper and at
   least as good on `q`, top 3), `ownProvider` (true when the model was priced on
-  the soft best route rather than the blend), `autoPin` (the provider slug the
-  updater would write — `bestRoute(model, def)?.providerSlug`, the max-`vfm`
+  the soft best route rather than the blend), `autoPin` (the **candidate** route's
+  provider slug — `bestRoute(model, def)?.providerSlug`, the max-`vfm`
   route (scoring.md, *Route ordering*), when the role sets
-  `preferOwnProvider` and carries no manual `providerPin`, else `null`), and the
+  `preferOwnProvider` and carries no manual `providerPin`, else `null` — the
+  first route the updater's daily walk tries, **not** a promise of the written
+  pin: the updater probes it and skips to the next route when OpenRouter does not
+  serve it, or drops the pin entirely when none is routable; writes-and-state.md,
+  *The provider-pin auto-configuration*), and the
   availability overlay `key`/`keyReason`
   (the same verdict as `rankRows`, plus the reason it reads that way). It mirrors
   `rankRole`'s capability fill so the contributions sum exactly to `q`.
@@ -369,8 +373,20 @@ a scraped third-party site, so the DOM is built with
   line). The cost line appends `· best route`
   when the model was priced on the soft best route (`ownProvider`), and a
   **pin line** shows the pin in force: `pin: <slug> (manual)` when the edited def
-  carries a `providerPin`, else `auto pin: <slug>` from the explanation's
-  `autoPin` (read-only — the manual field is the only way to set one). The
+  carries a `providerPin`, else `auto pin (candidate): <slug>` from the
+  explanation's `autoPin` (read-only — the manual field is the only way to set
+  one). The label says *candidate* on purpose: the value is the first route the
+  updater's value-ordered walk *tries*, not a promise of the written pin — the
+  updater probes that route and skips to the next when OpenRouter does not serve
+  it, or drops the pin entirely (bare selector) when none is routable, so the
+  written pin can be a later route or absent altogether (spec #90;
+  writes-and-state.md, *The provider-pin auto-configuration*). The explorer is
+  read-only and offline and cannot probe, so it names the candidate and says so
+  in the tooltip. The candidate equals the written pin when every route probes
+  clean; with the account's allowed-providers whitelist active, the panel and the
+  written pin agree only on the **as-written** pool, which applies the same prune
+  the updater applies before walking (in the raw pool the panel can name a route
+  the prune removes). The
   per-task line shows the breakdown (`<in> in × $<p_in>/M + <out> out ×
   $<p_out>/M × <factor> = $<total>`), or `— (no token profile — record usage or
   set tokenProfile)` when `perTask` is `null`. The **Price levers** section

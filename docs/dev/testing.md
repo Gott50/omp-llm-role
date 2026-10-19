@@ -78,7 +78,8 @@ passing.
     floor sorts a below-floor route last **without dropping it**; a route with no
     p50 uses the model's blended throughput (for both the score and the floor
     check); equal scores break by `providerSlug` then `id`; `explainModel`'s
-    `autoPin` is the score-max route.
+    `autoPin` is the score-max route — the auto-pin's first **candidate**, which
+    the updater probes before writing it (spec #90).
 14. **Thinking price** (`thinking-price.test.ts`) — bare/off unadjusted; a level
     scales only thinking-capable models; the frontier uses the effective price;
     `resolveSettings` validates thinking and rejects the legacy `suffixes` map;
@@ -149,6 +150,10 @@ passing.
     `POST /api/pool` toggle returns the gated/pruned dataset in `as-written` mode
     and the full one in `raw`; the bootstrap payload carries `poolMode` and
     `tokenProfile`; the explain response carries `leaderFlip`/`thinkingLevels`.
+    The auto-pin indicator (spec #90): `explainModel`'s `autoPin` is the route the
+    updater's walk pins when every route probes clean, and it deliberately differs
+    from the written pin when the walk skips a blocked leader — the panel names
+    the *candidate*.
 24. **Project scope** (`project-updater.test.ts`, `project-setup.test.ts`,
     `project-roles-command.test.ts`) — project mode scopes config/state/history/
     lock to `<cwd>/.omp`; the day gate is per scope; the registry write;
@@ -208,13 +213,25 @@ passing.
     and `cut` bumping the four fields, cutting the changelog, committing and
     tagging while refusing a dirty tree, an existing tag, an empty
     `## [Unreleased]` and a HEAD that is not `origin/main`.
-31. **Auto-pin** (`auto-pin.test.ts`) — the selector gains the best route's
-    `@<slug>`; the chain carries every gate-passing route of the primary (all but
-    the pinned best) then of each fallback model, in score order (the `vfm` route
+31. **Auto-pin** (`auto-pin.test.ts`) — the selector gains the `@<slug>` of the
+    first route in the role's `vfm` order that the route probe does not reject
+    (spec #90): a `blocked` leader pins the next route and records the skipped
+    slug (`routeBlocked`); `unknown` is usable and stays pinned; every route
+    blocked writes a bare selector and sets `pinDropped`; the notify lines carry
+    `; route-blocked: …` and `; pin dropped (no routable route)`; an all-blocked
+    pool issues at most `ROUTE_PROBE_BUDGET` probes; a verdict cached for one role
+    is reused by another; two blocked routes sharing a provider slug are recorded
+    once; and the capability off, a manual pin, a locked role, a disabled role and
+    a model with no gate-passing route never consult the probe (a throwing stub
+    proves it) and leave the config byte-identical. The chain carries every
+    gate-passing route of the primary except the pinned **slug** (not the pinned
+    position) then of each fallback model, in score order (the `vfm` route
     score desc, spec #71), deduped by
     provider slug; a degraded / over-`maxPriceUsdPerM` / endpoint-filter-failing /
-    whitelist-blocked route is excluded; the manual pin wins and the no-pin path
-    is bare; a re-run is idempotent and a pin change prunes the old key.
+    whitelist-blocked route is excluded; the manual pin wins (its chain is the
+    fallback models only, every value carrying the manual slug) and the no-pin
+    path is bare (fallback models only); a re-run is idempotent and a pin change
+    prunes the old key.
 32. **Provider display** (`provider-display.test.ts`,
     `provider-display-wiring.test.ts`) — `providerPinOf` reads the single
     `openRouterRouting.only[0]` (else `vercelGatewayRouting`), preferring
@@ -253,6 +270,13 @@ passing.
     catalog/tier gate (`resolveVariant`) and the allowed-providers prune
     (`providerAllowed`), leaves the routes untouched on a `null` whitelist,
     yields an empty pool on `tier: "none"`, and never mutates its input.
+36. **Route probe** (`route-probe.test.ts`) — `probeRoute` sends the exact
+    one-token completion shape (POST, bearer, `max_tokens: 1`, `provider: { only:
+    [slug] }`): 200 → `ok`; the no-allowed-providers 404 → `blocked`; a 404 with
+    any other body, a 5xx, a 429 and a transport throw → `unknown` (usable). The
+    walk that consumes it (skip a `blocked` route, accept `unknown`, drop the pin
+    when nothing is clean, the per-role budget, the cross-role verdict cache) is
+    covered by the auto-pin cases above.
 
 ## Live checks
 

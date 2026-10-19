@@ -192,6 +192,18 @@ invoice proxy.
 > `roles.<role>.providerPin` is the **override** (and stays a hard gate). No
 > shipped role sets a pin or the flag, so a stock config is unchanged.
 >
+> **Update (2026-10-19, spec #90):** the auto-pin now **probes the route before
+> it writes it.** The updater walks the chosen model's value-for-money route
+> order and sends a one-token completion bound to each candidate
+> (`provider: { only: [slug] }`), because the endpoints API and the routing table
+> disagree — an endpoint can list `status: 0` with 100 % uptime and still 404.
+> Only the narrow no-allowed-providers 404 skips a route (`unknown` counts as
+> usable); a pool with no clean candidate **drops the pin** (bare selector,
+> OpenRouter's own routing) instead of writing an unroutable `@<slug>`. Verdicts
+> are cached per run and the walk is capped at `ROUTE_PROBE_BUDGET = 12` probes
+> per role. Contract: [`../dev/writes-and-state.md`](../dev/writes-and-state.md),
+> *The provider-pin auto-configuration*.
+>
 > **Update (2026-10-06):** the project now writes provider routing, opt-in: a
 > role may declare `roles.<role>.providerPin` (a provider slug, optionally
 > tiered like `deepinfra/fp8`), and the updater emits the `@<slug>` selector
