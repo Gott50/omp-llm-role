@@ -89,8 +89,8 @@ export type ProbeVerdict = "ok" | "blocked" | "unknown";
 const OPENROUTER_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 /** POST a one-token completion to OpenRouter with the shared request skeleton
- * (Bearer auth, JSON body, 20s timeout). Shared by `probeModel` and
- * `fetchAllowedProviders`. */
+ * (Bearer auth, JSON body, 20s timeout). Shared by `probeModel`, `probeRoute`
+ * and `fetchAllowedProviders`. */
 function completionRequest(token: string, body: unknown, fetchImpl: typeof fetch): Promise<Response> {
   return fetchImpl(OPENROUTER_COMPLETIONS_URL, {
     method: "POST",
@@ -111,6 +111,20 @@ function errorMessage(body: unknown): string {
 const BLOCKED_RE = /no allowed providers/i;
 
 /**
+ * The verdict a probe response carries, shared by `probeModel` and `probeRoute`
+ * so the model probe and the route probe cannot drift apart: a 2xx is `ok`, the
+ * narrow no-allowed-providers 404 is `blocked`, and everything else is
+ * `unknown` (usable) — any other status (a 429, a 5xx), a 404 with any other
+ * body, an unparseable body. Never throws.
+ */
+async function verdictOf(res: Response): Promise<ProbeVerdict> {
+  if (res.ok) return "ok";
+  if (res.status !== 404) return "unknown";
+  const body: unknown = await res.json().catch(() => null);
+  return BLOCKED_RE.test(errorMessage(body)) ? "blocked" : "unknown";
+}
+
+/**
  * One-token completion probe: the only reliable signal for
  * account-level provider restrictions — neither `/api/v1/key` nor the catalog
  * endpoints expose the allowed-providers whitelist, but a real request's 404
@@ -121,11 +135,30 @@ const BLOCKED_RE = /no allowed providers/i;
 export async function probeModel(token: string, catalogId: string, fetchImpl: typeof fetch = fetch): Promise<ProbeVerdict> {
   try {
     const res = await completionRequest(token, { model: catalogId, messages: [{ role: "user", content: "ok" }], max_tokens: 1 }, fetchImpl);
-    if (res.ok) return "ok";
-    if (res.status !== 404) return "unknown";
-    const body: unknown = await res.json().catch(() => null);
-    const message = errorMessage(body);
-    return BLOCKED_RE.test(message) ? "blocked" : "unknown";
+    return await verdictOf(res);
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * One-token completion bound to a single provider route (`provider.only`), the
+ * same request skeleton as `probeModel` plus the route pin. The endpoints API
+ * and OpenRouter's routing table disagree — an endpoint can list `status: 0`
+ * with 100% uptime and still 404 — so a real request is the only reliable
+ * signal for whether a route is routable. Only the narrow no-allowed-providers
+ * 404 blocks a route; a non-404 status, a 404 with any other body and a
+ * transport throw are all "unknown" and count as usable, exactly as
+ * `probeModel` does. Never throws.
+ */
+export async function probeRoute(token: string, catalogId: string, providerSlug: string, fetchImpl: typeof fetch = fetch): Promise<ProbeVerdict> {
+  try {
+    const res = await completionRequest(
+      token,
+      { model: catalogId, messages: [{ role: "user", content: "ok" }], max_tokens: 1, provider: { only: [providerSlug] } },
+      fetchImpl,
+    );
+    return await verdictOf(res);
   } catch {
     return "unknown";
   }

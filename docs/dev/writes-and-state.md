@@ -145,41 +145,89 @@ feeds the ranking, the reported `$/M` price, or any write. The recorded usage
 takes precedence over it (`resolveTokenProfile`), so once a role has ledger rows
 the setting is ignored for that role.
 
-## The provider-pin auto-configuration (spec #58)
+## The provider-pin auto-configuration (spec #58, routability-verified by #90)
 
 When a role's **expanded** def sets `preferOwnProvider: true` (the
 `providerPinning` capability's recommended bundle) and carries **no** manual
-`providerPin`, the updater binds the role's requests to the chosen model's best
-route by writing that route's provider slug as the selector's `@<slug>` suffix:
+`providerPin`, the updater binds the role's requests to one provider route by
+writing that route's slug as the selector's `@<slug>` suffix:
 
 ```
 openrouter/<id>@<slug>:<level>
 ```
 
 omp's `splitUpstreamRouting` parses the trailing `@<slug>` and applies
-`compat.openRouterRouting = { only: [slug] }`, so the price the ranking assumed
-is the price the request pays. The slug is `bestRoute(chosenModel, def)`'s
-`providerSlug` — the max-value-for-money candidate route (see scoring.md,
-*Route ordering*). The pin is re-derived on every run, so it follows the ranking when the
-chosen model changes. A manual `roles.<role>.providerPin` **wins** over the
-automatic choice and stays a **hard** gate (a model with no matching route is
-ineligible); clearing it resumes the automatic choice.
+`compat.openRouterRouting = { only: [slug] }`. The pin is the best route **the
+probe accepts**, which is the route the role was priced on — the route the walk
+tries first — so the price the ranking assumed is the price the request pays
+*only while the walk does not skip that candidate*; a skipped candidate means the
+route that replaced it pays, at its own price. The pin is re-derived on every
+run, so it follows the ranking when the chosen model changes.
+
+**The walk — the pin is probed before it is written.** The slug is **not** the
+score-max route unconditionally: the updater walks the role's route order
+(`rankedRoutes(chosenModel, def)` — the `vfm` order the chain also uses; see
+scoring.md, *Route ordering*) and probes each candidate with `probeRoute`: a
+one-token completion carrying `provider: { only: [slug] }`, the same request
+skeleton and the same narrow no-allowed-providers pattern as `probeModel`. The
+verdict vocabulary is `probeModel`'s:
+
+- `blocked` — the narrow no-allowed-providers 404 — skips the route and the walk
+  continues to the next candidate;
+- `ok` and **`unknown` are both usable**. A non-404 status (a 429, a 5xx), a 404
+  whose body does not carry the pattern, and a transport throw (a timeout, a
+  connection reset) are all `unknown`: a transient blip must never silently unpin
+  a role, and a rate limit is omp's runtime-fallback domain, not this plugin's.
+
+Verdicts are cached per run by `catalogId@slug`, so a route shared by several
+roles is probed once, and the walk is capped per role at **`ROUTE_PROBE_BUDGET =
+12`** *new* probes (cached verdicts are free) — a pathological pool must not turn
+the daily update into a long probe walk.
+
+**Why a real request.** OpenRouter's endpoints API and its routing table
+disagree: an endpoint can list `status: 0` with a full `supported_parameters`
+list and 100 % uptime, pass the whitelist gate and carry a usable billed price,
+and still 404 for `provider.only` — and the exclusion is dynamic (the same
+request can succeed minutes later). The routing table is visible only in the 404
+body of a request that failed, so a request is the only reliable signal. This is
+exactly the failure the endpoint gates cannot see (spec #90: the live config held
+`deepseek/deepseek-v4.1-flash@relace`, which 404'd on every revert).
+
+**No routable candidate → no pin.** If every candidate is `blocked` (or the
+budget runs out with no clean candidate), no pin is written: the selector stays
+**bare** and OpenRouter routes the request itself, instead of omp failing on an
+unroutable `@<slug>`. `Decision.pinDropped` is true in that case (see *State,
+history, lock*), and the run notes it.
+
+A manual `roles.<role>.providerPin` **wins** over the automatic choice and stays
+a **hard** gate (a model with no matching route is ineligible). It is **never
+probed and never replaced** — the probe applies only to the route the capability
+itself chooses; clearing the manual pin resumes the automatic choice.
 
 **Chain shape.** The primary's chain key is the selector minus the trailing
-`:level` — so it **includes** the pin (`openrouter/<id>@<slug>`). Its values, in
-order:
+`:level` — so it **includes** the pin (`openrouter/<id>@<slug>`, or the bare
+`openrouter/<id>` when the pin was dropped). Its values, in order:
 
-1. the same model on **every** gate-passing route except the pinned best, in
+1. the same model on **every** gate-passing route except the pinned route, in
    score order (the `vfm` route score desc — see scoring.md, *Route ordering*),
 2. then, for each of the `fallbackChainDepth` fallback models, that model on
    **every** gate-passing route, in score order.
 
-Length = `(R_primary − 1) + Σ R_fallback`, where `R` is the number of distinct
-gate-passing provider slugs for that model — data-driven, not a fixed cap.
-Entries dedup by chain value, so two routes sharing a provider slug collapse to
-one. Every entry carries the same `@<slug>` suffix (and the role's thinking level
-where the target advertises it). A model with no gate-passing route contributes
-nothing. The gates are the engine's `rankedRoutes` set: non-degraded
+The exclusion is **by pinned slug, not by position**: the probe can pin a route
+other than the score leader (so the leader rides as a fallback entry while the
+pinned route does not), and with a **dropped pin** (the auto-pin applied, but no
+candidate was routable) **no** route is excluded — the primary contributes every
+gate-passing route. Length = `(R_primary − 1) + Σ R_fallback`, or `R_primary + Σ
+R_fallback` with a dropped pin, where `R` is the number of distinct gate-passing
+provider slugs for that model — data-driven, not a fixed cap. Entries dedup by
+chain value, so two routes sharing a provider slug collapse to one. Every entry
+carries the same `@<slug>` suffix (and the role's thinking level where the target
+advertises it).
+**Chain entries are not probed** — only the primary pin is: the chain carries
+many routes and one unroutable entry is survivable (omp fails over), so probing
+it would multiply the request cost for no benefit (out of scope, spec #90). A
+model with no gate-passing route contributes nothing. The gates are the engine's
+`rankedRoutes` set: non-degraded
 (`status === 0`), the endpoint capability filters (`tools` / `minContextTokens` /
 `minOutputTokens`), a usable billed price, and the `maxPriceUsdPerM` cap
 (thinking-adjusted). The soft `filters.preferredMinThroughput` floor is a
@@ -190,16 +238,28 @@ pool to allowed providers before ranking, which is what makes `rankedRoutes`
 whitelist-aware. The probe walk target is unchanged (`1 + fallbackChainDepth` —
 it counts models, not routes).
 
+**Outside the auto-pin.** The chosen model contributes nothing when the auto-pin
+does not apply: with a manual `providerPin` (`autoPinApplies` is false, so the
+route probe does not run either) or with the capability off, the chain carries
+**one entry per `fallbackChainDepth` fallback model** —
+`openrouter/<fallbackId>@<manualSlug>` with a manual pin, the bare
+`openrouter/<fallbackId>` with none — each with the role's thinking level where
+the target advertises it, and no route of the chosen model at all.
+
 **Prune on a pin change.** Because the chain key includes the pin, a pin change
 changes the key; the updater's chain prune (`state.pluginWrittenChainKeys`) drops
 the old key so a stale pinned chain does not linger.
 
-**No-ops.** The auto-pin writes nothing when: the capability is off
-(`preferOwnProvider` not `true`); a manual `providerPin` is set; the role is
-locked or disabled; the selector is not an OpenRouter selector; the model has no
-route data; no route passes the role's endpoint filters; or the best route has no
-usable billed price. With the capability off the written config is byte-identical
-to before.
+**No-ops.** The auto-pin writes nothing — and **the route probe is never
+consulted** — when: the capability is off (`preferOwnProvider` not `true`); a
+manual `providerPin` is set; the role is locked or disabled; the selector is not
+an OpenRouter selector; the model has no route data; no route passes the role's
+endpoint filters; or no candidate has a usable billed price (the last three leave
+`rankedRoutes` empty, so there is no candidate to probe, and `pinDropped` stays
+false — the pin is simply absent). The case where the model *has* candidates but
+none is routable is different: that is the **dropped pin** above — still no pin,
+but recorded (`pinDropped`). With the capability off the written config is
+byte-identical to before.
 
 ## State, history, lock
 
@@ -294,7 +354,13 @@ settings entry the global behavior is unchanged.
   ids the role's endpoint filters dropped (no capable standard-tier route), rendered
   `; endpoint-blocked: …` on the decision line; `pinBlocked[]` records the ranking ids
   the role's provider pin dropped (no route matching the pin), rendered
-  `; pin-blocked: …`.
+  `; pin-blocked: …`. `routeBlockedSlugs[]` records the provider slugs the auto-pin's
+  route probe rejected on the chosen model, in walk order and deduped by slug
+  (two routes of one model can share a slug), rendered `; route-blocked: …`;
+  `pinDropped` is `true` when the auto-pin applies and the model has gate-passing
+  routes but no candidate survived the probe (or the `ROUTE_PROBE_BUDGET` ran
+  out), rendered `; pin dropped (no routable route)` — the selector is bare in
+  that case. Both are empty/false when no probe ran.
 - Role removal (`/remove-agent`) goes through `removeRoleSettings` in
   `src/role-settings.ts` — the same validate/backup/atomic-write path as
   `writeRoleSettings`, deleting the role's flat dotted keys and any nested entry.

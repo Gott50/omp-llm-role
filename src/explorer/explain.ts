@@ -347,9 +347,11 @@ export type Explanation =
        * `preferOwnProvider` preference, no hard pin) rather than the 1/price²
        * blend — the panel shows WHY the price is what it is. */
       ownProvider: boolean;
-      /** the automatic pin: the model's best route's provider slug when the role
-       * prefers a bound route and carries no manual pin, else null. Read-only in
-       * the UI; a manual `providerPin` overrides it. */
+      /** the automatic pin's candidate: the model's best route's provider slug —
+       * the first route the updater's walk tries — when the role prefers a bound
+       * route and carries no manual pin, else null. The probe can skip to a later
+       * route or drop the pin, so this is the candidate, not the written pin.
+       * Read-only in the UI; a manual `providerPin` overrides it. */
       autoPin: string | null;
       role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
       contributions: Contribution[];
@@ -389,9 +391,12 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   const route = roleRoute(model, def);
   // The model is priced on the soft best route (not a hard pin, not the blend).
   const ownProvider = pinRoute === null && route !== null;
-  // The automatic pin the updater would write: the model's best route's slug,
-  // only when the role prefers a bound route and carries no manual pin. Reuses the
-  // already-computed `route` (the same best route) instead of recomputing it.
+  // The automatic pin's CANDIDATE route: the model's best route's slug — the
+  // first route the updater's walk tries — only when the role prefers a bound
+  // route and carries no manual pin. The updater probes that candidate and can
+  // pin a later route (or drop the pin entirely), so this is what the walk tries
+  // first, not a promise of the written pin. Reuses the already-computed `route`
+  // (the same best route) instead of recomputing it.
   const autoPin = autoPinApplies(def) ? route?.providerSlug ?? null : null;
   const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, pinRoute, cacheHitRate) == null);
   if (missingRequired.length > 0) reasons.push(`missing required metric(s): ${missingRequired.join(", ")}`);
