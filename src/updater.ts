@@ -164,10 +164,13 @@ function decisionLine(d: Decision): string {
  * refuses up to $7/M of savings. A challenger inside that band is adopted when
  * it undercuts the incumbent's effective price by `priceSwitchFraction` (0.5 =
  * at least twice as cheap). 0 disables the override.
+ *
+ * `margin` is the effective switch margin for the run: the resolved
+ * `settings.switchMargin`, unless `runUpdater` was given a per-run override.
  */
-function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSettings): boolean {
+function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSettings, margin = settings.switchMargin): boolean {
   if (settings.priceSwitchFraction <= 0 || current.priceEff <= 0) return false;
-  if (best.value < current.value - settings.switchMargin) return false;
+  if (best.value < current.value - margin) return false;
   return best.priceEff <= current.priceEff * (1 - settings.priceSwitchFraction);
 }
 
@@ -256,7 +259,7 @@ export function resolveProjectDir(): string | null {
   return Object.keys(raw).length > 0 ? projectDir : null;
 }
 
-export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: boolean; dryRun?: boolean }): Promise<RunResult> {
+export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: boolean; dryRun?: boolean; switchMargin?: number }): Promise<RunResult> {
   const notifyAll = trigger !== "session-start" || opts?.dryRun === true;
   const abort = (lines: string[]): RunResult => {
     deps.notify(lines);
@@ -359,6 +362,13 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     // endpoints.
     const decisions: Decision[] = [];
     const notes: string[] = [];
+    // Per-run `switchMargin` override (spec #99, `/refresh-roles --no-margin`):
+    // the effective margin for the hysteresis ladder of this run only. It never
+    // reaches the lock file, the state or `resolveSettings`, and every other use
+    // of `settings` keeps the configured value.
+    const marginOverride = typeof opts?.switchMargin === "number" ? opts.switchMargin : undefined;
+    const margin = marginOverride ?? settings.switchMargin;
+    if (marginOverride !== undefined) notes.push("switchMargin ignored for this run (--no-margin)");
     if (availability.active) {
       notes.push(
         `omp-llm-role: OpenRouter keyed catalog active — ${availability.keyedCount}/${availability.publicCount} models allowed; key-blocked candidates are pruned from the probe walk (up to ${PROBE_BUDGET} probes/role saved)`,
@@ -506,8 +516,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       else if (currentEntry.ranked.model.id === best.ranked.model.id) {
         chosen = currentEntry;
         reason = "kept-eligible";
-      } else if (best.ranked.value - currentEntry.ranked.value >= settings.switchMargin) reason = "switched";
-      else if (cheaperInsideMargin(best.ranked, currentEntry.ranked, settings)) reason = "switched-cost";
+      } else if (best.ranked.value - currentEntry.ranked.value >= margin) reason = "switched";
+      else if (cheaperInsideMargin(best.ranked, currentEntry.ranked, settings, margin)) reason = "switched-cost";
       else {
         chosen = currentEntry;
         reason = "kept-margin";
@@ -720,6 +730,9 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         trigger,
         keyMeta: { isFreeTier: keyMeta.isFreeTier, limitRemaining: keyMeta.limitRemaining, creditsRemaining: keyMeta.creditsRemaining } satisfies Pick<KeyMeta, "isFreeTier" | "limitRemaining" | "creditsRemaining">,
         decisions,
+        // Present only when the per-run override was active (spec #99), so the
+        // append-only log records which runs ignored the configured margin.
+        ...(marginOverride !== undefined ? { switchMargin: marginOverride } : {}),
       });
     }
 
