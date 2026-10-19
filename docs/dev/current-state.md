@@ -35,7 +35,10 @@ bullet). Neither is re-derived on read.
   manual-`providerPin` and no-pin paths. Measured on the 2026-10-19 caches with
   the live resolved defs (`fallbackQualityFloor` 0.9, depth 2): `slow`, `vision`
   and `task` gain cheaper fallbacks, the other seven roles are byte-identical, and
-  no role is degraded. The ranking numbers are unchanged — the chain is a
+  no role is degraded. That is the **per-role** effect: in the written config only
+  the `vision` key changes, because `deepseek-v4.1-flash@coreweave/fp8` is claimed
+  by seven roles and carries the last claimer's chain (the shared-key behaviour
+  spec #95 leaves out of scope). The ranking numbers are unchanged — the chain is a
   write-side shape, not a ranking input — so `docs/llm-role-rankings.md` is not
   regenerated and the dated numbers below stand as written; the suite grew
   652 → 666.
