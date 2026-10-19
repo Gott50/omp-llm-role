@@ -34,17 +34,38 @@ passing.
    best; cost override (`switched-cost`); `priceSwitchFraction: 0` keeps the
    margin in charge; an inside-margin challenger short of the fraction stays
    kept; the day gate.
-6. **Chain pruning** (`chain-pruning.test.ts`) — plugin-written stale keys
-   removed; owner-written keys preserved; `writeFallbackChains: false`; a role
-   that left the managed set is pruned; the chain prefers candidates at or below
-   the chosen price.
+6. **Chain pruning + the quality floor** (`chain-pruning.test.ts`,
+   `chain-quality-floor.test.ts`) — plugin-written stale keys removed;
+   owner-written keys preserved; `writeFallbackChains: false`; a role that left
+   the managed set is pruned; the chain prefers candidates at or below the chosen
+   price. The floor (spec #95): a cheaper rank-4 candidate that clears the floor
+   becomes the first fallback where the pricier rank 2/3 do not, even though the
+   probe walk never reaches it; a cheap primary whose cheaper-or-equal candidates
+   are all below the floor keeps the next-best-by-value models;
+   `fallbackQualityFloor: 0` admits any cheaper-or-equal candidate and `1` only an
+   exactly-equal-quality one; an equal-priced sub-floor candidate is in neither
+   bucket and is dropped; a key-blocked cheaper candidate never enters the chain;
+   the chain stops at `fallbackChainDepth` in the cheaper set's value order; the
+   manual-pin path and the auto-pin chain shape are unchanged; an out-of-range
+   floor is a settings error that writes nothing; and a `kept-margin` role's chain
+   is built from the kept model's `q` and the candidates below it, with the
+   selector and the decision reason unaffected.
 7. **Chain suffixes** (`chain-suffix.test.ts`) — chain values carry the role's
    suffix, the key stays bare; an entry without thinking support gets no suffix;
    two roles on one model share a level-free chain.
 8. **Probe gate** (`probe-gate.test.ts`) — 200 → ok; the no-allowed-providers 404
    → blocked; any other failure → usable; blocked best → next adopted; blocked
-   current → replaced; chains contain only probe-clean candidates; verdicts
-   cached across roles; all-blocked → role untouched.
+   current → replaced; a probe-`blocked` candidate never enters a chain
+   (`fallback chains contain only probe-clean candidates`); verdicts cached across
+   roles; all-blocked → role untouched with a note. Spec #95 changed what the
+   chain's model set is built from: "blocked candidates beyond a kept current do
+   not count toward chain depth" was **deleted** (it encoded the removed
+   probe-window membership rule), "walk fills a kept role's chain to full depth
+   with probe-clean entries" was **renamed** to "a kept role's chain is filled to
+   full depth from the candidates below the kept model", and a new "the chain
+   reaches a cheaper candidate the walk never probes" pins that an **unprobed**
+   cheap candidate is chained while the walk still stops at
+   `1 + fallbackChainDepth` clean candidates.
 9. **Keyed catalog** (`keyed-catalog.test.ts`) — key-blocked candidates pruned
    from the walk; only candidates in neither catalog are probed; key-blocked
    never in a chain; no-filter/unavailable degrade to the probe walk.
@@ -231,7 +252,12 @@ passing.
     whitelist-blocked route is excluded; the manual pin wins (its chain is the
     fallback models only, every value carrying the manual slug) and the no-pin
     path is bare (fallback models only); a re-run is idempotent and a pin change
-    prunes the old key.
+    prunes the old key. Since spec #95 the chain's fallback **models** come from
+    the ranked candidate list below the chosen model with the quality floor
+    (item 6) rather than the probe window, so the fixtures price each route at its
+    model's own price plus its position — routes all priced `1..n` would collapse
+    every model to one effective price and the floor would drop the weaker
+    fallbacks at equal price.
 32. **Provider display** (`provider-display.test.ts`,
     `provider-display-wiring.test.ts`) — `providerPinOf` reads the single
     `openRouterRouting.only[0]` (else `vercelGatewayRouting`), preferring

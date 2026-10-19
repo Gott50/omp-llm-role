@@ -159,7 +159,15 @@ first route in that order the route probe does not reject** (writes-and-state.md
 *The provider-pin auto-configuration*), so the two can differ — the probe is a
 routability check on the write side only and never feeds the ranking. The
 fallback chain follows the pin: it excludes the route the pin names (by slug, not
-by position) and, with a dropped pin, excludes none.
+by position) and, with a dropped pin, excludes none. Which **models** the chain
+falls back to is a separate choice (spec #95): its `fallbackChainDepth` fallback
+models come from the role's **ranked candidate list** below the chosen model —
+the cheaper-or-equal candidates that retain at least `fallbackQualityFloor` of
+its `q` first, then the pricier ones, each bucket in value order, truncated to
+the depth — **not** from the probe window, so the chain can reach a
+cheaper-or-equal model ranked below the `1 + fallbackChainDepth` window the walk
+probes (key-blocked and probe-`blocked` candidates are excluded; unprobed ones
+stay eligible — writes-and-state.md, *The provider-pin auto-configuration*).
 
 - **Candidates.** A route is a candidate when it is non-degraded (`status === 0`),
   passes `routePassesEndpointFilters(route, def.filters)`, carries a usable billed

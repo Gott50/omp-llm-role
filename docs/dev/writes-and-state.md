@@ -213,6 +213,45 @@ itself chooses; clearing the manual pin resumes the automatic choice.
 2. then, for each of the `fallbackChainDepth` fallback models, that model on
    **every** gate-passing route, in score order.
 
+**Which models are chained (spec #95).** The `fallbackChainDepth` fallback
+**models** come from the role's whole **ranked candidate list** — the
+tier-eligible ranking rows, in value order — not from the probe window (which is
+`1 + fallbackChainDepth` models, the same size as the chain, so a reorder of it
+can never reach a cheaper model at rank 4 or deeper). Two classes of candidate
+are excluded, with the same predicates the probe walk uses: **key-blocked**
+models (the account's key cannot use them) and models whose probe verdict is
+`blocked`. An **unprobed** candidate stays — the chain's deeper entries are
+never probe-verified (they are not a new class: chain entries are already
+route-level unprobed, and omp fails over on an unroutable entry). `after` is
+that list **below the chosen model** — the leader on a fresh pick, the kept
+current candidate on a kept role (`kept-eligible` / `kept-margin`) — so the
+`after` set and the floor both key off the model the selector actually names —
+the previous `pool.slice(chosenIdx + 1)` keyed off the same index in the
+probe-clean pool — and candidates ranked above the chosen are never chained. The
+set is then split:
+
+```
+cheaper = after where priceEff <= chosen.priceEff AND q >= chosen.q · fallbackQualityFloor
+pricier = after where priceEff > chosen.priceEff            (never floor-filtered)
+chain   = [...cheaper, ...pricier].slice(0, fallbackChainDepth)
+```
+
+so a cheaper-or-equal fallback keeps the role's quality (the floor is a fraction
+of the chosen model's **own** `q`, so it reads the same on every role's quality
+scale) and a cheap-but-weak candidate set cannot starve the chain (the pricier
+bucket always fills any remaining depth with the next-best by value). Both
+buckets keep value order, so a cheaper candidate deep in the ranking is reached
+only when fewer than `fallbackChainDepth` cheaper-or-equal candidates clear the
+floor — a bounded search, not a cheapest-first sort. A candidate priced exactly
+at the chosen model's price whose `q` is below the floor is in **neither** bucket
+and drops out. `fallbackQualityFloor` (a number in `[0, 1]`, default `0.9`; `0`
+disables the floor, `1` requires an exact quality match — validated, never
+silently clamped) is documented in the README's settings table. The floor gates
+**chain membership only**: the primary choice, the hysteresis decision, the
+ranking, the probe walk's stop condition and budget, the chain key, the route
+expansion, the thinking levels, the dedup and the prune-on-pin-change are all
+unchanged.
+
 The exclusion is **by pinned slug, not by position**: the probe can pin a route
 other than the score leader (so the leader rides as a fallback entry while the
 pinned route does not), and with a **dropped pin** (the auto-pin applied, but no
