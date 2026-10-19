@@ -143,6 +143,9 @@ export function fakeDeps(models: Model[], settings: Record<string, unknown> = {}
     getKeyAvailability: async () => NO_FILTER_AVAILABILITY,
     getAllowedProviders: async () => null,
     probeModel: async () => "ok",
+    // Hermetic route probe: without it the updater's `?? probeRoute` default
+    // would issue a live one-token completion per auto-pinned route.
+    probeRoute: async () => "ok",
     getRankData: async () => rankData,
     getSettings: async () => settings,
     notify: () => {},
