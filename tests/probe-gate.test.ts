@@ -108,9 +108,8 @@ test("all candidates blocked -> role untouched with a note", async () => {
 });
 
 const SIX = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 2, 90), makeModel("model-c", 70, 3, 80), makeModel("model-d", 60, 4, 70), makeModel("model-e", 50, 5, 60), makeModel("model-f", 40, 6, 50)];
-const SEVEN = [...SIX, makeModel("model-g", 30, 7, 50)];
 
-test("walk fills a kept role's chain to full depth with probe-clean entries", async () => {
+test("a kept role's chain is filled to full depth from the candidates below the kept model", async () => {
   const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-d"\n');
   const deps = fakeDeps(SIX, { switchMargin: 1, fallbackChainDepth: 2, priceSwitchFraction: 0 }, { probeModel: blockedExcept([]) });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
@@ -118,11 +117,29 @@ test("walk fills a kept role's chain to full depth with probe-clean entries", as
   assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-e:auto"\n\s+- "openrouter\/org\/model-f:auto"/);
 });
 
-test("blocked candidates beyond a kept current do not count toward chain depth", async () => {
-  const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-d"\n');
-  const deps = fakeDeps(SEVEN, { switchMargin: 1, fallbackChainDepth: 2, priceSwitchFraction: 0 }, { probeModel: blockedExcept(["org/model-e"]) });
+// Spec #95: the chain's fallback models come from the role's whole ranked
+// candidate list, not from the probe window. The walk still stops at
+// `1 + fallbackChainDepth` clean candidates, so the rank-4 `model-d` below is
+// never probed — it is chained anyway, because it is cheaper-or-equal to the
+// chosen model and clears the quality floor.
+const PROBE_WINDOW = [
+  makeModel("model-a", 90, 2, 100),
+  makeModel("model-b", 88, 3, 100),
+  makeModel("model-c", 86, 4, 100),
+  makeModel("model-d", 80, 1, 100),
+];
+
+/** Every shipped role except `default` opted out, so the chain key is claimed by
+ * one role and the assertions below read that role's own chain (a key claimed by
+ * several roles is written level-free, from whichever role iterated last). */
+const ONLY_DEFAULT_ROLES = Object.fromEntries(
+  ["smol", "slow", "vision", "plan", "commit", "tiny", "task", "advisor", "designer"].map((r) => [r, { enabled: false }]),
+);
+
+test("the chain reaches a cheaper candidate the walk never probes", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(PROBE_WINDOW, { fallbackChainDepth: 2, roles: ONLY_DEFAULT_ROLES }, { probeModel: blockedExcept([]) });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const text = readFileSync(join(dir, "config.yml"), "utf8");
-  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-f:auto"\n\s+- "openrouter\/org\/model-g:auto"/);
-  assert.doesNotMatch(text, /model-e/);
+  assert.match(text, /openrouter\/org\/model-a:\n\s+- "openrouter\/org\/model-d:auto"\n\s+- "openrouter\/org\/model-b:auto"/);
 });
