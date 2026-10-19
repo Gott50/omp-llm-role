@@ -1,4 +1,4 @@
-# Current state (2026-10-18)
+# Current state (2026-10-19)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
@@ -6,11 +6,22 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
-ranking numbers below are the 2026-10-18 measurement (the input-price blend basis
-#21, the #17/#18/#19/#20 wave, the #34–#40 focus-axis/capability-flag work, and
+ranking numbers below are the 2026-10-19 measurement (regenerated at the 1.3.0
+cut; byte-identical to the 2026-10-18 one apart from the report's date line —
+the input-price blend basis #21, the #17/#18/#19/#20 wave, the #34–#40
+focus-axis/capability-flag work, and
 spec #81's explorer surfaces — the ranking CLI itself is unchanged); the
 provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
 bullet). Neither is re-derived on read.
+
+- Release 1.3.0 (2026-10-19, cut `55416d4`, tag `v1.3.0`): the spec #81 explorer
+  surfaces ship. The report was regenerated at the cut and is **unchanged** from
+  the 2026-10-18 measurement — matched 149/408, priced 148, eligible 140
+  (vision 73, designer 87), the same ten leaders — so the numbers below stand as
+  written. The cut also carried the #89 fix: the pre-commit hook and
+  `tests/ci.test.ts` now scrub `GIT_*` from every child process, so the suite's
+  temp-repo git calls can no longer target the real repository (suite 630 →
+  631).
 
 - Explorer as-written pool, per-task price, and price levers (2026-10-18, spec
   #81): the explorer gains a **pool toggle** (raw vs as-written), a **per-task
