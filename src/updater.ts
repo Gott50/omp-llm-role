@@ -15,8 +15,8 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { autoPinApplies, bestRoute, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, providerAllowed, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { autoPinApplies, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
+import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, providerAllowed, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
@@ -41,6 +41,13 @@ export type Decision = {
   /** Ranking ids dropped by the role's provider pin (no route matching the pin) —
    * recorded like a probe-blocked candidate. */
   pinBlocked: string[];
+  /** Provider slugs the auto-pin's route probe rejected on the chosen model, in
+   * walk order — rendered `; route-blocked: …`. Empty when no probe ran. */
+  routeBlocked: string[];
+  /** True when the auto-pin applies and the model has gate-passing routes but
+   * every candidate was rejected (or the route-probe budget ran out): the
+   * selector stays bare and OpenRouter routes the request itself. */
+  pinDropped: boolean;
   /** Availability source for this role's selection: the keyed-catalog fast path or the probe walk. */
   availabilitySource: "keyed-catalog" | "probe";
   /** Candidates pruned as key-blocked (present in the public catalog, absent from the keyed one). */
@@ -70,8 +77,11 @@ type Candidate = { ranked: Ranked; catalogId: string };
 
 /** Per managed role: its bare chain key, role suffix, provider pin, the pool it
  * was chosen from, and the inputs the auto-pin chain builder needs (the expanded
- * def for `rankedRoutes`, and whether the pin was auto-derived). */
-type ChainPlan = { key: string; suffix: string | undefined; pin: string; pool: Candidate[]; chosenIdx: number; def: RoleDef; autoPin: boolean };
+ * def for `rankedRoutes`, and whether the pin was auto-derived). `pinnedSlug` is
+ * the route the auto-pin wrote — undefined for a manual pin, for a dropped pin
+ * and with the capability off — so the chain builder can exclude the pinned
+ * route by slug rather than by its position in the route order. */
+type ChainPlan = { key: string; suffix: string | undefined; pin: string; pinnedSlug: string | undefined; pool: Candidate[]; chosenIdx: number; def: RoleDef; autoPin: boolean };
 
 export type Deps = {
   getToken(): Promise<string>;
@@ -83,6 +93,13 @@ export type Deps = {
   getSettings?(): Promise<Record<string, unknown>>;
   getKeyMeta?(token: string): Promise<KeyMeta>;
   probeModel?(token: string, catalogId: string): Promise<ProbeVerdict>;
+  /**
+   * DI seam like `probeModel`; production defaults to the real `probeRoute`.
+   * One-token completion bound to a single provider route (`provider.only`), the
+   * auto-pin's routability gate: OpenRouter's routing table can exclude a route
+   * its endpoints API still lists as healthy.
+   */
+  probeRoute?(token: string, catalogId: string, providerSlug: string): Promise<ProbeVerdict>;
   /** DI seam like `getKeyMeta`/`probeModel`; production defaults to `fetchKeyAvailability` (never throws). */
   getKeyAvailability?(token: string): Promise<KeyAvailability>;
   /**
@@ -106,6 +123,12 @@ const CONFLICT_RETRIES = 3;
 /** Per-role cap on allowlist probe requests (budget against pathological all-blocked pools). */
 const PROBE_BUDGET = 12;
 
+/** Per-role cap on route-probe requests for the auto-pin walk (budget against a
+ * pathological route pool: a fully blocked model with dozens of routes must not
+ * turn the daily update into a long probe walk). Hitting the cap with no clean
+ * candidate drops the pin, exactly as an all-blocked pool does. */
+export const ROUTE_PROBE_BUDGET = 12;
+
 function mtimeOf(path: string): number {
   try {
     return statSync(path).mtimeMs;
@@ -120,9 +143,11 @@ function decisionLine(d: Decision): string {
   const blocked = d.blocked.length > 0 ? `; blocked: ${d.blocked.join(", ")}` : "";
   const endpoint = d.endpointBlocked.length > 0 ? `; endpoint-blocked: ${d.endpointBlocked.join(", ")}` : "";
   const pin = d.pinBlocked.length > 0 ? `; pin-blocked: ${d.pinBlocked.join(", ")}` : "";
+  const routes = d.routeBlocked.length > 0 ? `; route-blocked: ${d.routeBlocked.join(", ")}` : "";
+  const dropped = d.pinDropped ? "; pin dropped (no routable route)" : "";
   return d.from === d.to
-    ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked}${endpoint}${pin})`
-    : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked}${endpoint}${pin})`;
+    ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked}${endpoint}${pin}${routes}${dropped})`
+    : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked}${endpoint}${pin}${routes}${dropped})`;
 }
 
 /**
@@ -372,6 +397,10 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     const pinUnmatched: string[] = [];
     const probe = deps.probeModel ?? probeModel;
     const probeVerdicts = new Map<string, ProbeVerdict>();
+    const routeProbe = deps.probeRoute ?? probeRoute;
+    /** Route verdicts, cached by `catalogId@slug` across roles: a route shared by
+     * several roles is probed once per run. */
+    const routeVerdicts = new Map<string, ProbeVerdict>();
     for (const [role, def] of Object.entries(settings.roles)) {
       // Locked: no ranking, no probe, no decision, no selector/chain write.
       if (lockedRoles.has(role)) continue;
@@ -483,14 +512,45 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // `splitUpstreamRouting` parses the trailing `@<slug>` and applies
       // `compat.openRouterRouting = { only: [slug] }`.
       //
-      // Auto-pin (spec #58): with the soft `preferOwnProvider` capability on and
-      // no manual pin, the chosen model's best route by the role's own value
-      // rides as that suffix, so the price the ranking assumed is the price the
-      // request pays. A manual `providerPin` is a hard gate and always wins; a
-      // model with no candidate route keeps default routing (bare selector).
+      // Auto-pin (spec #58, routability-verified by spec #90): with the soft
+      // `preferOwnProvider` capability on and no manual pin, the chosen model's
+      // best *routable* route rides as that suffix, so the price the ranking
+      // assumed is the price the request pays. A manual `providerPin` is a hard
+      // gate and always wins; a model with no gate-passing route keeps default
+      // routing (bare selector).
+      //
+      // The route order is the one the fallback chain already uses
+      // (`rankedRoutes`). Every candidate is probed with `provider: { only:
+      // [slug] }`, because OpenRouter's endpoints API can list a route as
+      // healthy while its routing table excludes it — the failure the endpoints
+      // data cannot see. A `blocked` route is skipped, `unknown` counts as
+      // usable (a transient blip must never unpin a role), and a pool with no
+      // clean candidate drops the pin: the selector stays bare and OpenRouter
+      // routes the request itself instead of 404ing on an unroutable `@<slug>`.
       const manualPin = def.providerPin;
-      const autoRoute = autoPinApplies(def) ? bestRoute(chosen.ranked.model, def) : null;
-      const pinSlug = manualPin ?? autoRoute?.providerSlug;
+      const autoRoutes = autoPinApplies(def) ? rankedRoutes(chosen.ranked.model, def) : [];
+      const routeBlocked: string[] = [];
+      let autoSlug: string | undefined;
+      let routeProbesSpent = 0;
+      for (const r of autoRoutes) {
+        const key = `${chosen.catalogId}@${r.providerSlug}`;
+        let verdict = routeVerdicts.get(key);
+        if (verdict === undefined) {
+          if (routeProbesSpent >= ROUTE_PROBE_BUDGET) break;
+          verdict = await routeProbe(token, chosen.catalogId, r.providerSlug);
+          routeVerdicts.set(key, verdict);
+          routeProbesSpent++;
+        }
+        if (verdict === "blocked") {
+          // Deduped: two routes can share a provider slug (the chain collapses
+          // them too), and the decision line should not list one slug twice.
+          if (!routeBlocked.includes(r.providerSlug)) routeBlocked.push(r.providerSlug);
+          continue;
+        }
+        autoSlug = r.providerSlug;
+        break;
+      }
+      const pinSlug = manualPin ?? autoSlug;
       const pin = pinSlug !== undefined ? `@${pinSlug}` : "";
       const chosenRow = rowById.get(chosen.catalogId);
       // Append only a level the model's catalog thinking[] actually supports —
@@ -509,6 +569,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         blocked: blockedForRole,
         endpointBlocked: endpointFilterDrops(def, rank.models),
         pinBlocked: providerPinDrops(def, rank.models),
+        routeBlocked,
+        pinDropped: autoRoutes.length > 0 && autoSlug === undefined,
         availabilitySource: availability.active ? "keyed-catalog" : "probe",
         keyBlockedCount,
       });
@@ -518,7 +580,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // came from. Values are built after the loop, once every key claim is known.
       if (settings.writeFallbackChains) {
         const key = suffix !== undefined && finalSelector.endsWith(`:${suffix}`) ? finalSelector.slice(0, -(suffix.length + 1)) : finalSelector;
-        chainPlanByRole[role] = { key, suffix, pin, pool, chosenIdx: pool.indexOf(chosen), def, autoPin: autoRoute !== null };
+        chainPlanByRole[role] = { key, suffix, pin, pinnedSlug: autoSlug, pool, chosenIdx: pool.indexOf(chosen), def, autoPin: autoRoutes.length > 0 };
       }
     }
 
@@ -556,7 +618,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         const values: string[] = [];
         if (plan.autoPin) {
           // Auto-pin chain (spec #58, expanded by #69): every gate-passing route
-          // of the primary model (all but the pinned best), then every
+          // of the primary model except the pinned route, then every
           // gate-passing route of each fallback model, in the role's
           // value-for-money score order (`rankedRoutes`, spec #71) — every entry
           // bound to its route's provider, so a down primary
@@ -564,12 +626,17 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           // than a different model. `rankedRoutes` already applies every gate
           // (non-degraded, endpoint filters, usable billed price, the
           // maxPriceUsdPerM cap, the allowed-providers whitelist), so the chain
-          // carries exactly the routes the role can use. The dedup below
-          // collapses two routes that share a provider slug (same chain value),
-          // so the chain length is (R_primary − 1) + Σ R_fallback over distinct
-          // gate-passing provider slugs.
+          // carries exactly the routes the role can use. The pin is excluded by
+          // slug, not by position: the route probe can pin a route other than
+          // the score leader, and with a dropped pin no route is excluded at
+          // all. The dedup below collapses two routes that share a provider slug
+          // (same chain value), so the chain length is (R_primary − 1) + Σ
+          // R_fallback over distinct gate-passing provider slugs (R_primary with
+          // no pin). Only the pinned route is probe-verified: one unroutable
+          // chain entry is survivable, omp fails over.
           const chosenCandidate = plan.pool[plan.chosenIdx];
-          for (const r of rankedRoutes(chosenCandidate.ranked.model, plan.def).slice(1)) {
+          for (const r of rankedRoutes(chosenCandidate.ranked.model, plan.def)) {
+            if (r.providerSlug === plan.pinnedSlug) continue;
             values.push(`openrouter/${chosenCandidate.catalogId}@${r.providerSlug}${levelFor(chosenCandidate.catalogId)}`);
           }
           for (const p of chainPool) {
