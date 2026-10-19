@@ -4,8 +4,9 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type KeyAvailability } from "../src/availability.ts";
-import { cardinalMetric, rankRole, SUFFIX_LEVELS, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
+import { parse as parseYaml } from "yaml";
+import { type KeyAvailability, type ProbeVerdict } from "../src/availability.ts";
+import { cardinalMetric, rankedRoutes, rankRole, SUFFIX_LEVELS, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, METRIC_META, perTaskPrice, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer, type ExplorerOpts } from "../src/explorer/server.ts";
@@ -13,8 +14,9 @@ import { readScopeRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
 import { DEFAULT_ROLES, KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
+import { runUpdater } from "../src/updater.ts";
 import { type TokenProfile, type UsageRow } from "../src/usage-ledger.ts";
-import { makeCatalog, makeModel } from "./helpers.ts";
+import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
 /** A single-scope (user-level) explorer server over a temp lock file. `extra`
  * overrides any opt (the pool inputs, the usage rows, the token profile). */
@@ -946,6 +948,98 @@ test("explain returns the automatic pin only when preferOwnProvider is on and no
   } finally {
     await handle.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// The candidate route (spec #90, ticket #93)
+// ---------------------------------------------------------------------------
+//
+// The explain panel's auto-pin line names the CANDIDATE route — the first route
+// the updater's walk tries — not a promise of the written pin: the updater now
+// probes that route and may skip to the next one. The panel reads the same route
+// order the walk does (`rankedRoutes(model, def)[0]`, surfaced as `autoPin`), and
+// these tests pin that cross-module invariant.
+
+/** The value-ordered leader is not the price leader: `fastco` costs 3× `slowco`
+ * but is 10× its throughput, so the shipped `default` weights rank it first. The
+ * candidate is therefore a specific route, not "the cheapest" — which is what
+ * makes the cross-module equality below bite. */
+const WALK_MODELS: Model[] = [
+  {
+    ...makeModel("alpha", 80, 5, 100),
+    routes: [endpoint("alpha-fast", "fastco", 3, 200), endpoint("alpha-slow", "slowco", 1, 20), endpoint("alpha-pricey", "priceyco", 9, 100)],
+  },
+];
+
+/** Opt every shipped role but `default` out, so the run writes one selector. */
+const WALK_SETTINGS: Record<string, unknown> = {
+  roles: {
+    ...Object.fromEntries(["smol", "slow", "vision", "plan", "commit", "tiny", "task", "advisor", "designer"].map((r) => [r, { enabled: false }])),
+    default: { preferOwnProvider: true },
+  },
+};
+
+/** The written selector's catalog id and pin slug, e.g.
+ * `openrouter/org/alpha@fastco:auto` -> `org/alpha` + `fastco`. The slug keeps
+ * its own `/` (tiered slugs like `deepinfra/fp8`), and the trailing `:<level>`
+ * is not part of it. */
+function selectorPin(selector: string): { catalogId: string; slug: string } {
+  const at = selector.indexOf("@");
+  const rest = selector.slice(at + 1);
+  const colon = rest.lastIndexOf(":");
+  return { catalogId: selector.slice("openrouter/".length, at), slug: colon === -1 ? rest : rest.slice(0, colon) };
+}
+
+test("the explorer's autoPin is the route the updater's walk pins when every route probes clean", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(WALK_MODELS, WALK_SETTINGS);
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  // The def the updater resolves and walks with, so both sides read the engine's
+  // own definition rather than a re-derived one that could drift.
+  const { settings, errors } = resolveSettings(WALK_SETTINGS);
+  assert.deepEqual(errors, []);
+  const def = settings.roles.default;
+  // Parsed config: the updater's written modelRoles, the observable result.
+  const written = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as { modelRoles: Record<string, string> };
+  const { catalogId, slug } = selectorPin(written.modelRoles.default);
+  assert.equal(slug, "fastco"); // the value leader, not the cheapest route
+  const ex = explainModel(def, WALK_MODELS, catalogId.slice(catalogId.lastIndexOf("/") + 1));
+  assert.ok(ex.eligible);
+  // The cross-module invariant (spec #90): probe clean everywhere, so the walk
+  // pins its first candidate — exactly the route the panel names.
+  assert.equal(ex.autoPin, slug);
+
+  // Sensitivity: the fixture's candidate is not the price leader, so an
+  // implementation reading any other ordering fails the equality above instead
+  // of passing by coincidence.
+  const ranked = rankedRoutes(WALK_MODELS[0], def);
+  assert.equal(ranked[0].providerSlug, slug);
+  assert.notEqual(slug, "slowco");
+});
+
+test("the explorer's autoPin stays the candidate when the walk skips a blocked route", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(WALK_MODELS, WALK_SETTINGS, {
+    probeRoute: async (_token: string, _catalogId: string, routeSlug: string): Promise<ProbeVerdict> => (routeSlug === "fastco" ? "blocked" : "ok"),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  const decision = result.decisions.find((d) => d.role === "default");
+  assert.ok(decision);
+  assert.deepEqual(decision.routeBlocked, ["fastco"]);
+  assert.equal(decision.pinDropped, false);
+  // The walk skipped the blocked candidate and pinned the next route ...
+  const written = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as { modelRoles: Record<string, string> };
+  const { slug } = selectorPin(written.modelRoles.default);
+  assert.equal(slug, "slowco");
+  // ... while the panel keeps naming the candidate: the indicator is not the
+  // written pin, which is why it reads as a candidate.
+  const { settings } = resolveSettings(WALK_SETTINGS);
+  const ex = explainModel(settings.roles.default, WALK_MODELS, "alpha");
+  assert.ok(ex.eligible);
+  assert.equal(ex.autoPin, "fastco");
+  assert.notEqual(ex.autoPin, slug);
 });
 
 // ---------------------------------------------------------------------------

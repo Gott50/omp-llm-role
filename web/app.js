@@ -185,6 +185,7 @@ const TIPS = {
   focusCrossSource: "Cross-source: the zeroeval per-entry price/context compared against the plugin's own price/context for the models carrying the metric (the median relative divergence, within a 0.5 tolerance). The speed figure is informational only (rps vs tok/s). An annotation, never a gate — it never feeds the 1/price² blend; unknown means no model joined or the payload carried none of the four fields.",
   imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
   providerPin: "Hard provider pin: the OpenRouter provider slug this role's requests are routed to (a tiered slug like deepinfra/fp8 is accepted verbatim). Setting it opts the role out of the automatic best-route pin; empty = default OpenRouter routing.",
+  autoPin: "Automatic provider pin (candidate): this model's best route by the role's value-for-money score — the first route the updater's daily run tries. The updater probes that route with a one-token request bound to it (provider: { only: [slug] }) and skips to the next route when OpenRouter does not serve it, dropping the pin entirely (bare selector, OpenRouter's own routing) when none is routable — so the pin that gets written can be a later route, or absent.",
   features: "Opt-in capability presets (issue #40). Each flag applies the plugin's recommended settings for that capability to this role; an explicit knob value always wins. Export writes the flag, not the expanded values, so a future change to the recommendation keeps reaching the role.",
   featureState: "inherit = use the global flag (features.<id> in the lock file); on/off = a per-role override (roles.<role>.features.<id>) that beats the global in either direction.",
   featureKnob: "An individual knob the capability's recommended bundle fills. Leave it at inherit to take the recommendation; set a value to override it (an explicit value always wins over the flag).",
@@ -562,7 +563,12 @@ function renderExplain() {
   if (manualPin) {
     panel.append(el("p", { class: "sub pin-line", "data-tip": TIPS.providerPin, text: "pin: " + manualPin + " (manual)" }));
   } else if (ex.autoPin) {
-    panel.append(el("p", { class: "sub pin-line", "data-tip": TIPS.providerPin, text: "auto pin: " + ex.autoPin }));
+    // The candidate route — the first route the updater's value-ordered walk
+    // tries — not a promise of the written pin: the updater probes it and skips
+    // to the next route when OpenRouter does not serve it, or drops the pin
+    // entirely when none is routable (spec #90). Read-only, offline: the
+    // explorer cannot probe, so it names the candidate and says so in the tip.
+    panel.append(el("p", { class: "sub pin-line", "data-tip": TIPS.autoPin, text: "auto pin (candidate): " + ex.autoPin }));
   }
 
   panel.append(el("h3", { "data-tip": TIPS.composition, text: "Value composition" }));
