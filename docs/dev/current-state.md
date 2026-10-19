@@ -14,6 +14,31 @@ spec #81's explorer surfaces — the ranking CLI itself is unchanged); the
 provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
 bullet). Neither is re-derived on read.
 
+- Routability-verified auto-pin (2026-10-19, spec #90): the `providerPinning`
+  auto-pin no longer writes the score-max route blind. The daily update walks the
+  chosen model's `vfm` route order and probes each candidate with a one-token
+  completion bound to it (`provider: { only: [slug] }`), because OpenRouter's
+  endpoints API can list a route as healthy — non-degraded, a full
+  `supported_parameters` list, 100 % uptime — while its routing table excludes it:
+  the live config's `deepseek/deepseek-v4.1-flash@relace` passed every gate and
+  then 404'd on every request, including every fallback revert. Only the narrow
+  no-allowed-providers 404 skips a route; a timeout, a 5xx, a 429 and a 404 with
+  any other body are `unknown` and count as usable, so a transient blip never
+  unpins a role. Verdicts are cached per run by `catalogId@slug`, and the walk is
+  capped at `ROUTE_PROBE_BUDGET = 12` probes per role. When no candidate is
+  routable the pin is **dropped** — the selector stays bare and OpenRouter routes
+  the request itself — and the run notes name the rejected slugs
+  (`; route-blocked: …`), plus the dropped pin (`; pin dropped (no routable
+  route)`) when none survived. The fallback chain keeps its shape
+  (the primary contributes every gate-passing route except the pinned **slug** —
+  see the chain bullet below), and **chain entries are not probed**: one
+  unroutable entry is survivable, omp fails over. A manual
+  `roles.<role>.providerPin` stays a hard gate: never probed, never replaced. The
+  explorer's auto-pin line now reads as a **candidate** — the first route the walk
+  tries, not a promise of the written pin. The ranking numbers are unchanged — the
+  probe is a write-side gate, not a ranking input, and neither the ranking CLI nor
+  `docs/llm-role-rankings.md` changed; the suite grew 631 → 652.
+
 - Release 1.3.0 (2026-10-19, cut `55416d4`, tag `v1.3.0`): the spec #81 explorer
   surfaces ship. The report was regenerated at the cut and is **unchanged** from
   the 2026-10-18 measurement — matched 149/408, priced 148, eligible 140
@@ -77,15 +102,18 @@ bullet). Neither is re-derived on read.
 
 - Auto-pin chain expansion (2026-10-10, issue #69): with `providerPinning` on,
   the fallback chain no longer stops at three providers per model — the primary
-  model contributes every gate-passing route except the pinned best, then each
-  `fallbackChainDepth` fallback model contributes every gate-passing route, in
-  score order (the `vfm` route score — spec #71 replaced the original
-  route-value order) and deduped by provider slug, so a down provider fails over
-  to another provider of the same model before the chain switches models. Chain
-  length is data-driven (`(R_primary − 1) + Σ R_fallback`) instead of the fixed
+  model contributes every gate-passing route **except the pinned route** (the
+  exclusion is by pinned slug, not by position: spec #90's probe can pin a route
+  other than the score leader, so the leader rides as a chain entry, and a dropped
+  pin excludes nothing), then each `fallbackChainDepth` fallback model contributes
+  every gate-passing route, in score order (the `vfm` route score — spec #71
+  replaced the original route-value order) and deduped by provider slug, so a down
+  provider fails over to another provider of the same model before the chain
+  switches models. Chain length is data-driven (`(R_primary − 1) + Σ R_fallback`,
+  or `R_primary + Σ R_fallback` with a dropped pin) instead of the fixed
   `2 + 3·fallbackChainDepth`; the manual-`providerPin` and no-pin paths are
-  unchanged. The ranking numbers are unchanged — the chain is a write-side
-  shape, not a ranking input.
+  unchanged. The ranking numbers are unchanged — the chain is a write-side shape,
+  not a ranking input.
 - Opt-in error reporting (2026-10-08, issue #48): a new `errorReporting` setting
   (`off` — the default — `ask`, `auto`) turns a genuinely unexpected failure — a
   command handler throwing, or a `runUpdater` abort whose `RunResult.defect` is

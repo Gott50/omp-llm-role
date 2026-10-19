@@ -216,7 +216,7 @@ passing.
 31. **Auto-pin** (`auto-pin.test.ts`) — the selector gains the `@<slug>` of the
     first route in the role's `vfm` order that the route probe does not reject
     (spec #90): a `blocked` leader pins the next route and records the skipped
-    slug (`routeBlocked`); `unknown` is usable and stays pinned; every route
+    slug (`routeBlockedSlugs`); `unknown` is usable and stays pinned; every route
     blocked writes a bare selector and sets `pinDropped`; the notify lines carry
     `; route-blocked: …` and `; pin dropped (no routable route)`; an all-blocked
     pool issues at most `ROUTE_PROBE_BUDGET` probes; a verdict cached for one role

@@ -12,6 +12,7 @@ import { explainModel, inverseCardinal, METRIC_META, perTaskPrice, rankRows } fr
 import { createExplorerServer, type ExplorerOpts } from "../src/explorer/server.ts";
 import { readScopeRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
+import { providerPinOfSelector } from "../src/provider-display.ts";
 import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
 import { DEFAULT_ROLES, KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
@@ -979,17 +980,6 @@ const WALK_SETTINGS: Record<string, unknown> = {
   },
 };
 
-/** The written selector's catalog id and pin slug, e.g.
- * `openrouter/org/alpha@fastco:auto` -> `org/alpha` + `fastco`. The slug keeps
- * its own `/` (tiered slugs like `deepinfra/fp8`), and the trailing `:<level>`
- * is not part of it. */
-function selectorPin(selector: string): { catalogId: string; slug: string } {
-  const at = selector.indexOf("@");
-  const rest = selector.slice(at + 1);
-  const colon = rest.lastIndexOf(":");
-  return { catalogId: selector.slice("openrouter/".length, at), slug: colon === -1 ? rest : rest.slice(0, colon) };
-}
-
 test("the explorer's autoPin is the route the updater's walk pins when every route probes clean", async () => {
   const dir = setupAgentDir("other: 1\n");
   const deps = fakeDeps(WALK_MODELS, WALK_SETTINGS);
@@ -1002,8 +992,12 @@ test("the explorer's autoPin is the route the updater's walk pins when every rou
   const def = settings.roles.default;
   // Parsed config: the updater's written modelRoles, the observable result.
   const written = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as { modelRoles: Record<string, string> };
-  const { catalogId, slug } = selectorPin(written.modelRoles.default);
+  const selector = written.modelRoles.default;
+  // The pin comes from the module that owns the trailing `@<slug>` parse; the
+  // catalog id is the selector between `openrouter/` and that `@`.
+  const slug = providerPinOfSelector(selector);
   assert.equal(slug, "fastco"); // the value leader, not the cheapest route
+  const catalogId = selector.slice("openrouter/".length, selector.indexOf("@"));
   const ex = explainModel(def, WALK_MODELS, catalogId.slice(catalogId.lastIndexOf("/") + 1));
   assert.ok(ex.eligible);
   // The cross-module invariant (spec #90): probe clean everywhere, so the walk
@@ -1027,11 +1021,11 @@ test("the explorer's autoPin stays the candidate when the walk skips a blocked r
   assert.equal(result.aborted, undefined);
   const decision = result.decisions.find((d) => d.role === "default");
   assert.ok(decision);
-  assert.deepEqual(decision.routeBlocked, ["fastco"]);
+  assert.deepEqual(decision.routeBlockedSlugs, ["fastco"]);
   assert.equal(decision.pinDropped, false);
   // The walk skipped the blocked candidate and pinned the next route ...
   const written = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as { modelRoles: Record<string, string> };
-  const { slug } = selectorPin(written.modelRoles.default);
+  const slug = providerPinOfSelector(written.modelRoles.default);
   assert.equal(slug, "slowco");
   // ... while the panel keeps naming the candidate: the indicator is not the
   // written pin, which is why it reads as a candidate.

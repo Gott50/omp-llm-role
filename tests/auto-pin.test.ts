@@ -515,7 +515,7 @@ test("a blocked best route pins the next route and records the skipped slug", as
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.to, "openrouter/org/model-a@mid:auto");
-  assert.deepEqual(d.routeBlocked, ["cheap"]);
+  assert.deepEqual(d.routeBlockedSlugs, ["cheap"]);
   assert.equal(d.pinDropped, false);
   assert.ok(notified.some((l) => l.includes("@default:") && l.includes("route-blocked: cheap")));
   const doc = readConfig(dir);
@@ -544,7 +544,7 @@ test("a route probe that cannot tell (unknown) is usable and stays pinned", asyn
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.to, "openrouter/org/model-a@cheap:auto");
-  assert.deepEqual(d.routeBlocked, []);
+  assert.deepEqual(d.routeBlockedSlugs, []);
   assert.equal(d.pinDropped, false);
   assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@cheap:auto");
 });
@@ -562,7 +562,7 @@ test("every route blocked writes a bare selector and drops the pin", async () =>
   assert.ok(d);
   assert.equal(d.to, "openrouter/org/model-a:auto");
   assert.equal(d.pinDropped, true);
-  assert.deepEqual(d.routeBlocked, ["cheap", "mid", "exp"]);
+  assert.deepEqual(d.routeBlockedSlugs, ["cheap", "mid", "exp"]);
   assert.ok(notified.some((l) => l.includes("@default:") && l.includes("pin dropped")));
   const doc = readConfig(dir);
   assert.equal(doc.modelRoles.default, "openrouter/org/model-a:auto");
@@ -592,7 +592,7 @@ test("every route clean writes today's config byte for byte", async () => {
   assert.equal(result.aborted, undefined);
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.deepEqual(d.routeBlocked, []);
+  assert.deepEqual(d.routeBlockedSlugs, []);
   assert.equal(d.pinDropped, false);
   // The clean leader ends the walk: one probe, not one per route.
   assert.equal(counter.n, 1);
@@ -655,7 +655,7 @@ test("a role whose whole route pool is blocked issues at most ROUTE_PROBE_BUDGET
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.pinDropped, true);
-  assert.equal(d.routeBlocked.length, ROUTE_PROBE_BUDGET);
+  assert.equal(d.routeBlockedSlugs.length, ROUTE_PROBE_BUDGET);
   assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
 });
 
@@ -691,5 +691,5 @@ test("two blocked routes sharing a provider slug are recorded once", async () =>
   assert.equal(result.aborted, undefined);
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.deepEqual(d.routeBlocked, ["shared", "exp"]);
+  assert.deepEqual(d.routeBlockedSlugs, ["shared", "exp"]);
 });

@@ -42,8 +42,10 @@ export type Decision = {
    * recorded like a probe-blocked candidate. */
   pinBlocked: string[];
   /** Provider slugs the auto-pin's route probe rejected on the chosen model, in
-   * walk order — rendered `; route-blocked: …`. Empty when no probe ran. */
-  routeBlocked: string[];
+   * walk order — rendered `; route-blocked: …`. Slugs, not ids: the sibling
+   * `blocked` holds catalog ids and `pinBlocked` ranking ids. Empty when no
+   * probe ran. */
+  routeBlockedSlugs: string[];
   /** True when the auto-pin applies and the model has gate-passing routes but
    * every candidate was rejected (or the route-probe budget ran out): the
    * selector stays bare and OpenRouter routes the request itself. */
@@ -143,7 +145,7 @@ function decisionLine(d: Decision): string {
   const blocked = d.blocked.length > 0 ? `; blocked: ${d.blocked.join(", ")}` : "";
   const endpoint = d.endpointBlocked.length > 0 ? `; endpoint-blocked: ${d.endpointBlocked.join(", ")}` : "";
   const pin = d.pinBlocked.length > 0 ? `; pin-blocked: ${d.pinBlocked.join(", ")}` : "";
-  const routes = d.routeBlocked.length > 0 ? `; route-blocked: ${d.routeBlocked.join(", ")}` : "";
+  const routes = d.routeBlockedSlugs.length > 0 ? `; route-blocked: ${d.routeBlockedSlugs.join(", ")}` : "";
   const dropped = d.pinDropped ? "; pin dropped (no routable route)" : "";
   return d.from === d.to
     ? `@${d.role}: kept ${d.to} (${d.reason}; ${scores}${blocked}${endpoint}${pin}${routes}${dropped})`
@@ -513,11 +515,13 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // `compat.openRouterRouting = { only: [slug] }`.
       //
       // Auto-pin (spec #58, routability-verified by spec #90): with the soft
-      // `preferOwnProvider` capability on and no manual pin, the chosen model's
-      // best *routable* route rides as that suffix, so the price the ranking
-      // assumed is the price the request pays. A manual `providerPin` is a hard
-      // gate and always wins; a model with no gate-passing route keeps default
-      // routing (bare selector).
+      // `preferOwnProvider` capability on and no manual pin, the best route the
+      // probe accepts rides as that suffix. That candidate is the route the role
+      // was priced on, so the price the ranking assumed is the price the request
+      // pays — but only while the walk does not skip the candidate; a skipped
+      // candidate means the route that replaced it pays, at its own price. A
+      // manual `providerPin` is a hard gate and always wins; a model with no
+      // gate-passing route keeps default routing (bare selector).
       //
       // The route order is the one the fallback chain already uses
       // (`rankedRoutes`). Every candidate is probed with `provider: { only:
@@ -529,7 +533,10 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // routes the request itself instead of 404ing on an unroutable `@<slug>`.
       const manualPin = def.providerPin;
       const autoRoutes = autoPinApplies(def) ? rankedRoutes(chosen.ranked.model, def) : [];
-      const routeBlocked: string[] = [];
+      // No gate-passing route means nothing to pin and nothing to drop: the bare
+      // selector is default routing, not a dropped pin.
+      const hasAutoRoutes = autoRoutes.length > 0;
+      const routeBlockedSlugs: string[] = [];
       let autoSlug: string | undefined;
       let routeProbesSpent = 0;
       for (const r of autoRoutes) {
@@ -544,7 +551,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         if (verdict === "blocked") {
           // Deduped: two routes can share a provider slug (the chain collapses
           // them too), and the decision line should not list one slug twice.
-          if (!routeBlocked.includes(r.providerSlug)) routeBlocked.push(r.providerSlug);
+          if (!routeBlockedSlugs.includes(r.providerSlug)) routeBlockedSlugs.push(r.providerSlug);
           continue;
         }
         autoSlug = r.providerSlug;
@@ -569,8 +576,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         blocked: blockedForRole,
         endpointBlocked: endpointFilterDrops(def, rank.models),
         pinBlocked: providerPinDrops(def, rank.models),
-        routeBlocked,
-        pinDropped: autoRoutes.length > 0 && autoSlug === undefined,
+        routeBlockedSlugs,
+        pinDropped: hasAutoRoutes && autoSlug === undefined,
         availabilitySource: availability.active ? "keyed-catalog" : "probe",
         keyBlockedCount,
       });
@@ -580,7 +587,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // came from. Values are built after the loop, once every key claim is known.
       if (settings.writeFallbackChains) {
         const key = suffix !== undefined && finalSelector.endsWith(`:${suffix}`) ? finalSelector.slice(0, -(suffix.length + 1)) : finalSelector;
-        chainPlanByRole[role] = { key, suffix, pin, pinnedSlug: autoSlug, pool, chosenIdx: pool.indexOf(chosen), def, autoPin: autoRoutes.length > 0 };
+        chainPlanByRole[role] = { key, suffix, pin, pinnedSlug: autoSlug, pool, chosenIdx: pool.indexOf(chosen), def, autoPin: hasAutoRoutes };
       }
     }
 
