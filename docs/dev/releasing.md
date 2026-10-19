@@ -147,11 +147,12 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   `omp plugin install omp-llm-role@gott50-plugins`) each installed 1.4.0
   (`omp plugin doctor`: 4 ok / 0 warnings / 0 errors for npm and git; the
   marketplace install's one warning is the expected
-  `package_manifest: Not created yet`). The post-install session run was **not**
-  exercised: the account's OpenRouter key hit its $100 daily cap
-  (`403 Key limit exceeded`, resets 2026-10-20T00:00:00Z), so the
-  `modelRoles` + `retry.fallbackChains` write and the history row are unverified
-  for 1.4.0 — re-run the session smoke after the cap resets.
+  `package_manifest: Not created yet`). The npm route's post-install session run
+  (`omp -p "say ok"` with `OPENROUTER_API_KEY` from `omp token openrouter`) wrote
+  `modelRoles` (9 roles), `retry.fallbackChains` (2 keys) and
+  `task.disabledAgents: [designer]` into that HOME's `config.yml`, landed
+  `llm-role-state.json` (day stamped, 9 managed roles), `llm-role-history.jsonl`
+  and `llm-role-usage.jsonl`, and answered `ok`.
 - **1.3.0 published by CD 2026-10-19** (run 39222193609, tag push): the guard
   and the npm floor passed, `npm publish` completed over OIDC trusted publishing
   with a provenance attestation (`npm audit signatures`: 1 package has a
