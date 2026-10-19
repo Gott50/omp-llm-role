@@ -39,11 +39,16 @@ function route(over: Partial<OpenRouterEndpointRecord> = {}): OpenRouterEndpoint
   };
 }
 
-/** A model whose routes are `slugs`, priced 1..n (so the first slug is the best
- * route by value) at the model's own throughput. */
+/** A model whose routes are `slugs`, each priced at the model's own price plus
+ * its position (so the first slug is the best route by value) at the model's own
+ * throughput. Pricing the routes on the model's own price matters for the
+ * chain's cost-aware ordering (spec #95): under the auto-pin or a manual pin the
+ * role prices a model on its best route, so routes all priced 1..n would collapse
+ * every model to one effective price and the quality floor would drop the
+ * weaker fallbacks at equal price. */
 function routed(id: string, general: number, price: number, tput: number, slugs: string[]): Model {
   const m = makeModel(id, general, price, tput);
-  m.routes = slugs.map((slug, i) => route({ id: `${id}-${slug}`, providerSlug: slug, price: i + 1, tput }));
+  m.routes = slugs.map((slug, i) => route({ id: `${id}-${slug}`, providerSlug: slug, price: price + i, tput }));
   return m;
 }
 
@@ -150,9 +155,9 @@ test("a chosen model with no candidate route keeps default routing", async () =>
   const a = makeModel("model-a", 90, 1, 100);
   a.routes = [route({ providerSlug: "degraded", status: 1, price: 1 })]; // degraded ⇒ no candidate
   const b = makeModel("model-b", 80, 5, 60);
-  b.routes = [route({ providerSlug: "b1", price: 1 })];
+  b.routes = [route({ providerSlug: "b1", price: 5 })];
   const c = makeModel("model-c", 70, 10, 30);
-  c.routes = [route({ providerSlug: "c1", price: 1 })];
+  c.routes = [route({ providerSlug: "c1", price: 10 })];
   const dir = setupAgentDir("other: 1\n");
   const deps = fakeDeps([a, b, c], onlyDefault({ roles: { default: { preferOwnProvider: true } } }));
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));

@@ -77,13 +77,18 @@ export type Trigger = "session-start" | "manual";
 /** A ranked model resolved to a concrete catalog id. */
 type Candidate = { ranked: Ranked; catalogId: string };
 
-/** Per managed role: its bare chain key, role suffix, provider pin, the pool it
- * was chosen from, and the inputs the auto-pin chain builder needs (the expanded
- * def for `rankedRoutes`, and whether the pin was auto-derived). `pinnedSlug` is
- * the route the auto-pin wrote — undefined for a manual pin, for a dropped pin
- * and with the capability off — so the chain builder can exclude the pinned
- * route by slug rather than by its position in the route order. */
-type ChainPlan = { key: string; suffix: string | undefined; pin: string; pinnedSlug: string | undefined; pool: Candidate[]; chosenIdx: number; def: RoleDef; autoPin: boolean };
+/** Per managed role: its bare chain key, role suffix, provider pin, the
+ * candidates its chain's fallback models are drawn from, the chosen model's
+ * index in that list, and the inputs the auto-pin chain builder needs (the
+ * expanded def for `rankedRoutes`, and whether the pin was auto-derived).
+ * `candidates` is the role's ranked candidate list minus the candidates no
+ * chain entry may name (key-blocked, probe-blocked) — not the probe-clean pool
+ * — so the chain can reach a cheaper-or-equal model ranked below the probe
+ * window. `pinnedSlug` is the route the auto-pin wrote — undefined for a manual
+ * pin, for a dropped pin and with the capability off — so the chain builder can
+ * exclude the pinned route by slug rather than by its position in the route
+ * order. */
+type ChainPlan = { key: string; suffix: string | undefined; pin: string; pinnedSlug: string | undefined; candidates: Candidate[]; chosenIdx: number; def: RoleDef; autoPin: boolean };
 
 export type Deps = {
   getToken(): Promise<string>;
@@ -583,11 +588,21 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       });
 
       // Fallback chain inputs for every managed role: the bare key (a chain key
-      // matches the active model id, never a level) plus the pool the chosen model
-      // came from. Values are built after the loop, once every key claim is known.
+      // matches the active model id, never a level) plus the candidate list the
+      // chain's fallback models are drawn from. Values are built after the loop,
+      // once every key claim is known.
       if (settings.writeFallbackChains) {
         const key = suffix !== undefined && finalSelector.endsWith(`:${suffix}`) ? finalSelector.slice(0, -(suffix.length + 1)) : finalSelector;
-        chainPlanByRole[role] = { key, suffix, pin, pinnedSlug: autoSlug, pool, chosenIdx: pool.indexOf(chosen), def, autoPin: hasAutoRoutes };
+        // The chain's fallback models come from the role's whole ranked
+        // candidate list, so a cheaper-or-equal model ranked below the probe
+        // window can be chained. Only the candidates the probe walk would never
+        // accept are dropped — key-blocked (the account's key cannot use them)
+        // and probe-verdict-blocked (present in the public catalog but not for
+        // this key). An unprobed candidate stays: the chain's deeper entries are
+        // no longer required to be probe-verified. The chosen model passed both
+        // predicates, so it is always in the list and `chosenIdx` is never -1.
+        const chainCandidates = candidates.filter((c) => !keyBlocked(c) && probeVerdicts.get(c.catalogId) !== "blocked");
+        chainPlanByRole[role] = { key, suffix, pin, pinnedSlug: autoSlug, candidates: chainCandidates, chosenIdx: chainCandidates.indexOf(chosen), def, autoPin: hasAutoRoutes };
       }
     }
 
@@ -608,13 +623,18 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       for (const d of decisions) {
         const plan = chainPlanByRole[d.role];
         const suffix = claims[plan.key] === 1 ? plan.suffix : undefined;
-        // Cost-aware ordering: prefer fallbacks priced at or below the chosen
-        // model (a fallback should not cost more than the primary), then fill any
-        // remaining depth with the next-best by value.
-        const after = plan.pool.slice(plan.chosenIdx + 1);
-        const chosenPrice = plan.pool[plan.chosenIdx].ranked.priceEff;
-        const cheaper = after.filter((p) => p.ranked.priceEff <= chosenPrice);
-        const pricier = after.filter((p) => p.ranked.priceEff > chosenPrice);
+        // Cost-aware ordering with a quality floor: prefer fallbacks priced at or
+        // below the chosen model that still retain `fallbackQualityFloor` of its
+        // quality (a failover must not silently drop the role onto a much weaker
+        // model), then fill any remaining depth with the next-best by value. The
+        // floor and the `after` set both key off the chosen model — the leader on
+        // a fresh pick, the kept current candidate on a kept role — and the floor
+        // never filters the pricier set, so a cheap-but-weak candidate set cannot
+        // starve the chain.
+        const after = plan.candidates.slice(plan.chosenIdx + 1);
+        const chosen = plan.candidates[plan.chosenIdx];
+        const cheaper = after.filter((p) => p.ranked.priceEff <= chosen.ranked.priceEff && p.ranked.q >= chosen.ranked.q * settings.fallbackQualityFloor);
+        const pricier = after.filter((p) => p.ranked.priceEff > chosen.ranked.priceEff);
         const chainPool = [...cheaper, ...pricier].slice(0, settings.fallbackChainDepth);
         // A chain value's thinking level is appended only when the target's
         // catalog entry advertises support (or the level is a meta level).
@@ -641,7 +661,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           // R_fallback over distinct gate-passing provider slugs (R_primary with
           // no pin). Only the pinned route is probe-verified: one unroutable
           // chain entry is survivable, omp fails over.
-          const chosenCandidate = plan.pool[plan.chosenIdx];
+          const chosenCandidate = plan.candidates[plan.chosenIdx];
           for (const r of rankedRoutes(chosenCandidate.ranked.model, plan.def)) {
             if (r.providerSlug === plan.pinnedSlug) continue;
             values.push(`openrouter/${chosenCandidate.catalogId}@${r.providerSlug}${levelFor(chosenCandidate.catalogId)}`);

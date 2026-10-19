@@ -122,10 +122,12 @@ test("a role that left the managed set is pruned from modelRoles", async () => {
 });
 
 test("fallback chain prefers candidates priced at or below the chosen model", async () => {
-  // Ranking (value): model-a 0.8107 (chosen), model-b 0.2336, model-c 0.2122.
-  // model-c is cheaper than the chosen model-a, model-b is pricier, so the
-  // cost-aware ordering puts model-c first even though model-b ranks higher.
-  const models = [makeModel("model-a", 95, 10, 100), makeModel("model-b", 90, 20, 60), makeModel("model-c", 0, 1, 30)];
+  // Ranking (value): model-a 0.9107 (chosen), model-b 0.8149, model-c 0.7893.
+  // model-c is priced at the chosen model-a's price and model-b is pricier, so
+  // the cost-aware ordering puts model-c first even though model-b ranks higher
+  // by value. model-c also clears the quality floor (q 1.1893 ≥ 0.9·1.3107) —
+  // a cheaper-or-equal candidate below the floor would be dropped instead.
+  const models = [makeModel("model-a", 95, 8, 100), makeModel("model-b", 93, 9, 60), makeModel("model-c", 89, 8, 30)];
   const settings = {
     roles: {
       default: { enabled: false },
