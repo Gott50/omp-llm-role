@@ -144,22 +144,49 @@ test("no suffix when the pinned level is not in the model's thinking[]", async (
 // configured margin keeps the incumbent and the override (0) switches.
 const OVERRIDE_CONFIG = 'modelRoles:\n  default: "openrouter/org/model-b"\n';
 
-/** One full updater pass over `models`, returning the written document (parsed
- * YAML), its raw text and the run result. Non-`default` shipped roles are
+// The exact fixed point of a passing run over `MODELS` with only `default`
+// enabled: the leader `model-a`, its chain, and the plugin-managed
+// `task.disabledAgents` line. A run handed this text has nothing left to write
+// (story 18), so the document must come back byte-identical.
+const FIXED_POINT = `modelRoles:
+  default: "openrouter/org/model-a:auto"
+retry:
+  fallbackChains:
+    openrouter/org/model-a:
+      - "openrouter/org/model-b:auto"
+      - "openrouter/org/model-c:auto"
+task:
+  disabledAgents:
+    - "designer"
+`;
+
+/** One full updater pass in the existing agent dir `dir`: the written document
+ * (parsed YAML), its raw text and the run result. Non-`default` shipped roles are
  * disabled so exactly one chain key is written. */
+async function runIn(
+  dir: string,
+  models = MODELS,
+  settings: Record<string, unknown> = {},
+  opts: { switchMargin?: number } = {},
+  depsOverrides: Partial<Parameters<typeof fakeDeps>[2]> = {},
+) {
+  const deps = fakeDeps(models, { roles: ONLY_DEFAULT, ...settings }, depsOverrides);
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, ...opts }));
+  const text = readFileSync(join(dir, "config.yml"), "utf8");
+  const doc = parseYaml(text) as { modelRoles?: Record<string, string>; retry?: { fallbackChains?: Record<string, string[]> } };
+  return { dir, result, text, modelRoles: doc.modelRoles ?? {}, chains: doc.retry?.fallbackChains ?? {} };
+}
+
+/** A fresh agent dir holding `configText`, then one pass in it (`runIn`). */
 async function writeRun(
   models = MODELS,
   configText = OVERRIDE_CONFIG,
   settings: Record<string, unknown> = {},
   opts: { switchMargin?: number } = {},
-  overrides: Partial<Parameters<typeof fakeDeps>[2]> = {},
+  depsOverrides: Partial<Parameters<typeof fakeDeps>[2]> = {},
 ) {
   const dir = setupAgentDir(configText);
-  const deps = fakeDeps(models, { roles: ONLY_DEFAULT, ...settings }, overrides);
-  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, ...opts }));
-  const text = readFileSync(join(dir, "config.yml"), "utf8");
-  const doc = parseYaml(text) as { modelRoles?: Record<string, string>; retry?: { fallbackChains?: Record<string, string[]> } };
-  return { dir, result, text, modelRoles: doc.modelRoles ?? {}, chains: doc.retry?.fallbackChains ?? {} };
+  return runIn(dir, models, settings, opts, depsOverrides);
 }
 
 function historyRows(dir: string): Record<string, unknown>[] {
@@ -188,12 +215,16 @@ test("without the override the same fixture keeps the incumbent (regression pin)
 });
 
 test("the override leaves an already-best incumbent kept-eligible", async () => {
-  const { result, modelRoles } = await writeRun(MODELS, 'modelRoles:\n  default: "openrouter/org/model-a:auto"\n', {}, { switchMargin: 0 });
+  const { result, text, modelRoles } = await writeRun(MODELS, FIXED_POINT, {}, { switchMargin: 0 });
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "kept-eligible");
   assert.equal(d.from, d.to);
   assert.equal(modelRoles.default, "openrouter/org/model-a:auto");
+  // Story 18: a margin-free run on a config that is already the fixed point
+  // writes nothing and leaves the file byte-identical.
+  assert.equal(result.wrote, false);
+  assert.equal(text, FIXED_POINT);
 });
 
 test("the override leaves the adopted path (current not in the pool) unchanged", async () => {
@@ -236,25 +267,28 @@ test("the chain is rebuilt from the newly chosen model under the override", asyn
 });
 
 test("the override is not persisted: a later run uses the configured margin, not the last override", async () => {
-  // The margin must be *observable* on the run that follows the override. On a
-  // fixed leaderboard it is not: a margin-free switch always lands on the
+  // All three runs share ONE agent dir — its state, its lock and the config.yml
+  // the previous run wrote — so a persisted override would actually be read back.
+  // The margin must also be *observable* on the run that follows the override. On
+  // a fixed leaderboard it is not: a margin-free switch always lands on the
   // leader, so the next run keeps it under any margin. The leaderboard is
   // therefore moved for the third run.
+  const dir = setupAgentDir(OVERRIDE_CONFIG);
   const configured = { roles: ONLY_DEFAULT, switchMargin: 0.3, priceSwitchFraction: 0 };
   const gone = [makeModel("model-w", 98, 1, 100), makeModel("model-a", 90, 5, 60), makeModel("model-c", 70, 10, 30)];
   // Run 1: `MODELS`, incumbent `model-b`, gap 0.148 inside the configured 0.3.
-  const one = await writeRun(MODELS, OVERRIDE_CONFIG, configured);
+  const one = await runIn(dir, MODELS, configured);
   assert.equal(one.result.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
   assert.equal(one.modelRoles.default, "openrouter/org/model-b:auto");
-  // Run 2: same leaderboard and the incumbent run 1 kept; the override adopts the
-  // leader — which the history row records as the only trace of the override.
-  const two = await writeRun(MODELS, 'modelRoles:\n  default: "openrouter/org/model-b"\n', configured, { switchMargin: 0 });
+  // Run 2: the same dir and leaderboard, so the incumbent is the one run 1 kept;
+  // the override adopts the leader, which run 2 writes to the shared config.
+  const two = await runIn(dir, MODELS, configured, { switchMargin: 0 });
   assert.equal(two.result.decisions.find((d) => d.role === "default")?.reason, "switched");
   assert.equal(two.modelRoles.default, "openrouter/org/model-a:auto");
-  // Run 3: `model-a` (the incumbent run 2 wrote) is now second to `model-w` by
-  // 0.1238 — inside the configured 0.3, so it is kept. A persisted override of
-  // 0 would switch to `model-w`.
-  const three = await writeRun(gone, 'modelRoles:\n  default: "openrouter/org/model-a"\n', configured);
+  // Run 3: plain, on the moved leaderboard, reading the config run 2 left behind.
+  // `model-a` is now second to `model-w` by 0.1238 — inside the configured 0.3,
+  // so it is kept. A persisted override of 0 would switch to `model-w`.
+  const three = await runIn(dir, gone, configured);
   const d = three.result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "kept-margin");
@@ -275,6 +309,35 @@ test("the history row records the override when active and omits it otherwise", 
   assert.equal(rows.length, 2);
   assert.equal(rows[0].switchMargin, 0);
   assert.equal("switchMargin" in rows[1], false);
+});
+
+test("an overridden run still stamps the day gate (story 12)", async () => {
+  const dir = setupAgentDir(OVERRIDE_CONFIG);
+  const deps = fakeDeps(MODELS, { roles: ONLY_DEFAULT, switchMargin: 0.6, priceSwitchFraction: 0 });
+  const forced = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, switchMargin: 0 }));
+  assert.equal(forced.decisions.find((d) => d.role === "default")?.reason, "switched");
+  const state = JSON.parse(readFileSync(join(dir, "llm-role-state.json"), "utf8")) as { lastRunDay?: string };
+  assert.equal(state.lastRunDay, deps.nowUtcDay());
+  // The stamp is live: a same-day session-start run without force then no-ops,
+  // even though it too carries the override.
+  const second = await runInTempDir(dir, () => runUpdater("session-start", deps, { switchMargin: 0 }));
+  assert.deepEqual(second.decisions, []);
+  assert.equal(second.wrote, false);
+});
+
+test("a non-finite switchMargin override is ignored, not applied", async () => {
+  // A NaN override must fail closed: `>= NaN` is always false, so applying it
+  // would silently degrade every role to `kept-margin`. It is dropped instead —
+  // the run is indistinguishable from one with no override at all.
+  const notified: string[] = [];
+  const nan = await writeRun(MODELS, OVERRIDE_CONFIG, { switchMargin: 0.6, priceSwitchFraction: 0 }, { switchMargin: Number.NaN }, { notify: (lines) => notified.push(...lines) });
+  const plain = await writeRun(MODELS, OVERRIDE_CONFIG, { switchMargin: 0.6, priceSwitchFraction: 0 });
+  assert.equal(nan.result.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
+  assert.equal(nan.modelRoles.default, "openrouter/org/model-b:auto");
+  assert.equal(nan.text, plain.text);
+  assert.equal(nan.result.wrote, plain.result.wrote);
+  assert.equal(notified.includes("switchMargin ignored for this run (--no-margin)"), false);
+  assert.equal("switchMargin" in historyRows(nan.dir)[0], false);
 });
 
 test("the run notification notes the ignored margin when the override is active", async () => {

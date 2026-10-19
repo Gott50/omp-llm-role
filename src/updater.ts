@@ -165,12 +165,13 @@ function decisionLine(d: Decision): string {
  * it undercuts the incumbent's effective price by `priceSwitchFraction` (0.5 =
  * at least twice as cheap). 0 disables the override.
  *
- * `margin` is the effective switch margin for the run: the resolved
- * `settings.switchMargin`, unless `runUpdater` was given a per-run override.
+ * The effective switch margin rides on `settings.switchMargin`: `runUpdater`
+ * passes a copy of the resolved settings carrying a per-run override (spec #99),
+ * so this helper reads one input, not two.
  */
-function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSettings, margin = settings.switchMargin): boolean {
+function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSettings): boolean {
   if (settings.priceSwitchFraction <= 0 || current.priceEff <= 0) return false;
-  if (best.value < current.value - margin) return false;
+  if (best.value < current.value - settings.switchMargin) return false;
   return best.priceEff <= current.priceEff * (1 - settings.priceSwitchFraction);
 }
 
@@ -363,11 +364,15 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     const decisions: Decision[] = [];
     const notes: string[] = [];
     // Per-run `switchMargin` override (spec #99, `/refresh-roles --no-margin`):
-    // the effective margin for the hysteresis ladder of this run only. It never
-    // reaches the lock file, the state or `resolveSettings`, and every other use
-    // of `settings` keeps the configured value.
-    const marginOverride = typeof opts?.switchMargin === "number" ? opts.switchMargin : undefined;
-    const margin = marginOverride ?? settings.switchMargin;
+    // it never reaches the lock file, the state or `resolveSettings` (which still
+    // validates the configured value). A non-finite override is ignored, so the
+    // configured margin applies (fail closed) instead of `>= NaN` degrading every
+    // role to `kept-margin`.
+    const marginOverride = typeof opts?.switchMargin === "number" && Number.isFinite(opts.switchMargin) ? opts.switchMargin : undefined;
+    // The hysteresis ladder reads the run's effective margin: the resolved setting,
+    // unless a per-run override replaced it. A copy, so every other consumer of
+    // `settings` keeps the configured value.
+    const hysteresis = marginOverride !== undefined ? { ...settings, switchMargin: marginOverride } : settings;
     if (marginOverride !== undefined) notes.push("switchMargin ignored for this run (--no-margin)");
     if (availability.active) {
       notes.push(
@@ -516,8 +521,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       else if (currentEntry.ranked.model.id === best.ranked.model.id) {
         chosen = currentEntry;
         reason = "kept-eligible";
-      } else if (best.ranked.value - currentEntry.ranked.value >= margin) reason = "switched";
-      else if (cheaperInsideMargin(best.ranked, currentEntry.ranked, settings, margin)) reason = "switched-cost";
+      } else if (best.ranked.value - currentEntry.ranked.value >= hysteresis.switchMargin) reason = "switched";
+      else if (cheaperInsideMargin(best.ranked, currentEntry.ranked, hysteresis)) reason = "switched-cost";
       else {
         chosen = currentEntry;
         reason = "kept-margin";

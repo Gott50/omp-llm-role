@@ -14,6 +14,36 @@ spec #81's explorer surfaces — the ranking CLI itself is unchanged); the
 provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
 bullet). Neither is re-derived on read.
 
+- `/refresh-roles --no-margin` (2026-10-19, spec #99): the command's args were
+  ignored; they are now parsed by `parseRefreshRolesArgs` (an unrecognized token
+  is reported as a usage line and **no run happens** — a deliberate change,
+  `/refresh-roles <garbage>` used to run a normal refresh), and `--no-margin` runs
+  the pipeline with `switchMargin` 0 **for that run only** — the README's own
+  meaning of 0 ("always take the best"), so every role whose current model is in
+  its candidate pool adopts that pool's leader. The override rides
+  `runUpdater`'s `opts.switchMargin` and reaches the hysteresis ladder through a
+  **copy** of the resolved settings, so every other consumer of `settings` keeps
+  the configured value: `priceSwitchFraction`, `fallbackQualityFloor`,
+  `fallbackChainDepth`, `writeFallbackChains`, the ranking, the value formula, the
+  probe walk, the auto-pin, the chain's rules, the thinking levels and the
+  prune-on-pin-change are all unchanged — the chain's **input** follows the new
+  selector, so the written chain changes with it. Nothing is persisted: the
+  override never reaches the lock file, the state or `resolveSettings` (which
+  still validates the configured value), a **non-finite** value is ignored (fail
+  closed — an applied `NaN` would make `>= NaN` false and silently degrade every
+  role to `kept-margin`), and a later run in the same scope uses the configured
+  margin again. It applies to a project-scoped run too, because the settings are
+  resolved after the project lock is read. The run's notification gains
+  `switchMargin ignored for this run (--no-margin)` and the history row gains a
+  `switchMargin` field, both only when the override was active; the day gate is
+  still stamped. No new setting, no settings-schema or explorer change, no CLI
+  change and no new `DecisionReason`: with the margin at 0 the existing ladder
+  yields `kept-eligible` (the incumbent *is* the pool leader), `switched` or
+  `adopted`, and `kept-margin`/`switched-cost` become unreachable for that run. The
+  ranking numbers are unchanged — the margin is a hysteresis input, not a ranking
+  input — so `docs/llm-role-rankings.md` is not regenerated and the dated numbers
+  below stand as written; the suite grew 666 → 688.
+
 - Fallback chain quality floor (2026-10-19, spec #95): a role's fallback chain no
   longer only reorders the probe window — that window is `1 + fallbackChainDepth`
   models, the same size as the chain, so the reorder could never reach a cheaper
