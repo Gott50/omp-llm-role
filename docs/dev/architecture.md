@@ -161,10 +161,16 @@ The omp extension injects the production `Deps`; tests inject fakes.
 8. **Suffix.** Append `roles.<role>.thinking` only when the chosen catalog row's
    `thinking[]` includes the level (meta levels `off`/`auto` need only a
    non-empty list).
-9. **Chains.** For every managed role, `chainUpserts` (bare key → next
-   `fallbackChainDepth` probe-clean candidates, suffixed per target) and
-   `chainPrunes` (plugin-written keys no longer referenced). A key claimed by
-   more than one role stays level-free.
+9. **Chains.** For every managed role, `chainUpserts` (bare key → the next
+   `fallbackChainDepth` fallback models drawn from the role's ranked candidate
+   list below the chosen model — the cheaper-or-equal candidates that retain at
+   least `fallbackQualityFloor` of its `q` first, then the pricier ones, each
+   bucket in value order, truncated to the depth — suffixed per target) and
+   `chainPrunes` (plugin-written keys no longer referenced). The list is the
+   ranked candidate list minus the key-blocked and probe-`blocked` candidates; an
+   unprobed candidate stays eligible, so the chain can reach a cheaper-or-equal
+   model below the probe window (writes-and-state.md, *Which models are
+   chained*). A key claimed by more than one role stays level-free.
 10. **Config patch.** `writePatch` acquires the refresh lock, reads `config.yml`,
     `patchConfig` (surgical, self-checked), `writeConfigAtomic` (mtime-guarded
     tmp+rename, 3 conflict retries). Zero changes → no write, no mtime change.
