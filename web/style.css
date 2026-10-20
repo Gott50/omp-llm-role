@@ -176,6 +176,29 @@ table { border-collapse: collapse; width: 100%; }
 #table tbody tr.row { cursor: pointer; }
 #table tbody tr.row:hover { background: var(--panel-2); }
 #table tbody tr.row.selected { background: rgba(110, 168, 254, 0.16); }
+/* The prospective pick (the selection rule's model) and the rows the bar
+   excluded. Both are row-level marks: the pick gets an accent stripe + tint,
+   an excluded row a warn stripe + dimmed text. The key badge keeps its own
+   colour, so the dimming skips the key cell. */
+#table tbody tr.row.pick { background: rgba(110, 168, 254, 0.14); }
+#table tbody tr.row.pick td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+#table tbody tr.row.pick td.model { font-weight: 600; }
+#table tbody tr.row.excluded td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+#table tbody tr.row.excluded td.model, #table tbody tr.row.excluded td.org, #table tbody tr.row.excluded td.num { color: var(--muted); }
+
+/* The selection readout: the bar (cheapest mode only) and the candidates it
+   excluded. Both are absent in value mode, which has no bar. */
+#selection-bar { margin-bottom: 8px; }
+#selection-bar .sel-line { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; font-size: 12px; }
+#selection-bar .sel-title { font-weight: 600; }
+#selection-bar .sel-bar { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+#selection-bar .sel-bar .bar { width: 240px; }
+#excluded { margin-top: 8px; }
+#excluded .excluded-head { font-size: 12px; font-weight: 600; color: var(--warn); }
+#excluded .excluded-list { margin: 4px 0 0; padding-left: 18px; font-size: 12px; }
+#excluded .excluded-list li { margin: 2px 0; }
+#excluded .excluded-list .model { font-family: var(--mono); }
+#excluded .excluded-list .metric { color: var(--fg); }
 
 #right h2 { margin: 0 0 4px; font-size: 15px; }
 #right h3 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
