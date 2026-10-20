@@ -1342,6 +1342,44 @@ export function paretoFrontier(ranked: Ranked[]): Set<string> {
   return frontier;
 }
 
+/** A role's primary-selection rule: `value` (the highest value — today's
+ * behaviour) or `cheapest` (the cheapest candidate clearing `qualityFloor`). */
+export type SelectionMode = "value" | "cheapest";
+
+/** The bar and the pick for a `cheapest` selection over a rank-ordered pool. */
+export type BarSelection = {
+  /** the highest-`q` candidate (the bar's anchor) */
+  anchor: Ranked;
+  /** `qualityFloor × anchor.q` */
+  bar: number;
+  /** the candidates at or above the bar, in rank order */
+  good: Ranked[];
+  /** the cheapest good candidate (ties: higher `q`, then `model.id` ascending) */
+  pick: Ranked;
+};
+
+/** The cheapest-above-bar selection over `pool`. `null` for an empty pool.
+ *
+ * The anchor is the highest-`q` candidate — a quality statement, not a price
+ * one — so the bar reads the same on every role's quality scale. `qualityFloor`
+ * 0 admits every candidate; 1 admits only the anchor. Pure: no I/O, and `pool`
+ * is never mutated. */
+export function barSelection(pool: Ranked[], qualityFloor: number): BarSelection | null {
+  if (pool.length === 0) return null;
+  let anchor = pool[0];
+  for (const r of pool) if (r.q > anchor.q) anchor = r;
+  const bar = qualityFloor * anchor.q;
+  // The anchor is the bar's anchor: only a negative anchor `q` (a model below
+  // every benchmark's chance line) could put it under its own bar.
+  const good = pool.filter((r) => r.q >= bar || r === anchor);
+  let pick = good[0];
+  for (const r of good) {
+    if (r.priceEff < pick.priceEff) pick = r;
+    else if (r.priceEff === pick.priceEff && (r.q > pick.q || (r.q === pick.q && r.model.id < pick.model.id))) pick = r;
+  }
+  return { anchor, bar, good, pick };
+}
+
 // ---------------------------------------------------------------------------
 // Daily caches
 // ---------------------------------------------------------------------------
