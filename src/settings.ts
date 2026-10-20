@@ -250,9 +250,10 @@ export type ResolvedSettings = {
   selection: SelectionMode;
   /**
    * Quality floor for `cheapest` mode: a cheaper candidate qualifies only if it
-   * retains at least this fraction of the best-value model's `q`. 0 disables the
-   * bar (any candidate qualifies); 1 requires the anchor's exact `q`. Inert in
-   * `value` mode.
+   * retains at least this fraction of the pool's highest-`q` model's `q` (the
+   * anchor — a quality statement, not the value leader). 0 disables the bar (any
+   * candidate qualifies); 1 requires the anchor's exact `q`. Inert in `value`
+   * mode.
    */
   qualityFloor: number;
   roles: Record<string, RoleDef>;
@@ -356,7 +357,7 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
     },
     qualityFloor: {
       type: "number",
-      description: "In cheapest mode, the fraction of the best-value model's quality a cheaper candidate must retain (0 disables; inert in value mode)",
+      description: "In cheapest mode, the fraction of the pool's highest-q model's quality a cheaper candidate must retain (0 disables; inert in value mode)",
       default: DEFAULT_SETTINGS.qualityFloor,
       min: 0,
       max: 1,
