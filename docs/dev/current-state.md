@@ -1,4 +1,4 @@
-# Current state (2026-10-19)
+# Current state (2026-10-20)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
@@ -6,13 +6,16 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
-ranking numbers below are the 2026-10-19 measurement (regenerated at the 1.3.0
-cut; byte-identical to the 2026-10-18 one apart from the report's date line —
-the input-price blend basis #21, the #17/#18/#19/#20 wave, the #34–#40
-focus-axis/capability-flag work, and
-spec #81's explorer surfaces — the ranking CLI itself is unchanged); the
-provider-pin numbers are the 2026-10-11 measurement (spec #71; see the top
-bullet). Neither is re-derived on read.
+ranking numbers below are the 2026-10-20 measurement (regenerated at the 1.5.0
+cut). The pool moved 408 → 416 models and six leaders moved (`default`, `smol`,
+`vision`, `commit`, `tiny`, `task`; `slow`, `plan` and `advisor` held) because
+the daily caches moved, not the code: the ranking CLI
+is unchanged since the 2026-10-19 measurement, which was itself byte-identical
+to the 2026-10-18 one apart from the report's date line — the input-price blend
+basis #21, the #17/#18/#19/#20 wave, the #34–#40 focus-axis/capability-flag
+work, and spec #81's explorer surfaces. The provider-pin numbers are the
+2026-10-11 measurement (spec #71; see the top bullet). Neither is re-derived on
+read.
 
 - `/refresh-roles --no-margin` (2026-10-19, spec #99): the command's args were
   ignored; they are now parsed by `parseRefreshRolesArgs` (an unrecognized token
@@ -40,9 +43,10 @@ bullet). Neither is re-derived on read.
   change and no new `DecisionReason`: with the margin at 0 the existing ladder
   yields `kept-eligible` (the incumbent *is* the pool leader), `switched` or
   `adopted`, and `kept-margin`/`switched-cost` become unreachable for that run. The
-  ranking numbers are unchanged — the margin is a hysteresis input, not a ranking
-  input — so `docs/llm-role-rankings.md` is not regenerated and the dated numbers
-  below stand as written; the suite grew 666 → 688.
+  margin is a hysteresis input, not a ranking input, so the ranking itself is
+  unchanged — the report was regenerated at the 1.5.0 cut like every cut, and the
+  numbers below moved because the daily caches moved, not because of this flag;
+  the suite grew 666 → 688.
 
 - Fallback chain quality floor (2026-10-19, spec #95): a role's fallback chain no
   longer only reorders the probe window — that window is `1 + fallbackChainDepth`
@@ -789,18 +793,18 @@ bullet). Neither is re-derived on read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 408 llm-stats models; OpenRouter matched 149/408 (throughput), 148 priced (the
-  2026-10-09 snapshot read 155/408 — the daily cache moved, not the code; the
+- 416 llm-stats models; OpenRouter matched 151/416 (throughput), 149 priced (the
+  2026-10-19 snapshot read 149/408 — the daily cache moved, not the code; the
   #34–#40 axes and flags leave every ranking byte-identical until a flag is
   turned on).
-- Eligible per role: 140 (vision 73, designer 87, image-input filter).
+- Eligible per role: 142 (vision 76, designer 89, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.807), `smol` DeepSeek-V4.1-Flash (0.706),
-  `slow` Gemini 4 Argon (0.834), `vision` Gemini 4 Argon (0.732),
-  `plan` Muse Spark 1.3 (0.789), `commit` DeepSeek-V4.1-Flash (0.736), `tiny`
-  Mercury 2 (0.797), `task` DeepSeek-V4.1-Flash (0.750), `advisor`
-  Muse Spark 1.3 (0.785), `designer` DeepSeek-V4.1-Flash (0.772).
+  `default` DeepSeek-V4.1-Flash-1017 (0.804), `smol` Muse Spark 1.1 (0.760),
+  `slow` Gemini 4 Argon (0.835), `vision` DeepSeek-V4.1-Flash-1017 (0.736),
+  `plan` Muse Spark 1.3 (0.782), `commit` Muse Spark 1.1 (0.801), `tiny`
+  Muse Spark 1.1 (0.872), `task` DeepSeek-V4.1-Flash-1017 (0.745), `advisor`
+  Muse Spark 1.3 (0.773), `designer` DeepSeek-V4.1-Flash-1017 (0.776).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)

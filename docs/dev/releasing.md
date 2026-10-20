@@ -122,6 +122,38 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   push publishes to npm over OIDC and creates the GitHub Release. The guard was
   verified with a negative control — tag `v0.0.1` against version `1.1.0` failed
   in `notes` before any publish.
+- **1.5.0 published by CD 2026-10-20** (run 39380792274, tag push): the guard
+  and the npm floor passed, `npm publish` completed over OIDC trusted publishing
+  with a provenance attestation, and the GitHub Release was created with the
+  1.5.0 CHANGELOG section as its body
+  (`https://github.com/Gott50/omp-llm-role/releases/tag/v1.5.0`). Verified:
+  `dist-tags.latest` = `1.5.0`, npm's `gitHead` = `f028779` (the tag's commit),
+  and the publish step's log carries the direct-publish signature (`Publishing
+  to https://registry.npmjs.org/ with tag latest and default access`, `Signed
+  provenance statement`, `+ omp-llm-role@1.5.0`, 60 files / 358.1 kB). The cut
+  (`f028779`, tagged `v1.5.0`) bumped the four lockstep fields, renamed
+  `## [Unreleased]` to `## [1.5.0] - 2026-10-20`, and regenerated the report
+  (416 models, matched 151/416, priced 149 — the pool moved 408 → 416 and six
+  leaders moved, `default`/`smol`/`vision`/`commit`/`tiny`/`task`, because the
+  daily caches moved, not the code; `docs/dev/current-state.md` refreshed to the
+  same measurement).
+  The release carries spec #99 (`/refresh-roles --no-margin`), merged to `main`
+  in the same push.
+- **1.5.0 install routes smoke-tested** (2026-10-20, omp 18.12.3, throwaway
+  `HOME`s, cwd outside the real home tree): npm
+  (`omp plugin install omp-llm-role`), git
+  (`omp plugin install github:Gott50/omp-llm-role`) and marketplace
+  (`omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins`) each installed 1.5.0
+  (`omp plugin doctor`: 4 ok / 0 warnings / 0 errors for npm and git; the
+  marketplace install reports 2 ok / 1 warning — the expected
+  `package_manifest: Not created yet`, which also means doctor has no
+  `plugin:omp-llm-role` line to enumerate). Each post-install session run
+  (`omp -p "say ok"` with `OPENROUTER_API_KEY` from `omp token openrouter`) wrote
+  `modelRoles` (9 roles), `retry.fallbackChains` (3 keys) and
+  `task.disabledAgents: [designer]` into that HOME's `config.yml`, landed
+  `llm-role-state.json` + `llm-role-history.jsonl` + `llm-role-usage.jsonl`, and
+  answered `ok`.
 - **1.4.0 published by CD 2026-10-19** (run 39310823843, tag push): the guard
   and the npm floor passed, `npm publish` completed over OIDC trusted publishing
   with a provenance attestation (transparency log
@@ -264,7 +296,7 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 - **Stray registry placeholder.** The registry also carries a `0.0.0-stage`
   version ("Temporary package placeholder for staged publishing", 334 B,
   published 2026-10-03). It is not from this tree and does not affect installs
-  (`latest` is `1.4.0`).
-- **Next release: none owed.** `## [Unreleased]` is empty — the 1.4.0 cut moved
-  its entries under `## [1.4.0] - 2026-10-19`; the number comes from the
+  (`latest` is `1.5.0`).
+- **Next release: none owed.** `## [Unreleased]` is empty — the 1.5.0 cut moved
+  its entries under `## [1.5.0] - 2026-10-20`; the number comes from the
   Unreleased scope, not from the open issues.
