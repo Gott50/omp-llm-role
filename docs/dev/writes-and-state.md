@@ -300,6 +300,51 @@ none is routable is different: that is the **dropped pin** above — still no pi
 but recorded (`pinDropped`). With the capability off the written config is
 byte-identical to before.
 
+## The selection decision (spec #103)
+
+The per-role selection step (`src/updater.ts`) names the model the selector
+writes. Two settings choose the rule: `selection` (`"value"` default, or
+`"cheapest"`) and `qualityFloor` (a number in `[0, 1]`, default `0.9`, inert in
+`"value"` mode); a role's own `roles.<role>.selection` / `roles.<role>.qualityFloor`
+overrides the global. The rule and its math are in scoring.md, *Selection rule —
+the cheapest model above the bar*; this section is the write path's view.
+
+`"value"` mode (the default) is unchanged: the pool leader is the value leader
+and the hysteresis ladder is `switchMargin`-first. `"cheapest"` mode replaces the
+objective with the cheapest candidate at or above `qualityFloor × anchor.q`
+(anchor = the pool's highest-`q` candidate). The decision table (`current` = the
+model the selector names, `good` = the bar-clearing candidates, `pick` = the
+cheapest of them):
+
+| condition | reason | chosen |
+|---|---|---|
+| `current` not in the pool | `adopted` | `pick` |
+| `current` in the pool, not in `good` | `switched` | `pick` |
+| `current` in `good`, `pick` is `current` | `kept-eligible` | `current` |
+| `current` in `good`, `pick.priceEff <= current.priceEff × (1 − priceSwitchFraction)` | `switched-cost` | `pick` |
+| `current` in `good`, otherwise | `kept-margin` | `current` |
+
+(plus `no-current` when the role has no selector at all). The reason vocabulary
+is unchanged — no new `DecisionReason` — but `switched` now also means "the
+incumbent fell below the bar" (dropped with no margin), and the kept branch
+re-checks the bar. The primary hysteresis is **cost-side only** in this mode:
+`switchMargin` is **not consulted**; `priceSwitchFraction` (default `0.5`) is the
+only margin, and `0` disables the cost-side switch. The value ranking is still
+computed and still reported in the decision's `value` / `bestValue` /
+`currentValue` fields, so history rows stay comparable across modes.
+
+The rule's pool is the role's **usable candidate set** (catalog/tier gate +
+allowed-providers prune + keyed-catalog prune) — not the probe window; the pick
+is probe-verified on demand (a blocked pick falls through to the next-cheapest
+bar-clearing candidate). The fallback chain, the auto-pin, the route expansion,
+the thinking levels and the prune-on-pin-change are unchanged; a locked role and
+a disabled role are untouched, and a manual `providerPin` keeps its **hard-gate**
+meaning — the rule picks within the pin-eligible pool (never the value leader),
+and a model with no matching route is ineligible. An empty or all-key-blocked
+pool leaves the role untouched. The two floors are **not merged**:
+`fallbackQualityFloor` (below) gates chain membership only; `qualityFloor` gates
+the primary choice only.
+
 ## State, history, lock
 
 All under the agent dir (`agentDir()` in `src/state.ts`), next to the config
