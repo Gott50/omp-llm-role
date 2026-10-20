@@ -122,7 +122,7 @@ Global knobs:
 
 | Knob | Default | Meaning |
 |---|---|---|
-| `switchMargin` | `0.02` | Value margin a challenger must beat the incumbent by before switching; `0` = always take the best |
+| `switchMargin` | `0.02` | Value margin a challenger must beat the incumbent by before switching; `0` = always take the best. `/refresh-roles --no-margin` treats this as `0` for that one run without changing the setting |
 | `priceSwitchFraction` | `0.5` | Inside the margin, adopt a challenger at least this fraction cheaper (0.5 = half the $/M); `0` disables |
 | `writeFallbackChains` | `true` | Write per-role fallback chains into `config.yml` |
 | `fallbackChainDepth` | `2` | Fallback models per role chain |
@@ -249,7 +249,7 @@ with the offending role/key and no write.
 
 ```sh
 # in-session (omp)
-/refresh-roles                          # force a run now
+/refresh-roles [--no-margin]            # force a run now; --no-margin ignores switchMargin for this run
 /explore-roles [--port N] [--no-open]   # interactive ranking UI
 /create-agent <request> [options]       # agent + role + wiring (free text or flags)
 /create-agent --name <n> --purpose <text> [options]   # agent + role + wiring
@@ -263,7 +263,18 @@ node --test tests/
 ```
 
 - `/refresh-roles` — force the daily pipeline now (same path as the session-start
-  run).
+  run). `--no-margin` treats `switchMargin` as `0` **for that run only** — the
+  README's own "always take the best" reading: every role whose current model is
+  in its candidate pool adopts the pool leader, while a role already holding the
+  leader, a locked or disabled role, and a role whose current model is not in the
+  pool (key-blocked, probe-blocked, unranked) are unchanged. The override is
+  never written to the settings or the state — the next session-start run uses the
+  configured margin again — and `priceSwitchFraction` is untouched, so a role can
+  move onto a pricier model (the margin is a value band, not a price band). The
+  notification says so (`switchMargin ignored for this run (--no-margin)`) and
+  the run's history row records the effective margin. A project-scoped run
+  honours the flag too; an unrecognised token prints a usage line and runs
+  nothing.
 - `/explore-roles` — boot the explorer in-process (see below); `--port` picks a
   preferred port (default 5177, a busy port falls back to a free one) and
   `--no-open` skips the browser.

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { PROJECT_REGISTRY_FILE, readProjectRegistry } from "../src/project-registry.ts";
+import { readPluginSettingsMap } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeModel } from "./helpers.ts";
 
@@ -90,6 +91,28 @@ test("project mode: the day gate is per scope (a second same-day run is a no-op)
   const second = await runInProject(ws.root, ws.globalDir, () => runUpdater("session-start", deps));
   assert.deepEqual(second.decisions, []);
   assert.equal(second.wrote, false);
+});
+
+test("project mode: a project-scoped run honours the switchMargin override (story 21)", async () => {
+  // The project lock's own settings carry a margin wide enough to keep the
+  // incumbent (`model-a` leads `model-b` by ~0.148), and the project config pins
+  // that incumbent.
+  const ws = projectWorkspace({ switchMargin: 0.6, priceSwitchFraction: 0 });
+  writeFileSync(join(ws.projectDir, "config.yml"), 'modelRoles:\n  default: "openrouter/org/model-b"\n');
+  // Read the project lock (the developer's real user-level lock is left out of
+  // the test by pointing the global read at a file that does not exist).
+  const settings = readPluginSettingsMap({ global: join(ws.globalDir, "absent.lock.json"), project: join(ws.projectDir, "plugins", "omp-plugins.lock.json") });
+  const deps = fakeDeps(MODELS, {}, { getSettings: async () => settings });
+
+  const kept = await runInProject(ws.root, ws.globalDir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(kept.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
+  assert.match(readFileSync(join(ws.projectDir, "config.yml"), "utf8"), /default: "openrouter\/org\/model-b/);
+
+  const forced = await runInProject(ws.root, ws.globalDir, () => runUpdater("manual", deps, { force: true, switchMargin: 0 }));
+  assert.equal(forced.decisions.find((d) => d.role === "default")?.reason, "switched");
+  // The leader landed in the project's config, and the global scope stayed empty.
+  assert.match(readFileSync(join(ws.projectDir, "config.yml"), "utf8"), /default: "openrouter\/org\/model-a/);
+  assert.equal(existsSync(join(ws.globalDir, "config.yml")), false);
 });
 
 // ---------------------------------------------------------------------------

@@ -29,11 +29,28 @@ passing.
    into the block form on write, with a prune-only patch creating nothing (issue
    #54); a sibling `retry.*` key neither aborts the chain scan nor swallows an
    appended chain key (issue #55); the patched output parses as real YAML.
-5. **Hysteresis** (`hysteresis.test.ts`) — no-current adopt; ineligible current
-   switch; margin-below keep; margin-above switch; `switchMargin: 0` always takes
-   best; cost override (`switched-cost`); `priceSwitchFraction: 0` keeps the
-   margin in charge; an inside-margin challenger short of the fraction stays
-   kept; the day gate.
+5. **Hysteresis** (`hysteresis.test.ts`, `refresh-roles-args.test.ts`) —
+   no-current adopt; ineligible current switch; margin-below keep; margin-above
+   switch; `switchMargin: 0` always takes best; cost override
+   (`switched-cost`); `priceSwitchFraction: 0` keeps the margin in charge; an
+   inside-margin challenger short of the fraction stays kept; the day gate. The
+   per-run `switchMargin` override (spec #99, `/refresh-roles --no-margin`): a
+   challenger inside the configured margin switches to the leader with the
+   override and stays `kept-margin` without it; an already-best incumbent stays
+   `kept-eligible` and the run writes nothing at all (the config comes back
+   byte-identical); the adopted path, a locked role and a disabled role are
+   untouched; the chain is rebuilt from the newly chosen selector; the override
+   does not outlive its run (three runs in one agent dir — state, lock and the
+   written config — where a carried-over 0 would move the third run's leader) and
+   is never written to the lock or the state; it still stamps the day gate and
+   still aborts on an out-of-range **configured** margin; a non-finite override is
+   ignored, so the configured margin applies with no note line and no history
+   field; the notification's `switchMargin ignored for this run (--no-margin)`
+   line and the row's `switchMargin` field appear only when the override is
+   active. The parser (`parseRefreshRolesArgs`): `--no-margin` → the override, no
+   args → none, any other token (including `--no-margin=0.05`) → the usage line
+   and **no run**; the handler hands the parsed opts to the updater, and the
+   extension still registers `/refresh-roles` with its siblings.
 6. **Chain pruning + the quality floor** (`chain-pruning.test.ts`,
    `chain-quality-floor.test.ts`) — plugin-written stale keys removed;
    owner-written keys preserved; `writeFallbackChains: false`; a role that left
@@ -309,7 +326,12 @@ passing.
 - **E2E refresh** — `omp plugin link .` → new omp session → observe the day-gated
   run; `/refresh-roles` → verify the `config.yml` diff + notification; a second
   same-day session → no-op; a forced `/refresh-roles` matches the in-session
-  decisions; `/explore-roles --no-open` → `curl` the notified port for
+  decisions; `/refresh-roles --no-margin` → the notification carries
+  `switchMargin ignored for this run (--no-margin)`, every role whose incumbent is
+  in its candidate pool moves to that pool's leader, the history row carries
+  `switchMargin: 0`, and the **next** session-start run uses the configured margin
+  again; `/refresh-roles --oops` → the usage line and no run at all;
+  `/explore-roles --no-open` → `curl` the notified port for
   `/api/bootstrap`, a repeat invocation keeps the same port, and the port is
   released when the session ends.
 - **Agent creation** — `/create-agent` in a session (RPC mode dispatches slash

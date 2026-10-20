@@ -143,8 +143,17 @@ The omp extension injects the production `Deps`; tests inject fakes.
    omp's runtime-fallback domain. Blocked candidates are excluded and recorded on
    the decision.
 6. **Hysteresis.** `no-current` → adopt; ineligible current → `adopted`; best
-   beats current by `switchMargin` → `switched`; inside the margin but
+   beats current by the run's **effective margin** → `switched`; inside it but
    `cheaperInsideMargin` → `switched-cost`; else `kept-margin` / `kept-eligible`.
+   The effective margin is the resolved `settings.switchMargin`, unless
+   `opts.switchMargin` (a number) overrides it for this run — `/refresh-roles
+   --no-margin` passes `0`, which makes `kept-margin` and `switched-cost`
+   unreachable and leaves every pool member switching to its leader. The override
+   replaces the hysteresis input only: it is never written to the lock file or
+   the state, `resolveSettings` still validates the configured value, and
+   `priceSwitchFraction` keeps its configured value. It is not persisted, so the
+   next run uses the configured margin again; the row it writes records the
+   override (see [`writes-and-state.md`](writes-and-state.md)).
 7. **Route pin (auto-pin).** With the `providerPinning` capability on and no
    manual `providerPin`, the chosen model's `rankedRoutes` order is walked and
    each candidate is probed with `probeRoute` (a one-token completion bound to
@@ -257,7 +266,8 @@ before `catalogFromOmpModelsJson`.
 
 - **Extension** (`src/extension.ts`, default export): `session_start` (awaited
   `runUpdater("session-start", extDeps(pi, ctx))`), `/refresh-roles`
-  (`runUpdater("manual", …, { force: true })`), `/explore-roles` (in-process
+  (`runUpdater("manual", …, { force: true })`, plus `switchMargin: 0` when the
+  user passes `--no-margin`), `/explore-roles` (in-process
   `startExplorer`), `/create-agent` (architect → `createAgent` → in-process
   `runUpdater`), `/remove-agent` (`removeAgent` → in-process `runUpdater`),
   `/project-roles` (profile architect → `setupProject` → in-process

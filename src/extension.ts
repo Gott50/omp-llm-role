@@ -278,6 +278,33 @@ function parseExplorerArgs(args: string): { port: number | undefined; open: bool
   return { port: valid, open };
 }
 
+export const REFRESH_ROLES_USAGE = [
+  "Usage: /refresh-roles [--no-margin]",
+  "",
+  "  Runs the refresh pipeline now (same path as the day-gated session start).",
+  "",
+  "  --no-margin        ignore switchMargin for this run: every role whose",
+  "                     current model is in its pool takes the pool leader",
+].join("\n");
+
+/**
+ * Parse the raw text after `/refresh-roles` (tokenized here, so the command and
+ * the tests share one parser). The only flag is `--no-margin`, which the updater
+ * applies to the per-role hysteresis of that run only; any other token is
+ * reported instead of silently running a normal refresh.
+ */
+export function parseRefreshRolesArgs(args: string): { ok: true; switchMargin?: number } | { ok: false; error: string } {
+  let switchMargin: number | undefined;
+  for (const token of tokenizeArgs(args)) {
+    if (token === "--no-margin") {
+      switchMargin = 0;
+      continue;
+    }
+    return { ok: false, error: `unknown flag "${token}"\n\n${REFRESH_ROLES_USAGE}` };
+  }
+  return switchMargin === undefined ? { ok: true } : { ok: true, switchMargin };
+}
+
 /** Mirror a line to the UI, and to stderr when the mode has no UI. */
 function notifyLine(ctx: ExtContext, line: string, level: "info" | "warning"): void {
   ctx.ui.notify(line, level);
@@ -511,6 +538,35 @@ function gatherProjectArtifacts(cwd: string): string {
   return parts.join("\n\n");
 }
 
+/**
+ * `/refresh-roles [--no-margin]` — the manual trigger of the refresh pipeline.
+ * Extracted from the registration so the arg handling can be driven with a stub
+ * runner: the real run reaches the network (rankings, catalog, key metadata),
+ * the flag handling must not. `run` defaults to `runUpdater`, which is what the
+ * extension registers.
+ */
+export function registerRefreshRoles(pi: ExtensionAPI, run: typeof runUpdater = runUpdater): void {
+  pi.registerCommand("refresh-roles", {
+    description: "Refresh model roles from today's llm-stats/OpenRouter rankings",
+    handler: async (args, ctx: ExtContext) => {
+      const parsed = parseRefreshRolesArgs(typeof args === "string" ? args : "");
+      if (!parsed.ok) {
+        notifyLines(ctx, parsed.error);
+        return;
+      }
+      try {
+        const runResult = await run("manual", extDeps(pi, ctx), {
+          force: true,
+          ...(parsed.switchMargin !== undefined ? { switchMargin: parsed.switchMargin } : {}),
+        });
+        reportDefect(ctx, "refresh-roles", runResult.defect);
+      } catch (err) {
+        reportCommandError(ctx, "refresh-roles", err);
+      }
+    },
+  });
+}
+
 export default function (pi: ExtensionAPI) {
   /** Loopback explorer owned by this session binding (null until launched). */
   let explorer: ExplorerHandle | null = null;
@@ -559,17 +615,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_end", async (_event, ctx: ExtContext) => recordUsage(ctx));
   pi.on("session_shutdown", async (_event, ctx: ExtContext) => recordUsage(ctx));
 
-  pi.registerCommand("refresh-roles", {
-    description: "Refresh model roles from today's llm-stats/OpenRouter rankings",
-    handler: async (_args, ctx: ExtContext) => {
-      try {
-        const runResult = await runUpdater("manual", extDeps(pi, ctx), { force: true });
-        reportDefect(ctx, "refresh-roles", runResult.defect);
-      } catch (err) {
-        reportCommandError(ctx, "refresh-roles", err);
-      }
-    },
-  });
+  registerRefreshRoles(pi);
 
   // In-process explorer: no subprocess, catalog from the live model registry.
   // Same server src/explorer/boot.ts exposes, so the UI's numbers are the
