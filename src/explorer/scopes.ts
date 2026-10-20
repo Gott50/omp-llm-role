@@ -7,7 +7,7 @@
  */
 
 import { existsSync } from "node:fs";
-import type { RoleDef } from "../engine.ts";
+import type { RoleDef, SelectionMode } from "../engine.ts";
 import { readProjectRegistry } from "../project-registry.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type UniverseEntry } from "../settings.ts";
 
@@ -26,6 +26,10 @@ export type Scope = {
   /** Project root (project scopes only). */
   root?: string;
 };
+
+/** A scope's GLOBAL model-selection rule: the resolved `selection` mode and its
+ * `qualityFloor`. A role's own `selection`/`qualityFloor` overrides it. */
+export type ScopeSelection = { mode: SelectionMode; qualityFloor: number };
 
 export type ScopeInputs = {
   /** The user-level lock file (the user scope's read/export target). */
@@ -91,13 +95,21 @@ export function resolveScope(scopes: Scope[], requestedId: string | null, cwd: s
  * (flags + explicit keys only) — the def the explorer edits and exports.
  * `features` is the scope's GLOBAL capability flags (`features.<id>`), which the
  * explorer's rank/explain handlers expand a posted def with so the preview
- * matches the resolved baseline. */
-export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Record<string, RoleDef>; universe: Record<string, UniverseEntry>; features: Record<string, boolean>; errors: string[] } {
+ * matches the resolved baseline. `selection` is the scope's GLOBAL
+ * model-selection rule (`selection` + `qualityFloor`), which a role's own
+ * `selection`/`qualityFloor` overrides. */
+export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Record<string, RoleDef>; universe: Record<string, UniverseEntry>; features: Record<string, boolean>; selection: ScopeSelection; errors: string[] } {
   const raw = scope.kind === "user"
     ? readPluginSettingsMap({ global: scope.lockPath, project: null })
     : readPluginSettingsMap({ global: userLockPath, project: scope.lockPath });
   const { settings, errors } = resolveSettings(raw);
-  return { roles: settings.roles, universe: roleUniverse(raw, settings.roles), features: settings.features, errors };
+  return {
+    roles: settings.roles,
+    universe: roleUniverse(raw, settings.roles),
+    features: settings.features,
+    selection: { mode: settings.selection, qualityFloor: settings.qualityFloor },
+    errors,
+  };
 }
 
 /** The union of every known scope's resolved roles — the roles map the ranking

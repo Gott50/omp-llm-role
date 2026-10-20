@@ -139,9 +139,9 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     listScopes,
     resolveScope: (requestedId) => resolveScope(listScopes(), requestedId, cwd),
     getState: (scope) => {
-      const { roles, universe, features, errors } = readScopeRoles(scope, userLockPath);
+      const { roles, universe, features, selection, errors } = readScopeRoles(scope, userLockPath);
       for (const e of errors) onLog(`settings warning: ${e}`);
-      return { rank, roles, universe, defaults: DEFAULT_ROLES, availability, features };
+      return { rank, roles, universe, defaults: DEFAULT_ROLES, availability, features, selection };
     },
     refresh: async () => {
       rank = await opts.reload(true);
