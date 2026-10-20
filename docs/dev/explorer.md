@@ -15,7 +15,7 @@ explorer never reimplements `value = q − λ·$/M`.
 | `src/explorer/explain.ts` | Pure explanation layer (no I/O): rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, the keyed-catalog availability overlay, and the display-only per-task price. Exports `rankRows`, `explainModel`, `perTaskPrice`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`. |
 | `src/explorer/levers.ts` | Pure price-lever readouts (no I/O): the leader-flip threshold and the thinking level's effect on the leader, computed on the pool they are handed. Exports `leaderFlip`, `thinkingLevelEffect`, `LeaderFlip`, `ThinkingLevelRow`. |
 | `src/explorer/pool.ts` | The as-written pool (no I/O): the dataset filtered exactly as the updater filters it before ranking (catalog/tier gate + allowed-providers prune + keyed-catalog prune). Exports `asWrittenPool`, `PoolMode`, `PoolInputs`. |
-| `src/explorer/scopes.ts` | Scope resolution (no HTTP): the user-level scope, the registry's projects, and the session's project; the per-scope read; the dataset union. Exports `Scope`, `resolveScopes`, `defaultScopeId`, `resolveScope`, `readScopeRoles`, `unionRoles`. |
+| `src/explorer/scopes.ts` | Scope resolution (no HTTP): the user-level scope, the registry's projects, and the session's project; the per-scope read; the dataset union. Exports `Scope`, `ScopeSelection`, `resolveScopes`, `defaultScopeId`, `resolveScope`, `readScopeRoles`, `unionRoles`. |
 | `src/explorer/boot.ts` | Shared launcher: bind/port fallback, scope resolution, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, `ExplorerHandle`, `ExplorerBootOpts`. |
 | `src/project-registry.ts` | The global project registry (`llm-role-projects.json` in the agent dir): read/register/prune, atomic write. Exports `PROJECT_REGISTRY_FILE`, `readProjectRegistry`, `registerProject`. |
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write). Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `timestamp`. |
@@ -128,8 +128,10 @@ Endpoints:
 - The **selection surface** (spec #103): `POST /api/rank` returns
   `selection: {mode, pick, anchor, anchorQ, floor, bar}` — the **effective** rule
   (the posted def's own `selection`/`qualityFloor` wins over the scope's global),
-  the prospective pick's model id, the bar's anchor and its `q`, the floor value,
-  and the threshold `q` (`bar` is `null` in `"value"` mode, which has no bar).
+  the prospective pick's model id, the anchor and its `q` (the highest-`q` model
+  in either mode — the bar's anchor in `"cheapest"` mode, the max-`q` model in
+  `"value"` mode, where the pick is the value leader), the floor value, and the
+  threshold `q` (`bar` is `null` in `"value"` mode, which has no bar).
   Each row carries `excludedByBar` (its `q` is under the bar; always `false` in
   `"value"` mode). The bar is computed with the engine's own `barSelection` over
   the same ranking the rows show, so the panel and the updater cannot drift.

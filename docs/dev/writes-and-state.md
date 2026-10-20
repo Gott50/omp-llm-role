@@ -312,26 +312,18 @@ the cheapest model above the bar*; this section is the write path's view.
 `"value"` mode (the default) is unchanged: the pool leader is the value leader
 and the hysteresis ladder is `switchMargin`-first. `"cheapest"` mode replaces the
 objective with the cheapest candidate at or above `qualityFloor × anchor.q`
-(anchor = the pool's highest-`q` candidate). The decision table (`current` = the
-model the selector names, `good` = the bar-clearing candidates, `pick` = the
-cheapest of them):
+(anchor = the pool's highest-`q` candidate). The decision table itself lives
+there (a fact has one home); the write-path-specific facts are:
 
-| condition | reason | chosen |
-|---|---|---|
-| `current` not in the pool | `adopted` | `pick` |
-| `current` in the pool, not in `good` | `switched` | `pick` |
-| `current` in `good`, `pick` is `current` | `kept-eligible` | `current` |
-| `current` in `good`, `pick.priceEff <= current.priceEff × (1 − priceSwitchFraction)` | `switched-cost` | `pick` |
-| `current` in `good`, otherwise | `kept-margin` | `current` |
-
-(plus `no-current` when the role has no selector at all). The reason vocabulary
-is unchanged — no new `DecisionReason` — but `switched` now also means "the
-incumbent fell below the bar" (dropped with no margin), and the kept branch
-re-checks the bar. The primary hysteresis is **cost-side only** in this mode:
-`switchMargin` is **not consulted**; `priceSwitchFraction` (default `0.5`) is the
-only margin, and `0` disables the cost-side switch. The value ranking is still
-computed and still reported in the decision's `value` / `bestValue` /
-`currentValue` fields, so history rows stay comparable across modes.
+- the reason vocabulary is unchanged — no new `DecisionReason` — but `switched`
+  now also means "the incumbent fell below the bar" (dropped with no margin), and
+  the kept branch re-checks the bar;
+- the primary hysteresis is **cost-side only** in this mode: `switchMargin` is
+  **not consulted**; `priceSwitchFraction` (default `0.5`) is the only margin,
+  and `0` disables the cost-side switch;
+- the value ranking is still computed and still reported in the decision's
+  `value` / `bestValue` / `currentValue` fields, so history rows stay comparable
+  across modes.
 
 The rule's pool is the role's **usable candidate set** (catalog/tier gate +
 allowed-providers prune + keyed-catalog prune) — not the probe window; the pick

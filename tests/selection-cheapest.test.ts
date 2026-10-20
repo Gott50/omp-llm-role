@@ -327,6 +327,39 @@ test("two runs on the same data write the same selector", async () => {
   assert.equal(second.decisions.find((d) => d.role === "default")?.reason, "kept-eligible");
 });
 
+// --- the per-role override at the updater seam (spec #103, scenario 10) -----
+// The settings seam is covered in settings-schema.test.ts; these drive a full
+// `runUpdater` run and assert the written selector, so the precedence is proven
+// where it is consumed.
+
+test("a per-role value selection beats a global cheapest mode", async () => {
+  const w = await runWrite(TWENTY_X, onlyDefault({ selection: "cheapest", roles: { default: { selection: "value" } } }));
+  // Premise, from the engine: the value leader is `premium`, 20× `budget`.
+  assert.equal(rankRole(DEFAULT_ROLES.default, TWENTY_X)[0].model.id, "premium");
+  // The global cheapest mode would pick `budget`; the per-role override wins.
+  assert.equal(w.modelRoles.default, "openrouter/org/premium:auto");
+  const control = await runWrite(TWENTY_X, onlyDefault({ selection: "cheapest" }));
+  assert.equal(control.modelRoles.default, "openrouter/org/budget:auto");
+});
+
+test("a per-role cheapest selection beats a global value mode", async () => {
+  const w = await runWrite(TWENTY_X, onlyDefault({ selection: "value", roles: { default: { selection: "cheapest" } } }));
+  // The global value mode would pick `premium`; the per-role override picks the
+  // cheap bar-clearing candidate.
+  assert.equal(w.modelRoles.default, "openrouter/org/budget:auto");
+  const control = await runWrite(TWENTY_X, onlyDefault({ selection: "value" }));
+  assert.equal(control.modelRoles.default, "openrouter/org/premium:auto");
+});
+
+test("a per-role qualityFloor beats the global floor", async () => {
+  // The global floor (0.9) excludes `weak`; the per-role floor (0) admits it, so
+  // the pick moves from `budget` to the cheapest usable candidate.
+  const w = await runWrite(UNDER_BAR, onlyDefault({ selection: "cheapest", qualityFloor: 0.9, roles: { default: { qualityFloor: 0 } } }));
+  assert.equal(w.modelRoles.default, "openrouter/org/weak:auto");
+  const control = await runWrite(UNDER_BAR, onlyDefault({ selection: "cheapest", qualityFloor: 0.9 }));
+  assert.equal(control.modelRoles.default, "openrouter/org/budget:auto");
+});
+
 // --- the pure rule itself (the seam ticket #107 consumes) -------------------
 // The integration fixtures above never create a price tie, so the tie-break and
 // the pool contract are pinned here directly.
