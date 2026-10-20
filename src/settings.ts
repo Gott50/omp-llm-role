@@ -242,6 +242,19 @@ export type ResolvedSettings = {
    * cheaper-or-equal candidate qualifies); 1 requires an exact quality match.
    */
   fallbackQualityFloor: number;
+  /**
+   * Model selection rule. `value` (default) picks the best-value model — today's
+   * behaviour, byte-identical. `cheapest` picks the cheapest model that clears
+   * `qualityFloor`. Opt-in: an upgrade changes nothing until the user asks.
+   */
+  selection: "value" | "cheapest";
+  /**
+   * Quality floor for `cheapest` mode: a cheaper candidate qualifies only if it
+   * retains at least this fraction of the best-value model's `q`. 0 disables the
+   * bar (any candidate qualifies); 1 requires the anchor's exact `q`. Inert in
+   * `value` mode.
+   */
+  qualityFloor: number;
   roles: Record<string, RoleDef>;
   activateDefaultOnEmptySession: boolean;
   /** Opt-in reporting of unexpected plugin errors as GitHub issues on the
@@ -263,6 +276,8 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   writeFallbackChains: true,
   fallbackChainDepth: 2,
   fallbackQualityFloor: 0.9,
+  selection: "value",
+  qualityFloor: 0.9,
   roles: DEFAULT_ROLES,
   activateDefaultOnEmptySession: true,
   errorReporting: "off",
@@ -332,6 +347,20 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       description: "File unexpected plugin errors as GitHub issues (off, ask, auto)",
       default: DEFAULT_SETTINGS.errorReporting,
       values: ["off", "ask", "auto"],
+    },
+    selection: {
+      type: "enum",
+      description: "Model selection rule: value (best value, today's behaviour) or cheapest (cheapest model clearing qualityFloor)",
+      default: DEFAULT_SETTINGS.selection,
+      values: ["value", "cheapest"],
+    },
+    qualityFloor: {
+      type: "number",
+      description: "In cheapest mode, the fraction of the best-value model's quality a cheaper candidate must retain (0 disables; inert in value mode)",
+      default: DEFAULT_SETTINGS.qualityFloor,
+      min: 0,
+      max: 1,
+      step: 0.001,
     },
     "tokenProfile.inputTokens": {
       type: "number",
@@ -436,6 +465,20 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       type: "number",
       description: `Explicit λ ($ per quality point) override for ${name}`,
       min: 0,
+    };
+    schema[`${p}.selection`] = {
+      type: "enum",
+      description: `Model selection rule for ${name} (overrides the global selection)`,
+      default: def.selection ?? "value",
+      values: ["value", "cheapest"],
+    };
+    schema[`${p}.qualityFloor`] = {
+      type: "number",
+      description: `Quality floor for ${name} in cheapest mode (overrides the global qualityFloor)`,
+      default: def.qualityFloor ?? DEFAULT_SETTINGS.qualityFloor,
+      min: 0,
+      max: 1,
+      step: 0.001,
     };
     for (const [metric, w] of Object.entries(def.weights)) {
       schema[`${p}.weights.${metric}`] = {
@@ -606,6 +649,12 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   if (merged.errorReporting !== "off" && merged.errorReporting !== "ask" && merged.errorReporting !== "auto") {
     errors.push(`errorReporting: must be one of off, ask, auto, got ${JSON.stringify(merged.errorReporting)}`);
   }
+  if (merged.selection !== "value" && merged.selection !== "cheapest") {
+    errors.push(`selection: must be one of value, cheapest, got ${JSON.stringify(merged.selection)}`);
+  }
+  if (typeof merged.qualityFloor !== "number" || !Number.isFinite(merged.qualityFloor) || merged.qualityFloor < 0 || merged.qualityFloor > 1) {
+    errors.push(`qualityFloor: must be a number in [0, 1], got ${JSON.stringify(merged.qualityFloor)}`);
+  }
 
   // The per-task token profile: null (no profile), or a record whose two counts
   // are finite numbers >= 0. One error string per violation.
@@ -725,6 +774,16 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
       if (typeof rdef.cacheHitRate !== "number" || !Number.isFinite(rdef.cacheHitRate) || rdef.cacheHitRate < 0 || rdef.cacheHitRate > 1) {
         errors.push(`role ${name}: cacheHitRate must be a number in [0, 1]`);
         delete rdef.cacheHitRate;
+      }
+    }
+    if (rdef.selection !== undefined && rdef.selection !== "value" && rdef.selection !== "cheapest") {
+      errors.push(`role ${name}: selection must be one of value, cheapest`);
+      delete rdef.selection;
+    }
+    if (rdef.qualityFloor !== undefined) {
+      if (typeof rdef.qualityFloor !== "number" || !Number.isFinite(rdef.qualityFloor) || rdef.qualityFloor < 0 || rdef.qualityFloor > 1) {
+        errors.push(`role ${name}: qualityFloor must be a number in [0, 1]`);
+        delete rdef.qualityFloor;
       }
     }
     // providerPin is a provider slug (may be tiered like `deepinfra/fp8`); `@`
