@@ -53,8 +53,10 @@ export type ExplorerBootOpts = {
   /** Re-derive the key-availability overlay for `POST /api/refresh` (best-effort). */
   reloadAvailability?: () => Promise<KeyAvailability>;
   /**
-   * The as-written pool's inputs (spec #81): the key's tier and the account's
-   * allowed-providers whitelist. Both are best-effort — an absent tier reads as
+   * The as-written pool's inputs (spec #81; keyed-catalog prune: spec #103):
+   * the key's tier, the account's allowed-providers whitelist, and the
+   * keyed-catalog availability (the `availability` field above, re-derived on
+   * refresh). The tier and whitelist are best-effort — an absent tier reads as
    * `billed` (the ordinary account), and an absent/null whitelist leaves every
    * route in place, so a failed harvest degrades to the raw pool instead of
    * breaking the explorer.
@@ -115,8 +117,9 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   const scopeInputs: ScopeInputs = { userLockPath, cwd, registryDir: opts.registryDir };
   let rank = opts.rank;
   let availability = opts.availability;
-  // The as-written pool's mutable half: the whitelist is re-derived on refresh,
-  // the catalog and tier are boot-time facts. `null` = no pruning.
+  // The as-written pool's mutable half: the whitelist and the keyed-catalog
+  // availability are re-derived on refresh, the catalog and tier are boot-time
+  // facts. `null` = no pruning.
   let allowed = opts.allowedProviders ?? null;
   const tier = opts.tier ?? "billed";
   const usageDir = opts.usageDir ?? agentDir();
@@ -154,7 +157,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
         }
       }
     },
-    getPoolInputs: (): PoolInputs => ({ catalog: opts.catalog, tier, allowed }),
+    getPoolInputs: (): PoolInputs => ({ catalog: opts.catalog, tier, allowed, availability }),
     // The ledger follows the plugin's state location: a project scope keeps its
     // usage in its own `<root>/.omp`, so its per-task column never mixes with
     // the user-level profile.
