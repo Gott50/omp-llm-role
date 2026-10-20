@@ -49,7 +49,7 @@ read.
   gained the keyed-catalog prune (key-blocked rows are pruned, not kept; the key
   diagnostic moves to raw mode), and the role payload gained the selection
   surface (the prospective pick, the bar, the per-row `excludedByBar` flag). The
-  suite grew 688 → 737.
+  suite grew 688 → 738.
 
 - `/refresh-roles --no-margin` (2026-10-19, spec #99): the command's args were
   ignored; they are now parsed by `parseRefreshRolesArgs` (an unrecognized token

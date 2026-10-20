@@ -223,7 +223,8 @@ models (the account's key cannot use them) and models whose probe verdict is
 `blocked`. An **unprobed** candidate stays — the chain's deeper entries are
 never probe-verified (they are not a new class: chain entries are already
 route-level unprobed, and omp fails over on an unroutable entry). `after` is
-that list **below the chosen model** — the leader on a fresh pick, the kept
+that list **below the chosen model** — the value leader on a fresh pick in
+`value` mode, the bar-clearing pick on a fresh pick in `cheapest` mode, the kept
 current candidate on a kept role (`kept-eligible` / `kept-margin`) — so the
 `after` set and the floor both key off the model the selector actually names —
 the previous `pool.slice(chosenIdx + 1)` keyed off the same index in the
