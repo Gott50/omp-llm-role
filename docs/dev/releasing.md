@@ -138,7 +138,8 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   daily caches moved, not the code; `docs/dev/current-state.md` refreshed to the
   same measurement).
   The release carries spec #99 (`/refresh-roles --no-margin`), merged to `main`
-  in the same push.
+  immediately before the cut — a separate push (`eafb062..a4366b8`) from the
+  cut's own (`a4366b8..f028779`).
 - **1.5.0 install routes smoke-tested** (2026-10-20, omp 18.12.3, throwaway
   `HOME`s, cwd outside the real home tree): npm
   (`omp plugin install omp-llm-role`), git
