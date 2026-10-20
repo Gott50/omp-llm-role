@@ -131,7 +131,7 @@ Global knobs:
 | `tokenProfile` | unset | `{ inputTokens, outputTokens }` per task for the explorer's `$/task` column, used when a role has no recorded usage. Display-only; the recorded usage takes precedence. Unset = the column reads `—` |
 | `errorReporting` | `off` | Opt-in reporting of **unexpected** plugin errors as GitHub issues on `Gott50/omp-llm-role`; one of `off`, `ask`, `auto` (see below) |
 | `selection` | `value` | Model selection rule: `value` picks the best-value model (today's behaviour); `cheapest` picks the cheapest model that clears `qualityFloor`. Opt-in — an upgrade changes nothing until you ask |
-| `qualityFloor` | `0.9` | In `cheapest` mode, the fraction of the best-value model's quality a cheaper candidate must retain; `0` disables the bar, `1` requires the anchor's exact `q`. Inert in `"value"` mode |
+| `qualityFloor` | `0.9` | In `cheapest` mode, the fraction of the pool's best model's quality a cheaper candidate must retain; `0` disables the bar, `1` requires the anchor's exact `q`. Inert in `"value"` mode |
 
 Per-role knobs (`roles.<name>.*`):
 
