@@ -15,7 +15,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
+import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
 import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, providerAllowed, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
@@ -173,18 +173,6 @@ function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSe
   if (settings.priceSwitchFraction <= 0 || current.priceEff <= 0) return false;
   if (best.value < current.value - settings.switchMargin) return false;
   return best.priceEff <= current.priceEff * (1 - settings.priceSwitchFraction);
-}
-
-/**
- * The `cheapest` pick order: cheapest first, ties by higher `q`, then
- * `model.id` ascending — the order `barSelection` picks from. The updater
- * re-derives it so a probe-blocked pick can fall through to the next-cheapest
- * bar-clearing candidate while the bar itself stays fixed.
- */
-function pickOrder(a: Ranked, b: Ranked): number {
-  if (a.priceEff !== b.priceEff) return a.priceEff - b.priceEff;
-  if (a.q !== b.q) return b.q - a.q;
-  return a.model.id < b.model.id ? -1 : a.model.id > b.model.id ? 1 : 0;
 }
 
 /** Abort lines for the two write-path failures (shared by the full run and the
@@ -526,6 +514,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       let chosen: Candidate;
       let reason: Decision["reason"];
       let currentEntry: Candidate | null;
+      // The challenger and the two switch predicates are the only per-mode
+      // inputs to the shared decision ladder below.
+      let challenger: Candidate;
+      let switchedPredicate: (cur: Candidate) => boolean;
+      let costEscapePredicate: (cur: Candidate) => boolean;
       if (mode === "cheapest") {
         // The rule's pool is the role's usable candidate set: the catalog/tier
         // gate and the allowed-providers prune are already baked into
@@ -545,6 +538,9 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         // blocked. The bar stays fixed — the anchor is a quality statement over
         // the usable pool, not over the probe-clean subset.
         const goodIds = new Set(bar.good.map((r) => r.model.id));
+        // `pickOrder` (the engine's, beside `barSelection`) is re-used here so a
+        // probe-blocked pick can fall through to the next-cheapest bar-clearing
+        // candidate while the bar itself stays fixed.
         const ordered = usable.filter((c) => goodIds.has(c.ranked.model.id)).sort((a, b) => pickOrder(a.ranked, b.ranked));
         let pick: Candidate | null = null;
         // Budgeted like the walk: a pathological all-blocked `good` set must not
@@ -568,6 +564,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           notes.push(`@${role}: no probe-clean candidate at or above the bar (key-blocked: ${keyBlockedCount}) — role untouched`);
           continue;
         }
+        // Non-null from here: the closure below captures the narrowed value.
+        const pickCandidate: Candidate = pick;
         // The incumbent is looked up in `usable` (not `pool`, the probe window:
         // an incumbent outside it is still a valid incumbent to compare
         // against), but only when the probe accepts it. A probe-blocked
@@ -579,48 +577,46 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           currentId === null
             ? null
             : usable.find((c) => c.ranked.model.id === currentId && probeVerdicts.get(c.catalogId) !== "blocked") ?? null;
-        if (currentSelector === null) {
-          chosen = pick;
-          reason = "no-current";
-        } else if (currentEntry === null) {
-          chosen = pick;
-          reason = "adopted";
-        } else if (!goodIds.has(currentEntry.ranked.model.id)) {
-          // The incumbent fell below the bar: dropped with no margin.
-          chosen = pick;
-          reason = "switched";
-        } else if (pick.ranked.model.id === currentEntry.ranked.model.id) {
-          chosen = currentEntry;
-          reason = "kept-eligible";
-        } else if (
+        challenger = pickCandidate;
+        // The incumbent fell below the bar: dropped with no margin.
+        switchedPredicate = (cur) => !goodIds.has(cur.ranked.model.id);
+        costEscapePredicate = (cur) =>
           // The same guards as value mode's `cheaperInsideMargin`: a
           // non-positive fraction disables the cost-side switch (the schema and
           // README both document `0 disables`), and a non-positive incumbent
           // price has no fraction to undercut.
           hysteresis.priceSwitchFraction > 0 &&
-          currentEntry.ranked.priceEff > 0 &&
-          pick.ranked.priceEff <= currentEntry.ranked.priceEff * (1 - hysteresis.priceSwitchFraction)
-        ) {
-          chosen = pick;
-          reason = "switched-cost";
-        } else {
-          chosen = currentEntry;
-          reason = "kept-margin";
-        }
+          cur.ranked.priceEff > 0 &&
+          pickCandidate.ranked.priceEff <= cur.ranked.priceEff * (1 - hysteresis.priceSwitchFraction);
       } else {
         currentEntry = currentId === null ? null : pool.find((p) => p.ranked.model.id === currentId) ?? null;
-        chosen = best;
-        if (currentSelector === null) reason = "no-current";
-        else if (currentEntry === null) reason = "adopted";
-        else if (currentEntry.ranked.model.id === best.ranked.model.id) {
-          chosen = currentEntry;
-          reason = "kept-eligible";
-        } else if (best.ranked.value - currentEntry.ranked.value >= hysteresis.switchMargin) reason = "switched";
-        else if (cheaperInsideMargin(best.ranked, currentEntry.ranked, hysteresis)) reason = "switched-cost";
-        else {
-          chosen = currentEntry;
-          reason = "kept-margin";
-        }
+        challenger = best;
+        switchedPredicate = (cur) => best.ranked.value - cur.ranked.value >= hysteresis.switchMargin;
+        costEscapePredicate = (cur) => cheaperInsideMargin(best.ranked, cur.ranked, hysteresis);
+      }
+      // The six-arm decision ladder, shared by both modes. First match wins:
+      // no-current → adopted → kept-eligible → switched → switched-cost →
+      // kept-margin. The order is safe for both modes: in cheapest mode an
+      // under-bar incumbent can never be the pick (the pick is bar-clearing),
+      // so `kept-eligible` cannot shadow `switched`.
+      if (currentSelector === null) {
+        chosen = challenger;
+        reason = "no-current";
+      } else if (currentEntry === null) {
+        chosen = challenger;
+        reason = "adopted";
+      } else if (currentEntry.ranked.model.id === challenger.ranked.model.id) {
+        chosen = currentEntry;
+        reason = "kept-eligible";
+      } else if (switchedPredicate(currentEntry)) {
+        chosen = challenger;
+        reason = "switched";
+      } else if (costEscapePredicate(currentEntry)) {
+        chosen = challenger;
+        reason = "switched-cost";
+      } else {
+        chosen = currentEntry;
+        reason = "kept-margin";
       }
 
       const suffix = def.thinking;

@@ -30,7 +30,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, resolve, sep } from "node:path";
 import type { KeyAvailability } from "../availability.ts";
 import { loadDeclaredSources } from "../benchmark-sources.ts";
-import { barSelection, pinnedRoute, SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { barSelection, pinnedRoute, SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { expandFeatures, FEATURES } from "../features.ts";
 import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
@@ -299,8 +299,11 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   const mode = def.selection ?? state.selection.mode;
   const floor = def.qualityFloor ?? state.selection.qualityFloor;
   const bar = mode === "cheapest" ? barSelection(ranked, floor) : null;
-  const marked = bar?.pick ?? ranked[0];
-  const anchor = bar?.anchor ?? ranked[0];
+  const pick = bar?.pick ?? ranked[0];
+  // The anchor is the highest-`q` candidate — the same definition `barSelection`
+  // uses. In `value` mode there is no bar, so report the max-`q` model rather
+  // than the value leader: the anchor is a quality statement, not a price one.
+  const anchor = bar?.anchor ?? ranked.reduce<Ranked | undefined>((best, r) => (best === undefined || r.q > best.q ? r : best), undefined);
   const rows = rankRows(def, rank.models, baseline, state.availability, resolveTokenProfile(role, opts.getUsageRows?.(scope) ?? [], opts.tokenProfile ?? null), bar);
   sendJson(res, 200, {
     eligible: rows.length,
@@ -308,7 +311,7 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
     derivedLambda: roleLambda({ ...def, lambda: undefined }),
     selection: {
       mode,
-      pick: marked?.model.id ?? "",
+      pick: pick?.model.id ?? "",
       anchor: anchor?.model.id ?? "",
       anchorQ: anchor?.q ?? 0,
       floor,

@@ -188,7 +188,7 @@ export type RoleDef = {
   /** explicit λ override ($ per quality point); default derives from the price weight */
   lambda?: number;
   /** Per-role model selection rule; overrides the global `selection` (authored-wins). */
-  selection?: "value" | "cheapest";
+  selection?: SelectionMode;
   /** Per-role quality floor for `cheapest` mode; overrides the global `qualityFloor`. */
   qualityFloor?: number;
   /** thinking level appended to the role's selector (`:level`) when the chosen
@@ -1358,6 +1358,16 @@ export type BarSelection = {
   pick: Ranked;
 };
 
+/** The `cheapest` pick order: cheapest first, ties by higher `q`, then
+ * `model.id` ascending — the order `barSelection` picks from. Exported so the
+ * updater can fall through a probe-blocked pick to the next-cheapest
+ * bar-clearing candidate while the bar itself stays fixed. */
+export function pickOrder(a: Ranked, b: Ranked): number {
+  if (a.priceEff !== b.priceEff) return a.priceEff - b.priceEff;
+  if (a.q !== b.q) return b.q - a.q;
+  return a.model.id < b.model.id ? -1 : a.model.id > b.model.id ? 1 : 0;
+}
+
 /** The cheapest-above-bar selection over `pool`. `null` for an empty pool.
  *
  * The anchor is the highest-`q` candidate — a quality statement, not a price
@@ -1373,10 +1383,7 @@ export function barSelection(pool: Ranked[], qualityFloor: number): BarSelection
   // every benchmark's chance line) could put it under its own bar.
   const good = pool.filter((r) => r.q >= bar || r === anchor);
   let pick = good[0];
-  for (const r of good) {
-    if (r.priceEff < pick.priceEff) pick = r;
-    else if (r.priceEff === pick.priceEff && (r.q > pick.q || (r.q === pick.q && r.model.id < pick.model.id))) pick = r;
-  }
+  for (const r of good) if (pickOrder(r, pick) < 0) pick = r;
   return { anchor, bar, good, pick };
 }
 

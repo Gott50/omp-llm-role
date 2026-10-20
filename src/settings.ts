@@ -13,7 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { SUFFIX_LEVELS, type RoleDef } from "./engine.ts";
+import { SUFFIX_LEVELS, type RoleDef, type SelectionMode } from "./engine.ts";
 import { FEATURES, expandFeatures, featureById } from "./features.ts";
 import { isRecord } from "./guards.ts";
 import type { TokenProfile } from "./usage-ledger.ts";
@@ -247,7 +247,7 @@ export type ResolvedSettings = {
    * behaviour, byte-identical. `cheapest` picks the cheapest model that clears
    * `qualityFloor`. Opt-in: an upgrade changes nothing until the user asks.
    */
-  selection: "value" | "cheapest";
+  selection: SelectionMode;
   /**
    * Quality floor for `cheapest` mode: a cheaper candidate qualifies only if it
    * retains at least this fraction of the best-value model's `q`. 0 disables the

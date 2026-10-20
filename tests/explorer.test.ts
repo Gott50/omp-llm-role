@@ -1539,11 +1539,13 @@ test("value mode has no bar, flags no row, and marks the value leader", async ()
     assert.ok(isRecord(selection));
     assert.equal(selection.mode, "value");
     assert.equal(selection.bar, null);
-    // No bar, so the marked row is the value leader: `budget` (value 0.975),
-    // not `premium` (the highest-q model, q 1.375 vs 1.0).
+    // No bar, so the pick is the value leader: `budget` (value 0.975), not
+    // `premium` (the highest-q model, q 1.375 vs 1.0).
     assert.equal(selection.pick, "budget");
-    assert.equal(selection.anchor, "budget");
-    assert.equal(selection.anchorQ, 1);
+    // The anchor is the highest-q model in either mode — a quality statement,
+    // not a price one — so it is `premium`, not the value leader.
+    assert.equal(selection.anchor, "premium");
+    assert.equal(selection.anchorQ, 1.375);
     const rows = body.rows;
     assert.ok(Array.isArray(rows));
     for (const row of rows) {
