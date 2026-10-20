@@ -133,7 +133,13 @@ the allowed-providers prune + the keyed-catalog prune) — **not** the probe
 window, which is only the top few value-ranked candidates and would miss a cheap
 model that ranks low by value. The pick is **probe-verified on demand** (the walk
 probes the incumbent first; a blocked pick falls through to the next-cheapest
-bar-clearing candidate, budgeted like the walk). The fallback chain, the
+bar-clearing candidate, budgeted like the walk). The anchor is a **quality**
+statement only: it is taken over the usable pool, so a probe verdict never moves
+the bar — the probe verdicts gate the **pick** alone. (The spec's Implementation
+Decisions phrase the pool as including "the probe walk's verdicts"; the Solution
+and the measured blast radius both define it as the as-written pool, and a
+probe-dependent bar would make two runs on the same data write different
+selectors.) The fallback chain, the
 auto-pin, the route expansion, the thinking levels and the prune-on-pin-change
 are unchanged; a locked role and a disabled role are untouched, and a manual
 `providerPin` keeps its **hard-gate** meaning — the rule picks within the

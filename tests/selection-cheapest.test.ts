@@ -243,6 +243,23 @@ test("the anchor is the max-q candidate, not the value leader", async () => {
   assert.equal(w.modelRoles.default, "openrouter/org/leader:auto");
 });
 
+test("a probe-blocked anchor still sets the bar (the anchor is quality-only)", async () => {
+  // The anchor (`expensive`) is the incumbent and the probe rejects it. The bar
+  // is a quality statement over the usable pool, so it stays anchored on
+  // `expensive`: `cheap` stays out and the pick is `leader`. Were the bar
+  // measured over the probe-clean subset instead, the anchor would be `leader`
+  // and `cheap` would clear the bar — the two readings differ, so this pins the
+  // one the spec's blast radius was measured under.
+  const w = await runWrite(
+    ANCHOR_SPLIT,
+    onlyDefault({ selection: "cheapest" }),
+    { probeModel: async (_token: string, catalogId: string): Promise<ProbeVerdict> => (catalogId === "org/expensive" ? "blocked" : "ok") },
+    'modelRoles:\n  default: "openrouter/org/expensive:auto"\n',
+  );
+  assert.equal(w.modelRoles.default, "openrouter/org/leader:auto");
+  assert.equal(decision(w).reason, "adopted");
+});
+
 test("equal-price equal-quality candidates tie-break on model.id ascending", async () => {
   // `zzz` precedes `aaa` in the ranking (the engine's sort is stable), so only
   // the id tie-break can make `aaa` the pick.
