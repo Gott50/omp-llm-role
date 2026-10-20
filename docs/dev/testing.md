@@ -193,9 +193,10 @@ passing.
     from the written pin when the walk skips a blocked leader — the panel names
     the *candidate*. The selection surface (spec #103): the rank payload's
     `selection` names the prospective pick and the bar (`anchor`/`anchorQ`/`floor`/
-    `bar`) in `cheapest` mode, marks the value leader with `bar: null` in `value`
-    mode, and a per-role `selection`/`qualityFloor` beats the scope's global; each
-    row's `excludedByBar` flags the candidates under the bar.
+    `bar`) in `cheapest` mode, marks the value leader as `pick` with `bar: null` in
+    `value` mode (the anchor stays the highest-`q` model in either mode), and a
+    per-role `selection`/`qualityFloor` beats the scope's global; each row's
+    `excludedByBar` flags the candidates under the bar.
 24. **Project scope** (`project-updater.test.ts`, `project-setup.test.ts`,
     `project-roles-command.test.ts`) — project mode scopes config/state/history/
     lock to `<cwd>/.omp`; the day gate is per scope; the registry write;
