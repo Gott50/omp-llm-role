@@ -30,7 +30,7 @@ function userScopeOpts(lockPath: string, getState: ExplorerOpts["getState"], ext
     getState,
     refresh: async () => {},
     // The default pool: nothing gated, nothing pruned — i.e. the raw dataset.
-    getPoolInputs: () => ({ catalog: [], tier: "billed", allowed: null }),
+    getPoolInputs: () => ({ catalog: [], tier: "billed", allowed: null, availability: NO_AVAILABILITY }),
     ...extra,
   };
 }
@@ -1276,7 +1276,7 @@ test("POST /api/pool switches the ranked pool and the bootstrap payload reports 
   const handle = await bootWithState(
     () => PIN_STATE,
     // Only alpha is tier-eligible, so the as-written gate drops beta.
-    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha"]), tier: "billed", allowed: null }) },
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha"]), tier: "billed", allowed: null, availability: NO_AVAILABILITY }) },
   );
   try {
     const before = await getJson(handle.url, "/api/bootstrap");
@@ -1326,7 +1326,7 @@ test("the as-written pool prunes the routes the account cannot use", async () =>
     () => PIN_STATE,
     // The account may only use priceyco, so alpha's cheap route must not lower
     // the price the explorer shows.
-    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["priceyco/fp8"]) }) },
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["priceyco/fp8"]), availability: NO_AVAILABILITY }) },
   );
   const priceEffOf = async (id: string): Promise<unknown> => rowOf((await postJson(handle.url, "/api/rank", { role: "tiny", def })).body, id).priceEff;
   try {
@@ -1344,7 +1344,7 @@ test("a null whitelist degrades the as-written pool to the raw dataset", async (
     () => PIN_STATE,
     // The catalog covers both models (so the tier gate drops nothing) and the
     // whitelist harvest failed: no route is pruned.
-    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: null }) },
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: null, availability: NO_AVAILABILITY }) },
   );
   try {
     await postJson(handle.url, "/api/pool", { mode: "as-written" });
@@ -1366,7 +1366,7 @@ test("Export is unaffected by the pool mode", async () => {
   const rank: RankData = { models, fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
   const handle = await bootWithState(
     () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }),
-    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["cheapco/fp8"]) }) },
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["cheapco/fp8"]), availability: NO_AVAILABILITY }) },
   );
   try {
     await postJson(handle.url, "/api/pool", { mode: "as-written" });
