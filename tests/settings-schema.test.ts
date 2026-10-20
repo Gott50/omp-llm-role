@@ -21,6 +21,8 @@ test("schema covers every global knob and every shipped role field", () => {
     "fallbackQualityFloor",
     "activateDefaultOnEmptySession",
     "errorReporting",
+    "selection",
+    "qualityFloor",
     "tokenProfile.inputTokens",
     "tokenProfile.outputTokens",
   ]) {
@@ -139,4 +141,92 @@ test("every schema default resolves to a real setting", () => {
   }
   const { errors } = resolveSettings(raw);
   assert.deepEqual(errors, []);
+});
+
+test("selection and qualityFloor resolve to their defaults when unset", () => {
+  const { settings, errors } = resolveSettings({});
+  assert.deepEqual(errors, []);
+  assert.equal(settings.selection, "value");
+  assert.equal(settings.qualityFloor, 0.9);
+});
+
+test("a per-role selection/qualityFloor wins over the global one", () => {
+  const { settings, errors } = resolveSettings({
+    selection: "value",
+    qualityFloor: 0.9,
+    "roles.default.selection": "cheapest",
+    "roles.default.qualityFloor": 0.5,
+  });
+  assert.deepEqual(errors, []);
+  assert.equal(settings.roles.default.selection, "cheapest");
+  assert.equal(settings.roles.default.qualityFloor, 0.5);
+});
+
+test("resolveSettings rejects an unknown selection value", () => {
+  const { errors } = resolveSettings({ selection: "cheapestest" });
+  assert.deepEqual(errors, ['selection: must be one of value, cheapest, got "cheapestest"']);
+});
+
+test("resolveSettings rejects an unknown per-role selection value", () => {
+  const { errors } = resolveSettings({ "roles.default.selection": "nope" });
+  assert.deepEqual(errors, ["role default: selection must be one of value, cheapest"]);
+});
+
+test("resolveSettings rejects bad qualityFloor values", () => {
+  const cases: Array<[unknown, string]> = [
+    [-0.1, "qualityFloor: must be a number in [0, 1], got -0.1"],
+    [1.1, "qualityFloor: must be a number in [0, 1], got 1.1"],
+    [Number.NaN, "qualityFloor: must be a number in [0, 1], got null"],
+    ["0.9", 'qualityFloor: must be a number in [0, 1], got "0.9"'],
+  ];
+  for (const [bad, expected] of cases) {
+    const { errors } = resolveSettings({ qualityFloor: bad });
+    assert.deepEqual(errors, [expected]);
+  }
+});
+
+test("resolveSettings rejects a bad per-role qualityFloor value", () => {
+  const { errors } = resolveSettings({ "roles.default.qualityFloor": 2 });
+  assert.deepEqual(errors, ["role default: qualityFloor must be a number in [0, 1]"]);
+});
+
+test("schema exposes the selection and qualityFloor rows", () => {
+  const schema = deriveSettingsSchema();
+  const sel = schema.selection;
+  assert.ok(sel, "missing selection");
+  assert.equal(sel.type, "enum");
+  assert.deepEqual(sel.values, ["value", "cheapest"]);
+  assert.equal(sel.default, DEFAULT_SETTINGS.selection);
+  const qf = schema.qualityFloor;
+  assert.ok(qf, "missing qualityFloor");
+  assert.equal(qf.type, "number");
+  assert.equal(qf.min, 0);
+  assert.equal(qf.max, 1);
+  assert.equal(qf.step, 0.001);
+  assert.equal(qf.default, DEFAULT_SETTINGS.qualityFloor);
+  for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
+    const rs = schema[`roles.${name}.selection`];
+    assert.ok(rs, `missing roles.${name}.selection`);
+    assert.equal(rs.type, "enum");
+    assert.deepEqual(rs.values, ["value", "cheapest"]);
+    assert.equal(rs.default, def.selection ?? "value");
+    const rq = schema[`roles.${name}.qualityFloor`];
+    assert.ok(rq, `missing roles.${name}.qualityFloor`);
+    assert.equal(rq.type, "number");
+    assert.equal(rq.min, 0);
+    assert.equal(rq.max, 1);
+    assert.equal(rq.step, 0.001);
+    assert.equal(rq.default, def.qualityFloor ?? DEFAULT_SETTINGS.qualityFloor);
+  }
+});
+
+test("README documents the selection and qualityFloor knobs", () => {
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  assert.match(readme, /\|\s*`selection`\s*\|/, "README settings table is missing the selection row");
+  assert.match(readme, /\|\s*`qualityFloor`\s*\|/, "README settings table is missing the qualityFloor row");
+  assert.match(
+    readme,
+    /inert in `"value"` mode/i,
+    "README must say qualityFloor is inert in \"value\" mode",
+  );
 });

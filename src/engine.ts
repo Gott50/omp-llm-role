@@ -187,6 +187,10 @@ export type RoleDef = {
   };
   /** explicit λ override ($ per quality point); default derives from the price weight */
   lambda?: number;
+  /** Per-role model selection rule; overrides the global `selection` (authored-wins). */
+  selection?: "value" | "cheapest";
+  /** Per-role quality floor for `cheapest` mode; overrides the global `qualityFloor`. */
+  qualityFloor?: number;
   /** thinking level appended to the role's selector (`:level`) when the chosen
    * catalog entry supports thinking; absent = bare (session default level).
    * Also scales the price axis for ranking (thinkingPriceFactor). */

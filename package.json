@@ -86,6 +86,23 @@
           "auto"
         ]
       },
+      "selection": {
+        "type": "enum",
+        "description": "Model selection rule: value (best value, today's behaviour) or cheapest (cheapest model clearing qualityFloor)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "qualityFloor": {
+        "type": "number",
+        "description": "In cheapest mode, the fraction of the best-value model's quality a cheaper candidate must retain (0 disables; inert in value mode)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "tokenProfile.inputTokens": {
         "type": "number",
         "description": "Input tokens per task for the per-task price (used when the role has no recorded usage)",
@@ -221,6 +238,23 @@
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for default",
         "min": 0
+      },
+      "roles.default.selection": {
+        "type": "enum",
+        "description": "Model selection rule for default (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.default.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for default in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
       },
       "roles.default.weights.general": {
         "type": "number",
@@ -376,6 +410,23 @@
         "description": "Explicit λ ($ per quality point) override for smol",
         "min": 0
       },
+      "roles.smol.selection": {
+        "type": "enum",
+        "description": "Model selection rule for smol (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.smol.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for smol in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.smol.weights.price": {
         "type": "number",
         "description": "Weight of price in the smol quality composite",
@@ -522,6 +573,23 @@
         "description": "Explicit λ ($ per quality point) override for slow",
         "min": 0
       },
+      "roles.slow.selection": {
+        "type": "enum",
+        "description": "Model selection rule for slow (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.slow.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for slow in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.slow.weights.general": {
         "type": "number",
         "description": "Weight of general in the slow quality composite",
@@ -667,6 +735,23 @@
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for vision",
         "min": 0
+      },
+      "roles.vision.selection": {
+        "type": "enum",
+        "description": "Model selection rule for vision (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.vision.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for vision in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
       },
       "roles.vision.weights.vision": {
         "type": "number",
@@ -822,6 +907,23 @@
         "description": "Explicit λ ($ per quality point) override for plan",
         "min": 0
       },
+      "roles.plan.selection": {
+        "type": "enum",
+        "description": "Model selection rule for plan (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.plan.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for plan in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.plan.weights.general": {
         "type": "number",
         "description": "Weight of general in the plan quality composite",
@@ -959,6 +1061,23 @@
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for commit",
         "min": 0
+      },
+      "roles.commit.selection": {
+        "type": "enum",
+        "description": "Model selection rule for commit (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.commit.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for commit in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
       },
       "roles.commit.weights.price": {
         "type": "number",
@@ -1098,6 +1217,23 @@
         "description": "Explicit λ ($ per quality point) override for tiny",
         "min": 0
       },
+      "roles.tiny.selection": {
+        "type": "enum",
+        "description": "Model selection rule for tiny (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.tiny.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for tiny in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.tiny.weights.price": {
         "type": "number",
         "description": "Weight of price in the tiny quality composite",
@@ -1227,6 +1363,23 @@
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for task",
         "min": 0
+      },
+      "roles.task.selection": {
+        "type": "enum",
+        "description": "Model selection rule for task (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.task.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for task in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
       },
       "roles.task.weights.agents": {
         "type": "number",
@@ -1382,6 +1535,23 @@
         "description": "Explicit λ ($ per quality point) override for advisor",
         "min": 0
       },
+      "roles.advisor.selection": {
+        "type": "enum",
+        "description": "Model selection rule for advisor (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.advisor.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for advisor in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.advisor.weights.general": {
         "type": "number",
         "description": "Weight of general in the advisor quality composite",
@@ -1519,6 +1689,23 @@
         "type": "number",
         "description": "Explicit λ ($ per quality point) override for designer",
         "min": 0
+      },
+      "roles.designer.selection": {
+        "type": "enum",
+        "description": "Model selection rule for designer (overrides the global selection)",
+        "default": "value",
+        "values": [
+          "value",
+          "cheapest"
+        ]
+      },
+      "roles.designer.qualityFloor": {
+        "type": "number",
+        "description": "Quality floor for designer in cheapest mode (overrides the global qualityFloor)",
+        "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
       },
       "roles.designer.weights.general": {
         "type": "number",
