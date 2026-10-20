@@ -8,6 +8,22 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`selection: "cheapest"` picks the cheapest model that clears a quality
+  floor** — two new settings: `selection` (`"value"` | `"cheapest"`, default
+  `"value"`) and `qualityFloor` (a number in `[0, 1]`, default `0.9`, inert in
+  `"value"` mode), each overridable per role (`roles.<role>.selection` /
+  `roles.<role>.qualityFloor`). In `"cheapest"` mode the anchor is the pool's
+  highest-`q` candidate, the bar is `qualityFloor × anchor.q`, and the pick is
+  the cheapest candidate at or above the bar (ties: higher `q`, then model id
+  ascending); the incumbent is kept when it clears the bar and the challenger is
+  not meaningfully cheaper, so the primary hysteresis is cost-side only
+  (`priceSwitchFraction`; `switchMargin` is not consulted). The rule is opt-in —
+  `selection` defaults to `"value"`, so an upgrade changes nothing until you ask
+  — and the as-written pool now applies the keyed-catalog prune, so a model the
+  key cannot run is dropped rather than ranked. (spec #103)
+
 ## [1.5.0] - 2026-10-20
 
 ### Added
