@@ -8,6 +8,8 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-20
+
 ### Added
 
 - **`/refresh-roles --no-margin` ignores `switchMargin` for that run** — the flag
@@ -798,7 +800,8 @@ install routes verified end-to-end).
   showed it disabled again until the server restarted. Every request now
   re-reads the lock file (`getState()`), so a reload reflects the Export.
 
-[Unreleased]: https://github.com/Gott50/omp-llm-role/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Gott50/omp-llm-role/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.2.0
