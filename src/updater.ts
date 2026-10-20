@@ -568,13 +568,17 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           notes.push(`@${role}: no probe-clean candidate at or above the bar (key-blocked: ${keyBlockedCount}) — role untouched`);
           continue;
         }
-        // The incumbent is looked up in `usable`, not `pool`: an incumbent
-        // outside the probe window is still a valid incumbent to compare
-        // against. The probe verdicts gate the *pick* only — the table keys
-        // `current` on the usable pool, so a probe-blocked incumbent that clears
-        // the bar is compared on price like any other (it is the walk's first
-        // probe, so its verdict is always known by now).
-        currentEntry = currentId === null ? null : usable.find((c) => c.ranked.model.id === currentId) ?? null;
+        // The incumbent is looked up in `usable` (not `pool`, the probe window:
+        // an incumbent outside it is still a valid incumbent to compare
+        // against), but only when the probe accepts it. A probe-blocked
+        // incumbent is not in the pool at all — value mode would `adopt` away
+        // from it, and cheapest mode must not regress that by keeping a model
+        // the account cannot run. The walk probes the incumbent first, so a
+        // non-key-blocked incumbent's verdict is always known here.
+        currentEntry =
+          currentId === null
+            ? null
+            : usable.find((c) => c.ranked.model.id === currentId && probeVerdicts.get(c.catalogId) !== "blocked") ?? null;
         if (currentSelector === null) {
           chosen = pick;
           reason = "no-current";
@@ -588,7 +592,15 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         } else if (pick.ranked.model.id === currentEntry.ranked.model.id) {
           chosen = currentEntry;
           reason = "kept-eligible";
-        } else if (pick.ranked.priceEff <= currentEntry.ranked.priceEff * (1 - hysteresis.priceSwitchFraction)) {
+        } else if (
+          // The same guards as value mode's `cheaperInsideMargin`: a
+          // non-positive fraction disables the cost-side switch (the schema and
+          // README both document `0 disables`), and a non-positive incumbent
+          // price has no fraction to undercut.
+          hysteresis.priceSwitchFraction > 0 &&
+          currentEntry.ranked.priceEff > 0 &&
+          pick.ranked.priceEff <= currentEntry.ranked.priceEff * (1 - hysteresis.priceSwitchFraction)
+        ) {
           chosen = pick;
           reason = "switched-cost";
         } else {

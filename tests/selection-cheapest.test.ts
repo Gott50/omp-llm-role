@@ -192,6 +192,46 @@ test("a bar-clearing incumbent undercut by more than priceSwitchFraction is swit
   assert.equal(d.to, "openrouter/org/cheap:auto");
 });
 
+test("priceSwitchFraction 0 keeps a bar-clearing incumbent (kept-margin)", async () => {
+  const w = await runWrite(
+    DEEP_UNDERCUT,
+    onlyDefault({ selection: "cheapest", priceSwitchFraction: 0 }),
+    {},
+    'modelRoles:\n  default: "openrouter/org/mid"\n',
+  );
+  // Premise, from the engine: the pick undercuts the incumbent by more than the
+  // shipped fraction, so the default would switch — the guard is the only
+  // difference between this run and the next test.
+  assert.ok(row(DEEP_UNDERCUT, "cheap").priceEff <= row(DEEP_UNDERCUT, "mid").priceEff * (1 - DEFAULT_SETTINGS.priceSwitchFraction));
+  const d = decision(w);
+  assert.equal(d.reason, "kept-margin");
+  assert.equal(d.to, "openrouter/org/mid:auto");
+});
+
+test("the default priceSwitchFraction switches the same incumbent (switched-cost)", async () => {
+  const w = await runWrite(DEEP_UNDERCUT, onlyDefault({ selection: "cheapest" }), {}, 'modelRoles:\n  default: "openrouter/org/mid"\n');
+  const d = decision(w);
+  assert.equal(d.reason, "switched-cost");
+  assert.equal(d.to, "openrouter/org/cheap:auto");
+});
+
+test("a probe-blocked incumbent is adopted away from, not kept", async () => {
+  // `mid` clears the bar and is the incumbent, but the probe rejects it: it is
+  // not in the pool, so the pick (`cheap`) is chosen — value mode's behaviour.
+  const w = await runWrite(
+    NEAR_UNDERCUT,
+    onlyDefault({ selection: "cheapest" }),
+    { probeModel: async (_token: string, catalogId: string): Promise<ProbeVerdict> => (catalogId === "org/mid" ? "blocked" : "ok") },
+    'modelRoles:\n  default: "openrouter/org/mid"\n',
+  );
+  // Premise, from the engine: `mid` clears the bar and the pick is `cheap`.
+  assert.ok(row(NEAR_UNDERCUT, "mid").q >= 0.9 * row(NEAR_UNDERCUT, "premium").q);
+  assert.equal(row(NEAR_UNDERCUT, "cheap").priceEff, 6);
+  const d = decision(w);
+  assert.equal(d.reason, "adopted");
+  assert.equal(d.to, "openrouter/org/cheap:auto");
+});
+
 test("the anchor is the max-q candidate, not the value leader", async () => {
   const w = await runWrite(ANCHOR_SPLIT, onlyDefault({ selection: "cheapest" }));
   // Premise, from the engine: the value leader is not the highest-q model, and
