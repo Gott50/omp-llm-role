@@ -62,6 +62,10 @@ const ACTIVE_AVAILABILITY: KeyAvailability = {
   fetchedAt: "2026-10-03T00:00:00.000Z",
 };
 
+// The shipped selection rule: the scope-global default every getState literal
+// below carries unless a test overrides it.
+const NO_SELECTION = { mode: "value", qualityFloor: 0.9 };
+
 test("rankRows: deltas measure movement against the baseline ranking", () => {
   const baseline = rankRole(DEFAULT_ROLES.slow, MODELS);
   assert.deepEqual(baseline.map((r) => r.model.id), ["premium", "budget"]);
@@ -268,7 +272,7 @@ test("export writes the lock file with a backup and stays valid", async () => {
   writeFileSync(lockPath, JSON.stringify(seed, null, 2));
 
   const rank: RankData = { models: MODELS, fetchedAt: "2026-09-26T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} })));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -314,7 +318,7 @@ test("a role absent from the shipped defaults ranks and exports", async () => {
   writeFileSync(lockPath, JSON.stringify(seed, null, 2));
 
   const rank: RankData = { models: MODELS, fetchedAt: "2026-10-01T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} })));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -590,7 +594,7 @@ async function bootExplorer(availability: KeyAvailability): Promise<{ url: strin
   const lockPath = join(dir, "omp-plugins.lock.json");
   writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
   const rank: RankData = { models: MODELS, fetchedAt: "2026-10-03T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability, features: {} })));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability, features: {}, selection: NO_SELECTION })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -694,7 +698,7 @@ test("a posted def carrying a capability flag ranks identically to the resolved 
   const rank: RankData = { models: CACHE_MODELS, fetchedAt: "2026-10-07T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
   // The baseline is the role's resolved def (no flag), so the flag's effect shows
   // up as a real Δ rather than a null baseline.
-  const handle = await bootWithState(() => ({ rank, roles: { ...DEFAULT_ROLES, tiny: TINY }, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  const handle = await bootWithState(() => ({ rank, roles: { ...DEFAULT_ROLES, tiny: TINY }, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }));
   try {
     const post = async (def: unknown): Promise<{ rows: unknown; lambda: number; derivedLambda: number; errors: unknown }> => {
       const res = await fetch(`${handle.url}/api/rank`, {
@@ -722,7 +726,7 @@ test("a posted def carrying a capability flag ranks identically to the resolved 
 
 test("bootstrap carries the scope's global flags and the feature registry", async () => {
   const rank: RankData = { models: MODELS, fetchedAt: "2026-10-07T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const handle = await bootWithState(() => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: { cachePricing: true } }));
+  const handle = await bootWithState(() => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: { cachePricing: true }, selection: NO_SELECTION }));
   try {
     const boot: unknown = await (await fetch(`${handle.url}/api/bootstrap`)).json();
     assert.ok(isRecord(boot));
@@ -832,7 +836,7 @@ const PIN_RANK: RankData = { models: PIN_MODELS, fetchedAt: "2026-10-09T00:00:00
 const PIN_DEF = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
 
 test("a manual providerPin prices the pinned route in the preview", async () => {
-  const handle = await bootWithState(() => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  const handle = await bootWithState(() => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }));
   try {
     const res = await fetch(`${handle.url}/api/rank`, {
       method: "POST",
@@ -858,7 +862,7 @@ test("export writes a valid tiered providerPin and the preview reflects it", asy
   const dir = mkdtempSync(join(tmpdir(), "explorer-pin-"));
   const lockPath = join(dir, "omp-plugins.lock.json");
   writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
-  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} })));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -899,7 +903,7 @@ test("export rejects a providerPin that matches no route without writing", async
   const lockPath = join(dir, "omp-plugins.lock.json");
   writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
   const before = readFileSync(lockPath, "utf8");
-  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} })));
+  const server = createExplorerServer(userScopeOpts(lockPath, () => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION })));
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
@@ -924,7 +928,7 @@ test("export rejects a providerPin that matches no route without writing", async
 });
 
 test("explain returns the automatic pin only when preferOwnProvider is on and no manual pin", async () => {
-  const handle = await bootWithState(() => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  const handle = await bootWithState(() => ({ rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }));
   try {
     const explain = async (def: unknown): Promise<Record<string, unknown>> => {
       const res = await fetch(`${handle.url}/api/explain`, {
@@ -1264,7 +1268,7 @@ function rowOf(body: Record<string, unknown>, id: string): Record<string, unknow
 }
 
 /** The state the pool tests serve: the pin fixtures, the same for every scope. */
-const PIN_STATE = { rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} };
+const PIN_STATE = { rank: PIN_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION };
 
 /** `value` as a number, or a thrown error naming the field. */
 function numOf(value: unknown, label: string): number {
@@ -1365,7 +1369,7 @@ test("Export is unaffected by the pool mode", async () => {
   ];
   const rank: RankData = { models, fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
   const handle = await bootWithState(
-    () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }),
+    () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }),
     { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["cheapco/fp8"]), availability: NO_AVAILABILITY }) },
   );
   try {
@@ -1388,7 +1392,7 @@ const TASK_RANK: RankData = { models: [TASK_MODEL], fetchedAt: "2026-10-09T00:00
 
 test("the rank and explain responses carry the per-task price from the recorded usage, then the setting", async () => {
   const handle = await bootWithState(
-    () => ({ rank: TASK_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }),
+    () => ({ rank: TASK_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }),
     { getUsageRows: () => USAGE_ROWS, tokenProfile: { inputTokens: 1000, outputTokens: 1000 } },
   );
   try {
@@ -1415,7 +1419,7 @@ test("the rank and explain responses carry the per-task price from the recorded 
 });
 
 test("the per-task price is absent when neither recorded usage nor a setting exists", async () => {
-  const handle = await bootWithState(() => ({ rank: TASK_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  const handle = await bootWithState(() => ({ rank: TASK_RANK, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }));
   try {
     const ranked = await postJson(handle.url, "/api/rank", { role: "tiny", def: TASK_DEF });
     assert.equal(rowOf(ranked.body, "m").perTask, null);
@@ -1432,7 +1436,7 @@ const FLIP_DEF = { description: "", weights: { general: 0.8, price: 0.2 }, requi
 
 test("the explain response carries the leader-flip and thinking-level readouts", async () => {
   const rank: RankData = { models: FLIP_MODELS, fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
-  const handle = await bootWithState(() => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+  const handle = await bootWithState(() => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }));
   try {
     // λ = 0.2/0.8/20 = 0.0125; q(alpha) = (90+20)/80 = 1.375, q(beta) = 1.125.
     // The cheaper challenger flips at λ* = (1.375−1.125)/(10−1), i.e. w* = 5/14.
@@ -1463,12 +1467,149 @@ test("the explain response carries the leader-flip and thinking-level readouts",
 
     // No cheaper challenger: the readout is absent, never invented.
     const bestIsCheapest: Model[] = [makeModel("best", 90, 1, 100), makeModel("worse", 50, 10, 100)];
-    const noFlip = await bootWithState(() => ({ rank: { ...rank, models: bestIsCheapest }, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {} }));
+    const noFlip = await bootWithState(() => ({ rank: { ...rank, models: bestIsCheapest }, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }));
     try {
       assert.equal((await postJson(noFlip.url, "/api/explain", { role: "flip", def: FLIP_DEF, modelId: "best" })).body.leaderFlip, null);
     } finally {
       await noFlip.close();
     }
+  } finally {
+    await handle.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Selection: the prospective pick, the bar, and the excluded rows (issue #107)
+// ---------------------------------------------------------------------------
+
+// `premium` is the quality anchor (q 1.375) and `budget` the cheap challenger
+// (q 1.0). A half-price role makes `budget` the value leader while `premium`
+// stays the anchor, so the two modes mark different rows.
+const HALF_DEF = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+
+/** Boot a single-scope explorer whose scope-global selection is `selection`. */
+async function bootWithSelection(selection: { mode: string; qualityFloor: number }): Promise<{ url: string; close: () => Promise<void> }> {
+  const rank: RankData = { models: MODELS, fetchedAt: "2026-10-20T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  return bootWithState(() => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection }));
+}
+
+test("the role payload names the prospective pick and the bar in cheapest mode", async () => {
+  const handle = await bootWithSelection({ mode: "cheapest", qualityFloor: 0.9 });
+  try {
+    const { body } = await postJson(handle.url, "/api/rank", { role: "tiny", def: HALF_DEF });
+    const selection = body.selection;
+    assert.ok(isRecord(selection));
+    assert.equal(selection.mode, "cheapest");
+    assert.equal(selection.floor, 0.9);
+    // The anchor is the highest-q model, not the value leader.
+    assert.equal(selection.anchor, "premium");
+    assert.equal(selection.anchorQ, 1.375);
+    assert.equal(selection.bar, 0.9 * 1.375);
+    // Only the anchor clears the bar, so the pick is the anchor.
+    assert.equal(selection.pick, "premium");
+    // The rows carry the same verdict: `budget` (q 1.0) sits under the bar.
+    assert.equal(rowOf(body, "premium").excludedByBar, false);
+    assert.equal(rowOf(body, "budget").excludedByBar, true);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("a lower floor admits the cheap challenger and the pick follows it", async () => {
+  const handle = await bootWithSelection({ mode: "cheapest", qualityFloor: 0.5 });
+  try {
+    const { body } = await postJson(handle.url, "/api/rank", { role: "tiny", def: HALF_DEF });
+    const selection = body.selection;
+    assert.ok(isRecord(selection));
+    assert.equal(selection.bar, 0.5 * 1.375);
+    // Both clear the bar, so the cheapest good candidate wins.
+    assert.equal(selection.pick, "budget");
+    assert.equal(rowOf(body, "budget").excludedByBar, false);
+    assert.equal(rowOf(body, "premium").excludedByBar, false);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("value mode has no bar, flags no row, and marks the value leader", async () => {
+  const handle = await bootWithSelection({ mode: "value", qualityFloor: 0.9 });
+  try {
+    const { body } = await postJson(handle.url, "/api/rank", { role: "tiny", def: HALF_DEF });
+    const selection = body.selection;
+    assert.ok(isRecord(selection));
+    assert.equal(selection.mode, "value");
+    assert.equal(selection.bar, null);
+    // No bar, so the marked row is the value leader: `budget` (value 0.975),
+    // not `premium` (the highest-q model, q 1.375 vs 1.0).
+    assert.equal(selection.pick, "budget");
+    assert.equal(selection.anchor, "budget");
+    assert.equal(selection.anchorQ, 1);
+    const rows = body.rows;
+    assert.ok(Array.isArray(rows));
+    for (const row of rows) {
+      assert.ok(isRecord(row));
+      assert.equal(row.excludedByBar, false);
+    }
+  } finally {
+    await handle.close();
+  }
+});
+
+test("a per-role selection and qualityFloor beat the scope's global", async () => {
+  // Global value mode; the posted def asks for cheapest at a floor that admits
+  // the cheap challenger.
+  const handle = await bootWithSelection({ mode: "value", qualityFloor: 0.9 });
+  try {
+    const { body } = await postJson(handle.url, "/api/rank", { role: "tiny", def: { ...HALF_DEF, selection: "cheapest", qualityFloor: 0.5 } });
+    const selection = body.selection;
+    assert.ok(isRecord(selection));
+    assert.equal(selection.mode, "cheapest");
+    assert.equal(selection.floor, 0.5);
+    assert.equal(selection.bar, 0.5 * 1.375);
+    assert.equal(selection.pick, "budget");
+  } finally {
+    await handle.close();
+  }
+});
+
+test("a per-role value selection beats a global cheapest mode", async () => {
+  const handle = await bootWithSelection({ mode: "cheapest", qualityFloor: 0.9 });
+  try {
+    const { body } = await postJson(handle.url, "/api/rank", { role: "tiny", def: { ...HALF_DEF, selection: "value" } });
+    const selection = body.selection;
+    assert.ok(isRecord(selection));
+    assert.equal(selection.mode, "value");
+    assert.equal(selection.bar, null);
+    assert.equal(selection.pick, "budget");
+    // No per-role floor: the scope's global is the effective one.
+    assert.equal(selection.floor, 0.9);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("an empty ranked pool has no pick, no anchor, and no bar", async () => {
+  const handle = await bootWithSelection({ mode: "cheapest", qualityFloor: 0.9 });
+  try {
+    // The price cap drops every fixture model.
+    const { body } = await postJson(handle.url, "/api/rank", { role: "tiny", def: { ...HALF_DEF, filters: { maxPriceUsdPerM: 0.1 } } });
+    assert.deepEqual(rowIds(body), []);
+    const selection = body.selection;
+    assert.ok(isRecord(selection));
+    assert.equal(selection.pick, "");
+    assert.equal(selection.anchor, "");
+    assert.equal(selection.anchorQ, 0);
+    assert.equal(selection.bar, null);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("the bootstrap payload carries the scope's global selection", async () => {
+  const handle = await bootWithSelection({ mode: "cheapest", qualityFloor: 0.75 });
+  try {
+    const boot = await getJson(handle.url, "/api/bootstrap");
+    assert.deepEqual(boot.selection, { mode: "cheapest", qualityFloor: 0.75 });
   } finally {
     await handle.close();
   }

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import type { KeyAvailability } from "../src/availability.ts";
 import type { Model, OpenRouterEndpointRecord, RankData, RoleDef } from "../src/engine.ts";
 import { startExplorer, type ExplorerBootOpts } from "../src/explorer/boot.ts";
-import { resolveScopes, unionRoles } from "../src/explorer/scopes.ts";
+import { readScopeRoles, resolveScopes, unionRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { PROJECT_REGISTRY_FILE } from "../src/project-registry.ts";
 import { USAGE_LEDGER_FILE } from "../src/usage-ledger.ts";
@@ -468,4 +468,32 @@ test("a refresh re-derives the allowed-providers whitelist for the as-written po
   } finally {
     await handle.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// The scope's global selection rule (issue #107): the resolved `selection` mode
+// and its `qualityFloor`, which the explorer's payloads carry and a per-role
+// `selection`/`qualityFloor` overrides.
+// ---------------------------------------------------------------------------
+
+test("readScopeRoles returns the scope's resolved selection", () => {
+  const root = tempDir("explorer-selection-");
+  const lockPath = join(root, "omp-plugins.lock.json");
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { selection: "cheapest", qualityFloor: 0.75 } } }, null, 2),
+  );
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { selection, errors } = readScopeRoles(scope, lockPath);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(selection, { mode: "cheapest", qualityFloor: 0.75 });
+});
+
+test("readScopeRoles defaults the selection to the shipped value mode", () => {
+  const root = tempDir("explorer-selection-default-");
+  const lockPath = join(root, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { selection } = readScopeRoles(scope, lockPath);
+  assert.deepEqual(selection, { mode: "value", qualityFloor: 0.9 });
 });
