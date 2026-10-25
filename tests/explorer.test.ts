@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import { type KeyAvailability, type ProbeVerdict } from "../src/availability.ts";
-import { cardinalMetric, rankedRoutes, rankRole, SUFFIX_LEVELS, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
+import { cardinalMetric, rankedRoutes, rankRole, SUFFIX_LEVELS, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData, type RoleDef } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, METRIC_META, perTaskPrice, rankRows } from "../src/explorer/explain.ts";
 import { createExplorerServer, type ExplorerOpts } from "../src/explorer/server.ts";
@@ -14,7 +14,7 @@ import { readScopeRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { providerPinOfSelector } from "../src/provider-display.ts";
 import { mergeExport, removeRoleSettings, validateRole, writeRoleSettings } from "../src/role-settings.ts";
-import { DEFAULT_ROLES, KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
+import { DEFAULT_ROLES, DEFAULT_SETTINGS, globalSettingsOf, KNOWN_METRICS, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { type TokenProfile, type UsageRow } from "../src/usage-ledger.ts";
 import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
@@ -31,6 +31,13 @@ function userScopeOpts(lockPath: string, getState: ExplorerOpts["getState"], ext
     refresh: async () => {},
     // The default pool: nothing gated, nothing pruned — i.e. the raw dataset.
     getPoolInputs: () => ({ catalog: [], tier: "billed", allowed: null, availability: NO_AVAILABILITY }),
+    // The preview's scope-side inputs: empty by default, so a test that does not
+    // exercise the preview needs no fixture.
+    getPreviewInputs: () => ({
+      currentSelectors: {},
+      pluginState: { managedRoles: [], pluginWrittenChainKeys: [], managedDisabledAgents: [] },
+      agentPins: [],
+    }),
     ...extra,
   };
 }
@@ -677,18 +684,23 @@ const CACHE_MODELS: Model[] = [
   { ...makeModel("budget", 60, 0.5, 200), routes: [cacheRoute("budget-r", 0.5, 0.5, 0.05, 200)] },
 ];
 
-/** Boot a single-scope explorer over a temp lock file with a fixed getState. */
-async function bootWithState(getState: ExplorerOpts["getState"], extra: Partial<ExplorerOpts> = {}): Promise<{ url: string; close: () => Promise<void> }> {
-  const dir = mkdtempSync(join(tmpdir(), "explorer-features-"));
-  const lockPath = join(dir, "omp-plugins.lock.json");
-  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
-  const server = createExplorerServer(userScopeOpts(lockPath, getState, extra));
+/** Boot a `createExplorerServer` from a full opts object on an ephemeral port. */
+async function bootServer(opts: ExplorerOpts): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = createExplorerServer(opts);
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", resolve);
   await promise;
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("expected a TCP address");
   return { url: `http://127.0.0.1:${address.port}`, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+/** Boot a single-scope explorer over a temp lock file with a fixed getState. */
+async function bootWithState(getState: ExplorerOpts["getState"], extra: Partial<ExplorerOpts> = {}): Promise<{ url: string; close: () => Promise<void> }> {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-features-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  return bootServer(userScopeOpts(lockPath, getState, extra));
 }
 
 // The Δ baseline is the role's RESOLVED def (`state.roles[role]`), so a posted
@@ -1612,6 +1624,333 @@ test("the bootstrap payload carries the scope's global selection", async () => {
   try {
     const boot = await getJson(handle.url, "/api/bootstrap");
     assert.deepEqual(boot.selection, { mode: "cheapest", qualityFloor: 0.75 });
+  } finally {
+    await handle.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Spec #109 / ticket #113: the preview endpoint, the extended export, and the
+// edited-global-flags input on rank/explain.
+// ---------------------------------------------------------------------------
+
+/** The preview fixture: the value leader (model-a) beats the incumbent
+ * (model-b) by 0.325 — inside the default 0.02 margin, outside a 0.5 one, so an
+ * edited `switchMargin` flips the decision. */
+const PREVIEW_MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+const PREVIEW_RANK: RankData = { models: PREVIEW_MODELS, fetchedAt: "2026-10-08T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+const PREVIEW_ROLE: RoleDef = { description: "preview role", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+const PREVIEW_SETTINGS = { authored: {}, resolved: globalSettingsOf(DEFAULT_SETTINGS), defaults: globalSettingsOf(DEFAULT_SETTINGS) };
+
+/** The preview fixture's opts: the near-tie pair, the incumbent in the scope's
+ * `config.yml`, and the scope's raw settings map. */
+function previewOpts(lockPath: string, over: Partial<ExplorerOpts> = {}): ExplorerOpts {
+  return userScopeOpts(
+    lockPath,
+    () => ({
+      rank: PREVIEW_RANK,
+      roles: { previewrole: PREVIEW_ROLE },
+      universe: {},
+      defaults: DEFAULT_ROLES,
+      availability: NO_AVAILABILITY,
+      features: {},
+      selection: NO_SELECTION,
+      settings: PREVIEW_SETTINGS,
+      raw: { roles: { previewrole: PREVIEW_ROLE } },
+    }),
+    {
+      // The preview's pool inputs: a real catalog, so the catalog/tier gate
+      // inside `previewSelection` has something to resolve against.
+      getPoolInputs: () => ({ catalog: makeCatalog(PREVIEW_MODELS.map((m) => m.id)), tier: "billed", allowed: null, availability: NO_AVAILABILITY }),
+      getPreviewInputs: () => ({
+        currentSelectors: { previewrole: "openrouter/org/model-b" },
+        pluginState: { managedRoles: ["previewrole"], pluginWrittenChainKeys: [], managedDisabledAgents: [] },
+        agentPins: [],
+      }),
+      ...over,
+    },
+  );
+}
+
+/** The decision for `role` in a preview response, or a thrown error naming it. */
+function decisionOf(body: Record<string, unknown>, role: string): Record<string, unknown> {
+  const preview = body.preview;
+  if (!isRecord(preview)) throw new Error("no preview in the response");
+  const decisions = preview.decisions;
+  if (!Array.isArray(decisions)) throw new Error("no decisions in the preview");
+  const decision = decisions.find((d) => isRecord(d) && d.role === role);
+  if (!isRecord(decision)) throw new Error(`no decision for ${role}`);
+  return decision;
+}
+
+test("POST /api/preview returns the decisions for the edited settings", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-preview-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const handle = await bootServer(previewOpts(lockPath));
+  try {
+    // The default margin (0.02) switches to the value leader.
+    const base = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: PREVIEW_ROLE } });
+    assert.equal(base.status, 200);
+    const decision = decisionOf(base.body, "previewrole");
+    assert.equal(decision.reason, "switched");
+    assert.equal(decision.from, "openrouter/org/model-b");
+    assert.equal(decision.to, "openrouter/org/model-a");
+    // The payload carries every side-effect field the SPA renders.
+    const preview = base.body.preview as Record<string, unknown>;
+    for (const key of ["decisions", "chains", "chainPrunes", "roleRemovals", "agentDisableAdds", "agentDisableRemoves", "skipped"]) {
+      assert.ok(key in preview, `preview.${key} is missing`);
+    }
+    assert.deepEqual(base.body.errors, []);
+
+    // The same edit with a 0.5 margin: the margin vetoes the plain switch, so
+    // the cost-side escape takes over (the challenger is 5x cheaper).
+    const wide = await postJson(handle.url, "/api/preview", { settings: { switchMargin: 0.5 }, roles: { previewrole: PREVIEW_ROLE } });
+    assert.equal(decisionOf(wide.body, "previewrole").reason, "switched-cost");
+
+    // With the cost escape off too, the incumbent is kept: the edited globals
+    // change the decision, not just the numbers.
+    const kept = await postJson(handle.url, "/api/preview", {
+      settings: { switchMargin: 0.5, priceSwitchFraction: 0 },
+      roles: { previewrole: PREVIEW_ROLE },
+    });
+    const keptDecision = decisionOf(kept.body, "previewrole");
+    assert.equal(keptDecision.reason, "kept-margin");
+    assert.equal(keptDecision.to, "openrouter/org/model-b");
+  } finally {
+    await handle.close();
+  }
+});
+
+test("POST /api/preview names the roles it could not decide", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-preview-skipped-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const handle = await bootServer(previewOpts(lockPath));
+  try {
+    // A locked role is ranked but never mutated, so it is reported, not decided.
+    const locked: RoleDef = { ...PREVIEW_ROLE, locked: true };
+    const { body } = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: locked } });
+    const preview = body.preview as Record<string, unknown>;
+    const skipped = preview.skipped as Array<Record<string, unknown>>;
+    assert.deepEqual(skipped.find((s) => s.role === "previewrole"), { role: "previewrole", reason: "locked" });
+    assert.equal(preview.decisions && (preview.decisions as unknown[]).some((d) => isRecord(d) && d.role === "previewrole"), false);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("POST /api/preview applies the keyed prune inside the candidate set, not to the dataset", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-preview-keyed-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  // The keyed catalog blocks the value leader: the preview must count it and
+  // fall through to the incumbent, exactly as the updater's pre-walk set does.
+  // (Pre-pruning the dataset would report `keyBlockedCount: 0`.)
+  const blocked: KeyAvailability = {
+    active: true,
+    reason: "active",
+    allowed: new Set(["model-b"]),
+    blocked: new Set(["model-a"]),
+    publicCount: 2,
+    keyedCount: 1,
+    fetchedAt: "2026-10-08T00:00:00.000Z",
+  };
+  const handle = await bootServer(
+    previewOpts(lockPath, {
+      getState: () => ({
+        rank: PREVIEW_RANK,
+        roles: { previewrole: PREVIEW_ROLE },
+        universe: {},
+        defaults: DEFAULT_ROLES,
+        availability: blocked,
+        features: {},
+        selection: NO_SELECTION,
+        settings: PREVIEW_SETTINGS,
+        raw: { roles: { previewrole: PREVIEW_ROLE } },
+      }),
+    }),
+  );
+  try {
+    const { body } = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: PREVIEW_ROLE } });
+    const decision = decisionOf(body, "previewrole");
+    assert.equal(decision.keyBlockedCount, 1);
+    assert.equal(decision.reason, "kept-eligible");
+    assert.equal(decision.to, "openrouter/org/model-b");
+  } finally {
+    await handle.close();
+  }
+});
+
+test("POST /api/preview drops the scope's flat roles.* keys, so a cleared pin cannot survive", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-preview-flat-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  // The lock file's flat dotted convention: the authored pin lives beside the
+  // nested roles object, and the edited def no longer carries it. Without the
+  // strip the stale pin would survive the merge and the role would be skipped
+  // as unroutable instead of decided.
+  const handle = await bootServer(
+    previewOpts(lockPath, {
+      getState: () => ({
+        rank: PREVIEW_RANK,
+        roles: { previewrole: PREVIEW_ROLE },
+        universe: {},
+        defaults: DEFAULT_ROLES,
+        availability: NO_AVAILABILITY,
+        features: {},
+        selection: NO_SELECTION,
+        settings: PREVIEW_SETTINGS,
+        raw: { roles: { previewrole: PREVIEW_ROLE }, "roles.previewrole.providerPin": "priceyco/fp8" },
+      }),
+    }),
+  );
+  try {
+    const { body } = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: PREVIEW_ROLE } });
+    const decision = decisionOf(body, "previewrole");
+    assert.equal(decision.to, "openrouter/org/model-a");
+    assert.equal(decision.pinDropped, false);
+    const preview = body.preview as Record<string, unknown>;
+    assert.equal((preview.skipped as Array<Record<string, unknown>>).some((s) => s.role === "previewrole"), false);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("POST /api/export writes a global key and a role key in one lock file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-export-both-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  const seed = { plugins: { "omp-llm-role": { enabled: true } }, settings: {} };
+  writeFileSync(lockPath, JSON.stringify(seed, null, 2));
+  const handle = await bootServer(previewOpts(lockPath));
+  try {
+    const base = DEFAULT_ROLES.slow.weights;
+    const edited = { ...DEFAULT_ROLES.slow, weights: { ...base, general: base.general + 0.02, code: base.code - 0.02 } };
+    const { body } = await postJson(handle.url, "/api/export", { roles: { slow: edited }, settings: { switchMargin: 0.05 } });
+    assert.equal(body.ok, true);
+    assert.equal(typeof body.backupPath, "string");
+    assert.deepEqual(body.roles, ["slow"]);
+    assert.equal(body.lockPath, lockPath);
+
+    const written = JSON.parse(readFileSync(lockPath, "utf8")) as { plugins: unknown; settings: { "omp-llm-role": Record<string, unknown> } };
+    const plugin = written.settings["omp-llm-role"];
+    assert.deepEqual(written.plugins, seed.plugins);
+    assert.equal(plugin.switchMargin, 0.05);
+    assert.equal(plugin["roles.slow.weights.general"], base.general + 0.02);
+    assert.equal(plugin["roles.slow.weights.code"], base.code - 0.02);
+    // One atomic write: exactly one backup sibling.
+    assert.equal(readdirSync(dir).filter((f) => f.includes(".bak-")).length, 1);
+    // The written lock still resolves cleanly.
+    assert.deepEqual(resolveSettings(readPluginSettingsMap({ global: lockPath, project: null })).errors, []);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("an out-of-range switchMargin is refused with the offending key and no write", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-export-bad-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const before = readFileSync(lockPath, "utf8");
+  const handle = await bootServer(previewOpts(lockPath));
+  try {
+    const { body } = await postJson(handle.url, "/api/export", { roles: { slow: DEFAULT_ROLES.slow }, settings: { switchMargin: 1.5 } });
+    assert.equal(body.ok, false);
+    assert.deepEqual(body.errors, ["switchMargin: must be a number in [0, 1], got 1.5"]);
+    assert.equal(readFileSync(lockPath, "utf8"), before);
+    assert.equal(readdirSync(dir).filter((f) => f.includes(".bak-")).length, 0);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("POST /api/rank with an edited features.<id> re-ranks with the edited expansion", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-rank-flags-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  // Three models at the same quality, priced 1 / 5 / 20: `costCap` recommends
+  // `maxPriceUsdPerM: 10`, so the priciest tail leaves the pool.
+  const models = [makeModel("cheap", 80, 1, 100), makeModel("mid", 80, 5, 100), makeModel("pricey", 80, 20, 100)];
+  const rank: RankData = { models, fetchedAt: "2026-10-08T00:00:00.000Z", source: "test", orMatched: 3, orPriced: 3 };
+  const def: RoleDef = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+  const handle = await bootServer(
+    userScopeOpts(lockPath, () => ({ rank, roles: {}, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION, settings: PREVIEW_SETTINGS, raw: {} })),
+  );
+  try {
+    const plain = await postJson(handle.url, "/api/rank", { role: "caprole", def });
+    assert.deepEqual(rowIds(plain.body).sort(), ["cheap", "mid", "pricey"]);
+    const capped = await postJson(handle.url, "/api/rank", { role: "caprole", def, settings: { "features.costCap": true } });
+    assert.deepEqual(rowIds(capped.body).sort(), ["cheap", "mid"]);
+    // The same edited flags reach /api/explain: the capped model is ineligible.
+    const explained = await postJson(handle.url, "/api/explain", { role: "caprole", def, modelId: "pricey", settings: { "features.costCap": true } });
+    assert.equal(explained.body.eligible, false);
+    assert.deepEqual(explained.body.reasons, ["price exceeds the role's maxPriceUsdPerM cap (10)"]);
+    const explainedPlain = await postJson(handle.url, "/api/explain", { role: "caprole", def, modelId: "pricey" });
+    assert.equal(explainedPlain.body.eligible, true);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("the bootstrap payload carries the scope's global settings", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-boot-settings-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const settings = {
+    authored: { switchMargin: 0.05, "features.costCap": true },
+    resolved: { ...globalSettingsOf(DEFAULT_SETTINGS), switchMargin: 0.05, features: { costCap: true } },
+    defaults: globalSettingsOf(DEFAULT_SETTINGS),
+  };
+  const handle = await bootServer(
+    userScopeOpts(lockPath, () => ({ rank: PREVIEW_RANK, roles: {}, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: { costCap: true }, selection: NO_SELECTION, settings, raw: {} })),
+  );
+  try {
+    const boot = await getJson(handle.url, "/api/bootstrap");
+    assert.ok(isRecord(boot.settings));
+    assert.deepEqual(boot.settings.authored, { switchMargin: 0.05, "features.costCap": true });
+    assert.equal((boot.settings.resolved as Record<string, unknown>).switchMargin, 0.05);
+    assert.equal((boot.settings.defaults as Record<string, unknown>).switchMargin, 0.02);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("startExplorer serves the preview from the scope's lock file and config.yml, and writes nothing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-boot-preview-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { roles: { previewrole: PREVIEW_ROLE } } } }, null, 2),
+  );
+  // The scope's own config.yml carries the incumbent the hysteresis reads.
+  writeFileSync(join(dir, "config.yml"), "modelRoles:\n  previewrole: openrouter/org/model-b\n");
+  const handle = await startExplorer({
+    webDir: join(process.cwd(), "web"),
+    lockPath,
+    cwd: dir,
+    registryDir: dir,
+    // Hermetic: the state dir and the ledger follow the scope dir.
+    usageDir: dir,
+    rank: PREVIEW_RANK,
+    catalog: makeCatalog(PREVIEW_MODELS.map((m) => m.id)),
+    availability: NO_AVAILABILITY,
+    reload: async () => PREVIEW_RANK,
+    port: 0,
+    open: false,
+    onLog: () => {},
+  });
+  try {
+    const lockBefore = readFileSync(lockPath, "utf8");
+    const configBefore = readFileSync(join(dir, "config.yml"), "utf8");
+    const { status, body } = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: PREVIEW_ROLE } });
+    assert.equal(status, 200);
+    const decision = decisionOf(body, "previewrole");
+    assert.equal(decision.from, "openrouter/org/model-b");
+    assert.equal(decision.reason, "switched");
+    assert.equal(decision.to, "openrouter/org/model-a");
+    // Read-only: neither the lock file nor config.yml changed.
+    assert.equal(readFileSync(lockPath, "utf8"), lockBefore);
+    assert.equal(readFileSync(join(dir, "config.yml"), "utf8"), configBefore);
   } finally {
     await handle.close();
   }
