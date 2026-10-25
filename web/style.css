@@ -273,6 +273,53 @@ button.x { padding: 1px 7px; color: var(--down); }
 .knob-badge.authored { color: var(--up); border-color: var(--up); }
 .knob-badge.none { color: var(--muted); }
 
+/* Settings panel (spec #109): one row per global setting, with the effective
+   value, the shipped default, a dirty marker and a reset. Reachable without
+   selecting a role — it is rendered per scope, not per role. */
+#settings { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+#settings h2 { margin: 0 0 4px; font-size: 15px; }
+#settings h3 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+#settings p { margin: 4px 0; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 2px 18px; }
+.setting { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; padding: 3px 4px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.setting.dirty { background: rgba(110, 168, 254, 0.12); box-shadow: inset 3px 0 0 var(--accent); }
+.setting-name { flex: 0 0 180px; font-family: var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setting.dirty .setting-name { color: var(--fg); }
+.setting-input { flex: 0 0 auto; width: 110px; }
+.setting-input[type="checkbox"] { width: auto; }
+.setting-default { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.setting-noimpact { font-size: 11px; font-style: italic; white-space: nowrap; }
+.setting-badge { padding: 0 5px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; line-height: 15px; }
+.setting-badge.authored { color: var(--up); border-color: var(--up); }
+.setting-badge.default { color: var(--muted); }
+.setting-reset { padding: 1px 7px; font-size: 11px; }
+.setting-error { flex: 1 1 100%; color: var(--down); font-family: var(--mono); font-size: 11px; }
+.setting-error.show::before { content: "⚠ "; }
+
+/* Endpoint filters: the five first-class per-role fields. The four a capability
+   bundle also recommends are rendered here only, so one def key has one input. */
+.endpoint-filters { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+
+/* Preview panel (spec #109): the updater's decision, chain and side effects,
+   labelled probe-optimistic. */
+#preview { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+#preview h2 { margin: 0 0 4px; font-size: 15px; display: flex; gap: 8px; align-items: baseline; }
+#preview h3 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+#preview p { margin: 4px 0; }
+.probe-label { padding: 0 6px; border-radius: 999px; border: 1px solid var(--warn); color: var(--warn); font-size: 10px; line-height: 15px; font-weight: 400; }
+table.preview { width: 100%; border-collapse: collapse; }
+table.preview th, table.preview td { padding: 3px 6px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+table.preview th { color: var(--muted); font-weight: 500; font-size: 11px; }
+table.preview td { font-family: var(--mono); font-size: 12px; }
+table.preview td.num, table.preview th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.preview td.sel { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+table.preview td.reason { color: var(--accent); }
+table.preview td.reason-kept-margin, table.preview td.reason-kept-eligible { color: var(--muted); }
+table.preview td.reason-switched, table.preview td.reason-switched-cost { color: var(--warn); }
+table.preview td.flags { color: var(--muted); }
+.side-effects, .skipped { margin: 6px 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; }
+.skipped { color: var(--warn); }
+
 #export-bar {
   display: flex;
   gap: 8px;

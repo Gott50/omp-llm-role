@@ -39,6 +39,17 @@ const state = {
   availability: null,
   explain: null,
   exportMessage: "",
+  // The scope's global settings, in the three shapes the Settings panel needs:
+  // `authored` (the lock file's flat dotted keys), `resolved` (the committed
+  // effective values) and `defaults` (the shipped values to reset to).
+  // `settingsEdited` is the working copy the panel mutates and Export posts.
+  settingsAuthored: {},
+  settingsResolved: null,
+  settingsDefaults: null,
+  settingsEdited: {},
+  // The updater's decision preview (probe-optimistic) and its validation errors.
+  preview: null,
+  previewErrors: [],
 };
 
 // The plugin deep-merges a role's weights over DEFAULT_ROLES, so a metric the
@@ -134,6 +145,114 @@ function dirtyRoles() {
 }
 
 // ---------------------------------------------------------------------------
+// Global settings (the Settings panel's model)
+// ---------------------------------------------------------------------------
+
+/** Read a flat dotted key (`tokenProfile.inputTokens`) out of a nested object.
+ * A key that is itself a property wins, so a literal dotted key still resolves. */
+function pathGet(obj, key) {
+  if (!obj) return undefined;
+  if (key in obj) return obj[key];
+  let cur = obj;
+  for (const part of key.split(".")) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = cur[part];
+  }
+  return cur;
+}
+
+/** The shipped default for a flat dotted key. A capability flag's schema default
+ * is `false`, but `DEFAULT_SETTINGS.features` is empty, so the flag falls back
+ * to false rather than undefined (which would make a cleared toggle look set). */
+function defaultOf(key) {
+  const value = pathGet(state.settingsDefaults, key);
+  if (value === undefined && key.startsWith("features.")) return false;
+  return value;
+}
+
+/** The scope's committed effective value for a flat dotted key. */
+function resolvedOf(key) {
+  const value = pathGet(state.settingsResolved, key);
+  if (value === undefined && key.startsWith("features.")) return false;
+  return value;
+}
+
+/** Re-derive the committed resolved globals from a flat dotted-key record over
+ * the shipped defaults — the projection `resolveSettings` applies to the global
+ * half. Used after an export, so the panel's committed readout cannot go stale. */
+function resolvedFromFlat(flat) {
+  const out = structuredClone(state.settingsDefaults);
+  for (const [key, value] of Object.entries(flat)) {
+    if (key === "config" || key === "suffixes" || key.startsWith("suffixes.")) continue;
+    const parts = key.split(".");
+    let node = out;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (node[parts[i]] === null || typeof node[parts[i]] !== "object") node[parts[i]] = {};
+      node = node[parts[i]];
+    }
+    node[parts[parts.length - 1]] = value;
+  }
+  return out;
+}
+
+function fmtDefault(value) {
+  if (value === undefined || value === null) return "—";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return String(value);
+}
+
+/** Set (or clear) one global key on the working copy. A value equal to the
+ * shipped default — or an empty field — deletes the key, so Export never
+ * accumulates a redundant key that just restates the default. */
+function setGlobal(key, value) {
+  if (value === undefined || value === "" || value === defaultOf(key)) delete state.settingsEdited[key];
+  else state.settingsEdited[key] = value;
+}
+
+/** Global dirty: the working copy differs from the scope's authored keys. */
+function settingsDirty() {
+  return JSON.stringify(state.settingsEdited) !== JSON.stringify(state.settingsAuthored);
+}
+
+/** The server's own validation, mirrored so the panel can show the error as you
+ * type. Returns null for a valid value (or a key with no range). */
+function validateGlobal(key, value) {
+  const range = GLOBAL_RANGES[key];
+  if (!range) return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) return key + ": must be a number";
+  if (range.integer) {
+    if (!Number.isInteger(value) || value < 0) return key + ": must be an integer >= 0, got " + JSON.stringify(value);
+    return null;
+  }
+  if (range.max === undefined) {
+    if (value < range.min) return key + ": must be a number >= 0, got " + JSON.stringify(value);
+    return null;
+  }
+  if (value < range.min || value > range.max) {
+    return key + ": must be a number in [" + range.min + ", " + range.max + "], got " + JSON.stringify(value);
+  }
+  return null;
+}
+
+/** Every validation error in the working copy, keyed by the offending key. The
+ * token profile is a pair: the server rejects a lone half, so the panel does
+ * too (a cleared field falls back to the shipped default, which is null). */
+function settingsErrors() {
+  const out = {};
+  for (const [key, value] of Object.entries(state.settingsEdited)) {
+    const err = validateGlobal(key, value);
+    if (err) out[key] = err;
+  }
+  const hasIn = "tokenProfile.inputTokens" in state.settingsEdited;
+  const hasOut = "tokenProfile.outputTokens" in state.settingsEdited;
+  if (hasIn !== hasOut) {
+    const missing = hasIn ? "tokenProfile.outputTokens" : "tokenProfile.inputTokens";
+    out[missing] = missing + ": must be a number >= 0, got undefined";
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Hover tooltips
 // ---------------------------------------------------------------------------
 
@@ -209,10 +328,73 @@ const TIPS = {
   locked: "Locked — the plugin still ranks this role, but never rewrites its selector or fallback chain, and never removes it.",
   dropInherited: "set to ~0 — the plugin deep-merges weights over the shipped defaults, so an inherited metric cannot be removed",
   dropAdded: "remove — this metric is not in the shipped default, so the key is deleted outright",
-  exportBtn: "Write the edited roles into the plugin lock file (a .bak-<timestamp> sibling is written first); takes effect on the next /refresh-roles in any running session — the lock file is re-read from disk on every run.",
-  copy: "Copy the dirty-roles payload (the shape the lock file stores) to the clipboard.",
-  download: "Download the dirty-roles payload as JSON.",
+  exportBtn: "Write the edited roles and global settings into the plugin lock file (a .bak-<timestamp> sibling is written first); takes effect on the next /refresh-roles in any running session — the lock file is re-read from disk on every run.",
+  copy: "Copy the export payload (the dirty roles plus the edited global settings) to the clipboard.",
+  download: "Download the export payload (the dirty roles plus the edited global settings) as JSON.",
+  settings: "Global settings for this scope, read from the plugin lock file. The input shows the effective value (authored, else the shipped default); Export writes only the keys you change, and a cleared field falls back to the shipped default.",
+  settingsNoImpact: "Editable, but it has no visual impact: it changes a session behaviour (activateDefaultOnEmptySession) or a side channel (errorReporting), not the ranking or the decision preview.",
+  globalFeatures: "Global capability flags (features.<id>): a role's own features.<id> overrides the global in either direction. Export writes the flag, not the expanded values.",
+  selection: "Model selection rule: value (best value, today's behaviour) or cheapest (the cheapest model clearing qualityFloor).",
+  errorReporting: "File unexpected plugin errors as GitHub issues: off, ask, or auto.",
+  tokenProfile: "Per-task token mix for the per-task price, used when the role has no recorded usage. Both fields are required together; clear both to unset.",
+  probeOptimistic: "The preview is probe-optimistic: it never issues a request. The candidate set, the keyed prune, the ladder, the chain and the side effects are the updater's own code; the probe walk can still drop a candidate or skip the pinned route, so the written pin can be a later route or absent.",
+  preview: "What the updater would write for this scope, from the edited settings and role defs. Read-only: it never writes config.yml or the lock file.",
+  previewChain: "The fallback chain the updater would write, keyed by the chain key (the selector without its thinking suffix). Two roles on the same model share one chain key.",
+  previewFlags: "Why a candidate left the pool: endpoint-blocked (the role's endpoint filters), pin-blocked (the provider pin matched no route), key-blocked (the keyed catalog cannot run it), probe-blocked (the probe walk rejected it), route-blocked (the auto-pin's route probe rejected the slug).",
+  endpointFilters: "Per-role endpoint filters: a candidate whose standard-tier routes cannot satisfy these leaves the pool. An empty field inherits (no filter); a value overrides the capability bundle that recommends it.",
+  filterTools: "filters.tools — require a route that can call tools.",
+  filterMinContextTokens: "filters.minContextTokens — require a route whose context window is at least this many tokens.",
+  filterMinOutputTokens: "filters.minOutputTokens — require a route whose output ceiling is at least this many tokens.",
+  filterMaxPrice: "filters.maxPriceUsdPerM — drop routes priced above this $/M.",
+  filterMinThroughput: "filters.preferredMinThroughput — prefer routes with at least this output throughput (tok/s).",
 };
+
+/* Per-setting explanations for the Settings panel, keyed by the flat dotted
+ * key. The panel renders one control per key of `settings.defaults`, so a
+ * setting added to the schema shows up here with a generic row until it gets a
+ * tip. */
+const GLOBAL_TIPS = {
+  switchMargin: "Value margin a challenger must beat the incumbent by before switching.",
+  priceSwitchFraction: "Adopt a challenger inside the margin when it is at least this fraction cheaper (0 disables).",
+  writeFallbackChains: "Write per-role fallback chains into config.yml.",
+  fallbackChainDepth: "Number of fallback models per role chain.",
+  fallbackQualityFloor: "Quality floor for a cheaper-or-equal fallback: the fraction of the chosen model's quality it must retain (0 disables).",
+  selection: "Model selection rule: value (best value) or cheapest (the cheapest model clearing qualityFloor).",
+  qualityFloor: "In cheapest mode, the fraction of the pool's highest-q model's quality a cheaper candidate must retain (0 disables; inert in value mode).",
+  activateDefaultOnEmptySession: "Reapply the new default selector to an empty session's active model. No visual impact.",
+  errorReporting: "File unexpected plugin errors as GitHub issues (off, ask, auto). No visual impact.",
+  "tokenProfile.inputTokens": "Input tokens per task for the per-task price (used when the role has no recorded usage).",
+  "tokenProfile.outputTokens": "Output tokens per task for the per-task price (used when the role has no recorded usage).",
+};
+
+/* The numeric ranges the server validates, mirrored so the panel can show the
+ * error as you type instead of only on Export. A key absent here is not a
+ * number (a boolean or an enum) and needs no range check. */
+const GLOBAL_RANGES = {
+  switchMargin: { min: 0, max: 1, step: 0.001 },
+  priceSwitchFraction: { min: 0, max: 1, step: 0.001 },
+  fallbackChainDepth: { min: 0, step: 1, integer: true },
+  fallbackQualityFloor: { min: 0, max: 1, step: 0.001 },
+  qualityFloor: { min: 0, max: 1, step: 0.001 },
+  "tokenProfile.inputTokens": { min: 0, step: 1 },
+  "tokenProfile.outputTokens": { min: 0, step: 1 },
+};
+
+/* The five per-role endpoint filters, rendered as first-class fields. The four
+ * a capability bundle also recommends are skipped by `bundleKnobs`, so one def
+ * key has exactly one input; `cacheHitRate` and `preferOwnProvider` stay
+ * bundle-only. */
+const ENDPOINT_FILTERS = [
+  { key: "filters.tools", kind: "boolean", label: "tools", tip: TIPS.filterTools },
+  { key: "filters.minContextTokens", kind: "number", label: "minContextTokens", tip: TIPS.filterMinContextTokens },
+  { key: "filters.minOutputTokens", kind: "number", label: "minOutputTokens", tip: TIPS.filterMinOutputTokens },
+  { key: "filters.maxPriceUsdPerM", kind: "number", label: "maxPriceUsdPerM", tip: TIPS.filterMaxPrice },
+  { key: "filters.preferredMinThroughput", kind: "number", label: "preferredMinThroughput", tip: TIPS.filterMinThroughput },
+];
+
+/** The four def keys a capability bundle also recommends: rendered as
+ * first-class endpoint-filter fields, so `bundleKnobs` skips them. */
+const BUNDLE_SKIPPED_KEYS = ["filters.tools", "filters.minOutputTokens", "filters.maxPriceUsdPerM", "filters.preferredMinThroughput"];
 
 function metricTip(metric) {
   const meta = state.metricMeta[metric];
@@ -424,13 +606,15 @@ let recomputeTimer = null;
 function scheduleRecompute() {
   if (recomputeTimer) clearTimeout(recomputeTimer);
   recomputeTimer = setTimeout(recompute, 120);
+  // Any edit (a role def or a global setting) also re-runs the decision preview.
+  schedulePreview();
 }
 
 async function recompute() {
   if (!state.role) return;
   let data;
   try {
-    data = await api("/api/rank", { role: state.role, def: state.defs[state.role] });
+    data = await api("/api/rank", { role: state.role, def: state.defs[state.role], settings: state.settingsEdited });
   } catch (err) {
     state.errors = [err.message];
     renderErrors();
@@ -449,6 +633,135 @@ async function recompute() {
     state.selectedId = null;
     state.explain = null;
     renderExplain();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Preview panel (what the updater would write)
+// ---------------------------------------------------------------------------
+
+let previewTimer = null;
+
+/** Debounced like `scheduleRecompute`: any edit re-runs the preview. */
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, 150);
+}
+
+/** Ask the server for the decision preview on the edited settings and defs. The
+ * preview is read-only and probe-optimistic; the server owns the decision. */
+async function runPreview() {
+  let data;
+  try {
+    data = await api("/api/preview", { settings: state.settingsEdited, roles: state.defs });
+  } catch (err) {
+    state.preview = null;
+    state.previewErrors = [err.message];
+    renderPreview();
+    return;
+  }
+  state.preview = data.preview;
+  state.previewErrors = data.errors || [];
+  renderPreview();
+}
+
+/** The chain key a decision's selector belongs to: the selector without its
+ * thinking suffix (the updater's own `key` derivation). The suffix is the role's
+ * RESOLVED thinking level — the authored value, else the shipped default —
+ * because the preview computes it from the resolved def, so a role inheriting a
+ * shipped default level still gets a suffixed selector. */
+function chainKeyFor(decision) {
+  const def = state.defs[decision.role];
+  const shipped = state.defaults[decision.role];
+  const suffix = def && def.thinking !== undefined ? def.thinking : shipped ? shipped.thinking : undefined;
+  if (suffix && decision.to.endsWith(":" + suffix)) return decision.to.slice(0, -(suffix.length + 1));
+  return decision.to;
+}
+
+/** Why a candidate left the pool, as one compact line. */
+function decisionFlags(d) {
+  const parts = [];
+  if (d.endpointBlocked && d.endpointBlocked.length) parts.push("endpoint-blocked " + d.endpointBlocked.length);
+  if (d.pinBlocked && d.pinBlocked.length) parts.push("pin-blocked " + d.pinBlocked.length);
+  if (d.keyBlockedCount) parts.push("key-blocked " + d.keyBlockedCount);
+  if (d.pinDropped) parts.push("pin dropped");
+  if (d.routeBlockedSlugs && d.routeBlockedSlugs.length) parts.push("route-blocked " + d.routeBlockedSlugs.length);
+  if (d.blocked && d.blocked.length) parts.push("probe-blocked " + d.blocked.length);
+  return parts.join(" · ") || "—";
+}
+
+function renderPreview() {
+  const panel = document.getElementById("preview");
+  if (!panel) return;
+  panel.textContent = "";
+  panel.append(
+    el("h2", {}, [
+      el("span", { "data-tip": TIPS.preview, text: "Preview — what the updater would write" }),
+      el("span", { class: "probe-label", "data-tip": TIPS.probeOptimistic, text: "probe-optimistic" }),
+    ]),
+  );
+  if (state.previewErrors.length) {
+    const box = el("div", { class: "errors" });
+    for (const e of state.previewErrors) box.append(el("div", { class: "err", text: e }));
+    panel.append(box);
+  }
+  const p = state.preview;
+  if (!p) {
+    panel.append(el("p", { class: "muted", text: "…" }));
+    return;
+  }
+
+  panel.append(el("h3", { text: "Decisions (" + p.decisions.length + ")" }));
+  if (p.decisions.length === 0) {
+    panel.append(el("p", { class: "muted", text: "No managed role could be decided." }));
+  } else {
+    const table = el("table", { class: "preview" });
+    table.append(
+      el("thead", {}, el("tr", {}, [
+        el("th", { text: "role" }),
+        el("th", { text: "from → to" }),
+        el("th", { text: "reason" }),
+        el("th", { class: "num", text: "value" }),
+        el("th", { class: "num", text: "best" }),
+        el("th", { "data-tip": TIPS.previewChain, text: "chain" }),
+        el("th", { "data-tip": TIPS.previewFlags, text: "flags" }),
+      ])),
+    );
+    const body = el("tbody");
+    for (const d of p.decisions) {
+      const key = chainKeyFor(d);
+      const chain = p.chains ? p.chains[key] : undefined;
+      body.append(
+        el("tr", {}, [
+          el("td", { class: "role", text: d.role }),
+          el("td", { class: "sel", text: (d.from || "—") + " → " + (d.to || "—") }),
+          el("td", { class: "reason reason-" + d.reason, text: d.reason }),
+          el("td", { class: "num", text: fmt(d.value, 3) }),
+          el("td", { class: "num", text: fmt(d.bestValue, 3) }),
+          el("td", { class: "chain", text: chain ? key + ": " + chain.join(", ") : key }),
+          el("td", { class: "flags", text: decisionFlags(d) }),
+        ]),
+      );
+    }
+    table.append(body);
+    panel.append(table);
+  }
+
+  panel.append(el("h3", { text: "Config side effects" }));
+  const fx = el("ul", { class: "side-effects" });
+  fx.append(el("li", { text: "role removals: " + (p.roleRemovals.length ? p.roleRemovals.join(", ") : "none") }));
+  fx.append(el("li", { text: "agent-disable adds: " + (p.agentDisableAdds.length ? p.agentDisableAdds.join(", ") : "none") }));
+  fx.append(el("li", { text: "agent-disable removes: " + (p.agentDisableRemoves.length ? p.agentDisableRemoves.join(", ") : "none") }));
+  fx.append(el("li", { text: "chain prunes: " + (p.chainPrunes.length ? p.chainPrunes.join(", ") : "none") }));
+  panel.append(fx);
+
+  panel.append(el("h3", { text: "Skipped (" + p.skipped.length + ")" }));
+  if (p.skipped.length === 0) {
+    panel.append(el("p", { class: "muted", text: "Every managed role was decided." }));
+  } else {
+    const ul = el("ul", { class: "skipped" });
+    for (const s of p.skipped) ul.append(el("li", { text: s.role + " — " + s.reason }));
+    panel.append(ul);
   }
 }
 
@@ -595,7 +908,7 @@ function selectModel(id) {
 
 async function loadExplain(id) {
   try {
-    state.explain = await api("/api/explain", { role: state.role, def: state.defs[state.role], modelId: id });
+    state.explain = await api("/api/explain", { role: state.role, def: state.defs[state.role], modelId: id, settings: state.settingsEdited });
   } catch (err) {
     state.explain = { eligible: false, reasons: [err.message] };
   }
@@ -933,9 +1246,9 @@ function renderFocus(panel) {
 // Capability flags (issue #40)
 // ---------------------------------------------------------------------------
 
-/** The knobs a capability's recommended bundle fills, derived from the registry
+/** Every knob a capability's recommended bundle fills, derived from the registry
  * so the panel cannot drift from `src/features.ts`. */
-function bundleKnobs(recommended) {
+function allBundleKnobs(recommended) {
   const out = [];
   if (recommended.filters) {
     for (const [key, value] of Object.entries(recommended.filters)) {
@@ -947,9 +1260,18 @@ function bundleKnobs(recommended) {
   return out;
 }
 
-/** Render a recommended bundle as `key=value` pairs (mirrors formatBundle). */
+/** The knobs a capability bundle renders as its own inputs. The four keys the
+ * editor renders as first-class endpoint-filter fields are skipped, so one def
+ * key has exactly one input; `cacheHitRate` and `preferOwnProvider` stay
+ * bundle-only. */
+function bundleKnobs(recommended) {
+  return allBundleKnobs(recommended).filter((knob) => !BUNDLE_SKIPPED_KEYS.includes(knob.key));
+}
+
+/** Render a recommended bundle as `key=value` pairs (mirrors formatBundle). The
+ * full set, so the "recommended:" line still names the four first-class keys. */
 function bundleText(recommended) {
-  return bundleKnobs(recommended).map((k) => k.key + "=" + k.value).join(", ");
+  return allBundleKnobs(recommended).map((k) => k.key + "=" + k.value).join(", ");
 }
 
 /** Read one knob from the AUTHORED def by its dotted key. */
@@ -981,12 +1303,24 @@ function setKnob(def, key, value) {
   }
 }
 
+/** The scope's global capability flag for `id` as the SERVER will see it. The
+ * edited record is the full global set the SPA posts, so a key it no longer
+ * carries is off (the shipped default) — reading the committed `state.features`
+ * first would resurrect a flag the user just cleared. The committed flag is the
+ * fallback only for a payload that carried no `settings` at all. */
+function effectiveGlobalFlag(id) {
+  const key = "features." + id;
+  if (key in state.settingsEdited) return state.settingsEdited[key] === true;
+  if (key in state.settingsAuthored) return false;
+  return state.features[id] === true;
+}
+
 /** The effective state of one capability for a role: the authored per-role flag
  * when present (it wins either way), else the scope's global flag. */
 function effectiveFlag(def, id) {
   const authored = def.features ? def.features[id] : undefined;
   if (authored !== undefined) return authored;
-  return state.features[id] === true;
+  return effectiveGlobalFlag(id);
 }
 
 /** The effective value of one knob and whether it is DERIVED (filled by an
@@ -1036,6 +1370,57 @@ function knobField(def, featureId, knob) {
   return cell;
 }
 
+/** The enabled capability (if any) whose recommended bundle fills this def key,
+ * so a first-class field can mark its value derived rather than authored. */
+function derivedFor(def, key) {
+  for (const feature of state.featureRegistry) {
+    const knob = allBundleKnobs(feature.recommended).find((k) => k.key === key);
+    if (knob && knob.value !== undefined && effectiveFlag(def, feature.id)) return { feature, knob };
+  }
+  return null;
+}
+
+/** One first-class endpoint-filter field: the single input for its def key. The
+ * value is authored (an explicit key) or derived from an enabled capability
+ * bundle; an empty field inherits. */
+function endpointFilterField(def, spec) {
+  const authored = getKnob(def, spec.key);
+  const rec = derivedFor(def, spec.key);
+  const derived = authored === undefined && rec !== null;
+  const eff = authored !== undefined ? authored : derived ? rec.knob.value : undefined;
+  const cell = el("span", { class: "knob endpoint-filter" + (derived ? " derived" : "") });
+  let input;
+  if (spec.kind === "boolean") {
+    input = el("select", { class: "knob-input", "data-tip": spec.tip });
+    input.append(el("option", { value: "inherit", text: "inherit" }));
+    input.append(el("option", { value: "true", text: "true" }));
+    input.append(el("option", { value: "false", text: "false" }));
+    input.value = authored === undefined ? "inherit" : String(authored);
+    input.addEventListener("change", () => {
+      setKnob(def, spec.key, input.value === "inherit" ? undefined : input.value === "true");
+      renderEditor();
+      renderRoles();
+      scheduleRecompute();
+    });
+  } else {
+    input = el("input", { type: "number", min: "0", step: "any", class: "knob-input", "data-tip": spec.tip, placeholder: eff === undefined ? "—" : String(eff) });
+    if (authored !== undefined) input.value = String(authored);
+    input.addEventListener("input", () => {
+      setKnob(def, spec.key, input.value === "" ? undefined : Number(input.value));
+      scheduleRecompute();
+    });
+    input.addEventListener("change", () => {
+      renderEditor();
+      renderRoles();
+    });
+  }
+  cell.append(input);
+  cell.append(el("span", { class: "knob-name", text: spec.label }));
+  const badge = derived ? "derived " + eff : authored !== undefined ? "authored" : "—";
+  cell.append(el("span", { class: "knob-badge " + (derived ? "derived" : authored !== undefined ? "authored" : "none"), "data-tip": TIPS.featureDerived, text: badge }));
+  return cell;
+}
+
 /** The per-role Features panel: one tri-state control per capability (inherit /
  * on / off) writing `def.features[id]`, the recommended bundle, and the
  * individual knobs the bundle fills, each marked derived or authored. */
@@ -1068,7 +1453,7 @@ function renderFeatures(panel) {
       renderRoles();
       scheduleRecompute();
     });
-    const origin = authored === undefined ? (state.features[feature.id] === true ? "global on" : "global off") : "role override";
+    const origin = authored === undefined ? (effectiveGlobalFlag(feature.id) ? "global on" : "global off") : "role override";
     row.append(
       el("div", { class: "feature-head" }, [
         sel,
@@ -1206,6 +1591,7 @@ function renderEditor() {
 
   renderFocus(panel);
 
+  panel.append(el("h3", { "data-tip": TIPS.endpointFilters, text: "Endpoint filters" }));
   const imgCb = el("input", { type: "checkbox" });
   imgCb.checked = !!(def.filters && def.filters.image);
   imgCb.addEventListener("change", () => {
@@ -1214,6 +1600,9 @@ function renderEditor() {
     scheduleRecompute();
   });
   panel.append(el("label", { class: "check" }, [imgCb, el("span", { "data-tip": TIPS.imageFilter, text: "requires image input (filters.image)" })]));
+  const filterFields = el("div", { class: "endpoint-filters" });
+  for (const spec of ENDPOINT_FILTERS) filterFields.append(endpointFilterField(def, spec));
+  panel.append(filterFields);
 
   panel.append(el("h3", { "data-tip": TIPS.providerPin, text: "Provider pin" }));
   const pin = el("input", { type: "text", class: "desc", "data-tip": TIPS.providerPin, value: def.providerPin || "", placeholder: "provider slug, e.g. deepinfra/fp8" });
@@ -1297,28 +1686,244 @@ function renderErrors() {
 }
 
 // ---------------------------------------------------------------------------
+// Settings panel (the scope's global settings)
+// ---------------------------------------------------------------------------
+
+/** The per-row sync callbacks of the current Settings panel. An edit refreshes
+ * every row, so a cross-row error (the tokenProfile pair) lands on the sibling
+ * row too, not only on the one being typed into. */
+let settingsRowSyncs = [];
+
+/** One control per key of `settings.defaults` (excluding `features`), in the
+ * order the resolved settings carry them. `tokenProfile` is two number fields;
+ * `selection` and `errorReporting` are enum pickers; the rest are number or
+ * boolean by their default's type. */
+function globalFields() {
+  const out = [];
+  for (const key of Object.keys(state.settingsDefaults)) {
+    if (key === "features") continue;
+    if (key === "tokenProfile") {
+      out.push({ key: "tokenProfile.inputTokens", kind: "number", label: "tokenProfile.inputTokens", tip: GLOBAL_TIPS["tokenProfile.inputTokens"] });
+      out.push({ key: "tokenProfile.outputTokens", kind: "number", label: "tokenProfile.outputTokens", tip: GLOBAL_TIPS["tokenProfile.outputTokens"] });
+      continue;
+    }
+    if (key === "selection") {
+      out.push({ key, kind: "enum", values: ["value", "cheapest"], label: key, tip: GLOBAL_TIPS.selection });
+      continue;
+    }
+    if (key === "errorReporting") {
+      out.push({ key, kind: "enum", values: ["off", "ask", "auto"], label: key, tip: GLOBAL_TIPS.errorReporting, noImpact: true });
+      continue;
+    }
+    const def = state.settingsDefaults[key];
+    out.push({ key, kind: typeof def === "boolean" ? "boolean" : "number", label: key, tip: GLOBAL_TIPS[key] || null, noImpact: key === "activateDefaultOnEmptySession" });
+  }
+  return out;
+}
+
+/** One global-setting row: the effective value (authored, else the shipped
+ * default), the shipped default, a dirty marker and a reset. The input is the
+ * single source of the value; the badge and the reset follow it. */
+function globalField(field) {
+  const key = field.key;
+  const row = el("div", { class: "setting" });
+  const badge = el("span", { class: "setting-badge" });
+  const errText = el("span", { class: "setting-error" });
+  const reset = el("button", { class: "setting-reset", text: "reset" });
+  const authored = () => key in state.settingsEdited;
+  const current = () => (authored() ? state.settingsEdited[key] : defaultOf(key));
+  const commit = () => {
+    for (const sync of settingsRowSyncs) sync();
+    onGlobalEdit(key);
+  };
+
+  let input;
+  if (field.kind === "boolean") {
+    input = el("input", { type: "checkbox", class: "setting-input" });
+    input.checked = current() === true;
+    input.addEventListener("change", () => {
+      setGlobal(key, input.checked);
+      commit();
+    });
+  } else if (field.kind === "enum") {
+    input = el("select", { class: "setting-input" });
+    for (const value of field.values) input.append(el("option", { value, text: value }));
+    input.value = current() === undefined ? "" : String(current());
+    input.addEventListener("change", () => {
+      setGlobal(key, input.value);
+      commit();
+    });
+  } else {
+    const range = GLOBAL_RANGES[key] || {};
+    input = el("input", { type: "number", class: "setting-input", step: range.step === undefined ? "any" : String(range.step) });
+    if (range.min !== undefined) input.setAttribute("min", String(range.min));
+    if (range.max !== undefined) input.setAttribute("max", String(range.max));
+    const value = current();
+    if (value !== undefined && value !== null) input.value = String(value);
+    input.addEventListener("input", () => {
+      setGlobal(key, input.value === "" ? undefined : Number(input.value));
+      commit();
+    });
+    input.addEventListener("change", () => {
+      // On blur, re-render so a cleared field shows the effective value (the
+      // shipped default) instead of staying blank.
+      renderSettings();
+      renderExportState();
+    });
+  }
+
+  function sync() {
+    const isAuthored = authored();
+    // Two axes: the badge says whether the key will be written (authored) or
+    // falls back to the shipped default; the row is dirty only when the working
+    // copy differs from the scope's committed authored value.
+    const pending = isAuthored ? state.settingsEdited[key] : undefined;
+    const committed = state.settingsAuthored[key];
+    const dirty = JSON.stringify(pending) !== JSON.stringify(committed);
+    row.className = "setting" + (dirty ? " dirty" : "");
+    badge.className = "setting-badge " + (isAuthored ? "authored" : "default");
+    badge.textContent = isAuthored ? "authored" : "default";
+    badge.dataset.tip = "committed " + fmtDefault(resolvedOf(key)) + " · shipped default " + fmtDefault(defaultOf(key));
+    reset.disabled = !isAuthored;
+    const err = settingsErrors()[key];
+    errText.textContent = err || "";
+    errText.className = "setting-error" + (err ? " show" : "");
+  }
+
+  reset.addEventListener("click", () => {
+    delete state.settingsEdited[key];
+    renderSettings();
+    onGlobalEdit(key);
+  });
+
+  row.append(el("label", { class: "setting-name", "data-tip": field.tip, text: field.label }));
+  row.append(input);
+  row.append(el("span", { class: "setting-default muted", text: "default " + fmtDefault(defaultOf(key)) }));
+  if (field.noImpact) row.append(el("span", { class: "setting-noimpact muted", "data-tip": TIPS.settingsNoImpact, text: "no visual impact" }));
+  row.append(badge);
+  reset.dataset.tip = "reset to the shipped default (delete this key)";
+  row.append(reset);
+  row.append(errText);
+  settingsRowSyncs.push(sync);
+  sync();
+  return row;
+}
+
+/** One global capability toggle, writing `features.<id>`. */
+function featureToggle(feature) {
+  const key = "features." + feature.id;
+  const row = el("div", { class: "setting" });
+  const badge = el("span", { class: "setting-badge" });
+  const reset = el("button", { class: "setting-reset", text: "reset" });
+  const cb = el("input", { type: "checkbox", class: "setting-input" });
+  cb.checked = (key in state.settingsEdited ? state.settingsEdited[key] : defaultOf(key)) === true;
+  const sync = () => {
+    const isAuthored = key in state.settingsEdited;
+    const pending = isAuthored ? state.settingsEdited[key] : undefined;
+    const committed = state.settingsAuthored[key];
+    const dirty = JSON.stringify(pending) !== JSON.stringify(committed);
+    row.className = "setting" + (dirty ? " dirty" : "");
+    badge.className = "setting-badge " + (isAuthored ? "authored" : "default");
+    badge.textContent = isAuthored ? "authored" : "default";
+    badge.dataset.tip = "committed " + fmtDefault(resolvedOf(key)) + " · shipped default " + fmtDefault(defaultOf(key));
+    reset.disabled = !isAuthored;
+  };
+  cb.addEventListener("change", () => {
+    setGlobal(key, cb.checked);
+    sync();
+    onGlobalEdit(key);
+  });
+  reset.addEventListener("click", () => {
+    delete state.settingsEdited[key];
+    renderSettings();
+    onGlobalEdit(key);
+  });
+  row.append(el("label", { class: "setting-name", "data-tip": feature.description + "\n\n" + feature.buys, text: feature.label }));
+  row.append(cb);
+  row.append(el("span", { class: "setting-default muted", text: "default " + fmtDefault(defaultOf(key)) }));
+  row.append(badge);
+  reset.dataset.tip = "reset to the shipped default (delete this key)";
+  row.append(reset);
+  settingsRowSyncs.push(sync);
+  sync();
+  return row;
+}
+
+/** Rebuild the Settings panel from the working copy. Rendered per scope, so a
+ * scope switch cannot carry edits across. */
+function renderSettings() {
+  const panel = document.getElementById("settings");
+  if (!panel) return;
+  panel.textContent = "";
+  settingsRowSyncs = [];
+  if (!state.settingsDefaults) return;
+  panel.append(el("h2", { "data-tip": TIPS.settings, text: "Settings" }));
+  panel.append(el("p", { class: "muted", text: "Global settings for this scope. Export writes the keys you change; a cleared field falls back to the shipped default." }));
+  const grid = el("div", { class: "settings-grid" });
+  for (const field of globalFields()) grid.append(globalField(field));
+  panel.append(grid);
+  panel.append(el("h3", { "data-tip": TIPS.globalFeatures, text: "Global capabilities" }));
+  if (state.featureRegistry.length === 0) {
+    panel.append(el("p", { class: "muted", text: "No capability registry in the payload." }));
+    return;
+  }
+  const feats = el("div", { class: "settings-grid" });
+  for (const feature of state.featureRegistry) feats.append(featureToggle(feature));
+  panel.append(feats);
+}
+
+/** A global edit: clear the last export message, refresh the Export state and
+ * re-run the ranking and the preview (both debounced). A capability flag also
+ * changes the per-role expansion, so the editor is rebuilt to move its derived
+ * badges and origin labels with the re-ranked table. */
+function onGlobalEdit(key) {
+  state.exportMessage = "";
+  renderExportState();
+  if (key && key.startsWith("features.")) renderEditor();
+  scheduleRecompute();
+}
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 
 function renderExportState() {
   const dirty = dirtyRoles();
   const count = Object.keys(dirty).length;
+  const globalDirty = settingsDirty();
+  const errCount = Object.keys(settingsErrors()).length;
   const btn = document.getElementById("export");
-  if (btn) btn.disabled = count === 0 || state.errors.length > 0;
+  if (btn) btn.disabled = (count === 0 && !globalDirty) || state.errors.length > 0 || errCount > 0;
   const status = document.getElementById("export-status");
-  if (status) status.textContent = state.exportMessage || (count ? count + " role(s) edited" : "");
+  if (status) {
+    const parts = [];
+    if (count) parts.push(count + " role(s) edited");
+    if (globalDirty) parts.push("settings edited");
+    if (errCount) parts.push(errCount + " setting error(s)");
+    status.textContent = state.exportMessage || parts.join(" · ");
+  }
 }
 
 async function onExport() {
   const dirty = dirtyRoles();
-  if (Object.keys(dirty).length === 0) return;
+  const hadSettings = settingsDirty();
+  if (Object.keys(dirty).length === 0 && !hadSettings) return;
   const btn = document.getElementById("export");
   btn.disabled = true;
   try {
-    const res = await api("/api/export", { roles: dirty });
+    const res = await api("/api/export", { roles: dirty, settings: state.settingsEdited });
     if (res.ok) {
-      state.exportMessage = "wrote " + res.roles.length + " role(s) to " + (res.lockPath || state.lockPath) + (res.backupPath ? " — backup: " + res.backupPath : "");
+      const parts = [];
+      if (res.roles.length) parts.push(res.roles.length + " role(s)");
+      if (hadSettings) parts.push("settings");
+      state.exportMessage = "wrote " + (parts.join(" + ") || "nothing") + " to " + (res.lockPath || state.lockPath) + (res.backupPath ? " — backup: " + res.backupPath : "");
       for (const role of res.roles) state.effective[role] = structuredClone(state.defs[role]);
+      // The settings half is committed too: the authored baseline becomes the
+      // edited record, so the panel reads clean until the next edit, and the
+      // committed readout is re-derived so it cannot go stale.
+      state.settingsAuthored = structuredClone(state.settingsEdited);
+      state.settingsResolved = resolvedFromFlat(state.settingsAuthored);
+      renderSettings();
       renderRoles();
       renderEditor();
     } else {
@@ -1331,7 +1936,7 @@ async function onExport() {
 }
 
 function dirtyJson() {
-  return JSON.stringify({ roles: dirtyRoles() }, null, 2);
+  return JSON.stringify({ roles: dirtyRoles(), settings: state.settingsEdited }, null, 2);
 }
 
 async function onCopy() {
@@ -1367,7 +1972,7 @@ async function onRefresh() {
 async function onScopeChange(event) {
   const id = event.target.value;
   if (id === state.activeScope) return;
-  if (Object.keys(dirtyRoles()).length > 0 && !confirm("Discard unsaved role edits and switch scope?")) {
+  if ((Object.keys(dirtyRoles()).length > 0 || settingsDirty()) && !confirm("Discard unsaved edits and switch scope?")) {
     event.target.value = state.activeScope;
     return;
   }
@@ -1385,7 +1990,7 @@ async function onScopeChange(event) {
 async function onPoolChange(event) {
   const mode = event.target.value;
   if (mode === state.poolMode) return;
-  if (Object.keys(dirtyRoles()).length > 0 && !confirm("Discard unsaved role edits and switch pool?")) {
+  if ((Object.keys(dirtyRoles()).length > 0 || settingsDirty()) && !confirm("Discard unsaved edits and switch pool?")) {
     event.target.value = state.poolMode;
     return;
   }
@@ -1424,6 +2029,15 @@ function applyBootstrap(data) {
   state.availability = data.availability;
   state.features = data.features || {};
   state.featureRegistry = data.featureRegistry || [];
+  // The scope's global settings: the authored keys are the working copy's
+  // baseline, so a scope switch rebuilds the panel and drops the old edits.
+  const settings = data.settings || {};
+  state.settingsAuthored = settings.authored || {};
+  state.settingsResolved = settings.resolved || null;
+  state.settingsDefaults = settings.defaults || null;
+  state.settingsEdited = structuredClone(state.settingsAuthored);
+  state.preview = null;
+  state.previewErrors = [];
   state.rows = [];
   state.selectedId = null;
   state.selection = null;
@@ -1434,6 +2048,8 @@ function applyBootstrap(data) {
   renderRoles();
   renderErrors();
   renderTable();
+  renderSettings();
+  renderPreview();
   const role = previousRole && state.defs[previousRole] ? previousRole : Object.keys(state.defs)[0];
   if (role) selectRole(role);
   else {
@@ -1441,6 +2057,7 @@ function applyBootstrap(data) {
     renderEditor();
     renderExplain();
   }
+  schedulePreview();
 }
 
 async function boot() {
