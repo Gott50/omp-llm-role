@@ -161,14 +161,22 @@ Endpoints:
   keys); the expansion is applied only for the ranking call, never persisted.
 - The **selection surface** (spec #103): `POST /api/rank` returns
   `selection: {mode, pick, anchor, anchorQ, floor, bar}` — the **effective** rule
-  (the posted def's own `selection`/`qualityFloor` wins over the scope's global),
-  the prospective pick's model id, the anchor and its `q` (the highest-`q` model
-  in either mode — the bar's anchor in `"cheapest"` mode, the max-`q` model in
-  `"value"` mode, where the pick is the value leader), the floor value, and the
-  threshold `q` (`bar` is `null` in `"value"` mode, which has no bar).
-  Each row carries `excludedByBar` (its `q` is under the bar; always `false` in
-  `"value"` mode). The bar is computed with the engine's own `barSelection` over
-  the same ranking the rows show, so the panel and the updater cannot drift.
+  (the posted def's own `selection`/`qualityFloor` wins over the scope's
+  **committed** global), the prospective pick's model id, the anchor and its `q`
+  (the highest-`q` model in either mode — the bar's anchor in `"cheapest"` mode,
+  the max-`q` model in `"value"` mode, where the pick is the value leader), the
+  floor value, and the threshold `q` (`bar` is `null` in `"value"` mode, which
+  has no bar). Each row carries `excludedByBar` (its `q` is under the bar; always
+  `false` in `"value"` mode). The bar is computed with the engine's own
+  `barSelection` over the same ranking the rows show, so the panel and the
+  updater cannot drift.
+  **Deliberately narrow (spec #109):** the edited `settings` record re-ranks the
+  table's `features.<id>` expansion only — it does not move this block. So
+  editing the *global* `selection`/`qualityFloor` in the Settings panel moves the
+  **preview's** bar and pick but not the table's; the table shows the ranking on
+  the pool the toggle selects, the preview shows the decision on the updater's
+  candidate set, and the two answer different questions (the spec's Further
+  Notes). A role's own `selection`/`qualityFloor` moves the table's block.
 - `handleExport` validates every dirty role first — `validateRole` plus a
   **provider-pin check**: a `providerPin` that matches no route in the loaded
   dataset is rejected (`role "<name>": provider pin "<slug>" matches no route in
