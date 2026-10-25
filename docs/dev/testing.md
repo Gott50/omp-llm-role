@@ -168,7 +168,8 @@ passing.
     disabling drops the role from the resolved set and its `modelRoles` line; a
     locked role is not switched and its chain survives the prune; unlocking
     restores the switch.
-22. **Settings** (`settings.test.ts`, `settings-schema.test.ts`) — opt-in roles;
+22. **Settings** (`settings.test.ts`, `settings-schema.test.ts`,
+    `role-settings.test.ts`) — opt-in roles;
     `priceSwitchFraction` range; flat/nested merge; `required` as string or
     array; an external metric key is weightable, a dotted one rejected;
     `package.json` `omp.settings` deep-equals `deriveSettingsSchema()`. The
@@ -180,6 +181,14 @@ passing.
     `null`, accepts a record with finite `inputTokens`/`outputTokens` ≥ 0, and
     rejects a non-record or a negative/non-finite field; the schema carries the
     `tokenProfile.inputTokens`/`tokenProfile.outputTokens` rows (number, min 0).
+    The global write path (spec #109):
+    `GLOBAL_SETTING_KEYS` is exactly the schema's non-`roles.` keys (and includes
+    `switchMargin`, `tokenProfile.inputTokens` and `features.costCap`);
+    `mergeSettings` writes a global key, deletes a cleared one, normalizes a
+    nested global object away with the flat keys, and preserves `plugins`, the
+    `config` escape hatch and sibling settings; `tokenProfile` and `features`
+    round-trip as flat dotted keys that resolve; `mergeExport` is
+    `mergeSettings` with only the role half.
 23. **Explorer** (`explorer.test.ts`, `explorer-scopes.test.ts`) — rank deltas;
     contributions sum to `q`; `inverseCardinal` round-trips; Export preserves
     siblings and normalizes nested roles; the scope switcher; the availability
@@ -196,7 +205,22 @@ passing.
     `bar`) in `cheapest` mode, marks the value leader as `pick` with `bar: null` in
     `value` mode (the anchor stays the highest-`q` model in either mode), and a
     per-role `selection`/`qualityFloor` beats the scope's global; each row's
-    `excludedByBar` flags the candidates under the bar.
+    `excludedByBar` flags the candidates under the bar. The settings surface
+    (spec #109 — the spec's second seam, the explorer HTTP surface, driven with a
+    fake `ExplorerOpts`): `readScopeRoles` returns the scope's
+    authored/resolved/default global settings and the merged raw map; `scopeDir`
+    resolves a project scope to `<root>/.omp` and the user scope to the agent
+    dir; `readScopeConfig` reads the scope's own `config.yml` `modelRoles` and
+    yields an empty map for a missing or unparseable config; a project scope's
+    raw settings are the project lock merged over the user-level lock; the
+    bootstrap payload carries the scope's global settings; `POST /api/preview`
+    returns the decisions for the edited settings, names the roles it could not
+    decide, applies the keyed prune inside the candidate set (not to the
+    dataset), and drops the scope's flat `roles.*` keys so a cleared pin cannot
+    survive; `POST /api/export` writes a global key and a role key in one lock
+    file; an out-of-range `switchMargin` is refused with `switchMargin: must be a
+    number in [0, 1]` and no write; `startExplorer` serves the preview from the
+    scope's lock file and `config.yml` and writes nothing.
 24. **Project scope** (`project-updater.test.ts`, `project-setup.test.ts`,
     `project-roles-command.test.ts`) — project mode scopes config/state/history/
     lock to `<cwd>/.omp`; the day gate is per scope; the registry write;
@@ -351,6 +375,28 @@ passing.
     keeps the pool's rank order, ties break on higher `q` then `model.id`
     ascending, `qualityFloor` `0`/`1` admit every row / only the anchor, and the
     pool is never mutated.
+38. **The pure decision module** (`selection-preview.test.ts`, spec #109) —
+    `previewSelection` tested directly with fixtures (a synthetic dataset, a fake
+    availability overlay, a fake current-selector map, a fake state, fake agent
+    pins). The six ladder arms driven by `switchMargin` / `priceSwitchFraction` /
+    the current selector; the dataset is the raw pool (the allowed-providers
+    prune only), so the keyed prune inside `previewSelection` drops a candidate
+    the dataset keeps — the pick differs from the dataset's leader and
+    `keyBlockedCount` is 1 (the issue #104 case); the chain's quality floor at 0,
+    0.9 and 1; a shared chain key
+    claimed by two roles stays level-free; a disabled role appears in
+    `roleRemovals`, an agent whose pinned role is disabled in `agentDisableAdds`,
+    a previously-managed name whose role is re-enabled in `agentDisableRemoves`;
+    a locked role, a role with no eligible candidate and a pin that matches no
+    route each appear in `skipped` with a reason; the preview issues no request
+    (a throwing global `fetch` is never reached); `RunResult.patch` carries the
+    computed patch on a dry run and is absent on an abort. **The agreement test**
+    (the one that pins "the preview is the updater's decision"): `previewSelection`
+    and a real `runUpdater("manual", deps, { dryRun: true })` with
+    `probeModel`/`probeRoute` stubbed to `"ok"` produce the same decisions and
+    chains on the same fixture — including the auto-pin chain and a shared chain
+    key. Without it the preview would be a second implementation. The preview's
+    HTTP surface (the spec's second seam) is covered in the Explorer seam (23).
 
 ## Live checks
 
@@ -383,6 +429,17 @@ passing.
   panel shows the per-task breakdown and the **Price levers** section (the
   leader-flip line and the per-level leader table). Verify in headless Chromium
   (the SPA is not unit-tested).
+- **Explorer settings editor / preview** — `/explore-roles` with no role
+  selected: the Settings panel lists every global knob with its effective value
+  and shipped default; edit `switchMargin` and confirm the Preview panel's
+  decisions change (a role that was `kept-margin` becomes `switched`), the
+  `no visual impact` note sits on `activateDefaultOnEmptySession` and
+  `errorReporting`, and Export is enabled with only a global setting dirty.
+  Export, then confirm the lock file gained the flat dotted key and the next
+  `/refresh-roles` uses it. Confirm the preview is read-only (the `config.yml`
+  mtime does not move) and that a role the preview could not decide is listed
+  with its reason rather than a blank row. Verify in headless Chromium (the SPA
+  is not unit-tested).
 - **Usage ledger** — run a real omp turn, then confirm `llm-role-usage.jsonl`
   gained one row per assistant turn (the model, the role, the provider, the
   token counts, the cost) in the plugin's state dir (`<project>/.omp` in project

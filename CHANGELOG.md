@@ -10,6 +10,26 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ### Added
 
+- **The explorer edits every setting and previews what the updater would write**
+  — a **Settings panel** edits every global setting (`switchMargin`,
+  `priceSwitchFraction`, `writeFallbackChains`, `fallbackChainDepth`,
+  `fallbackQualityFloor`, `selection`, `qualityFloor`,
+  `activateDefaultOnEmptySession`, `errorReporting`, `tokenProfile` and the
+  global `features.<id>` flags) with the effective value, the shipped default, a
+  dirty marker and a reset, reachable with no role selected; the per-role editor
+  gains the five endpoint filters (`filters.tools`, `filters.minContextTokens`,
+  `filters.minOutputTokens`, `filters.maxPriceUsdPerM`,
+  `filters.preferredMinThroughput`) as first-class fields; and a **Preview
+  panel** shows, for every managed role, the decision the updater would make —
+  the model, the reason, the value and the best value, the fallback chain and
+  the config side effects — computed on the updater's own candidate set
+  regardless of the table's pool toggle. The preview is **probe-optimistic**: it
+  never issues a request, so the preview's pin **reads as a candidate** — the
+  first route the walk tries, not a promise of the written pin — and a
+  probe-blocked candidate can leave the pool; both are labelled, not simulated.
+  A role the preview could not decide (locked, no eligible candidate, a pin that
+  matches no route) is listed with its reason. (spec #109)
+
 - **`selection: "cheapest"` picks the cheapest model that clears a quality
   floor** — two new settings: `selection` (`"value"` | `"cheapest"`, default
   `"value"`) and `qualityFloor` (a number in `[0, 1]`, default `0.9`, inert in
@@ -23,6 +43,16 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   `selection` defaults to `"value"`, so an upgrade changes nothing until you ask
   — and the as-written pool now applies the keyed-catalog prune, so a model the
   key cannot run is dropped rather than ranked. (spec #103)
+
+### Changed
+
+- **The explorer's Export writes the global settings too** — the one validated
+  write path gained a global half: the global keys are written as flat dotted
+  keys with the same "make this match" semantics as the role half, so a cleared
+  setting falls back to the shipped default rather than leaving a stale value,
+  and an out-of-range global setting is refused with the offending key before
+  any write. Export is enabled when a role **or** a global setting is dirty.
+  (spec #109)
 
 ## [1.5.0] - 2026-10-20
 
