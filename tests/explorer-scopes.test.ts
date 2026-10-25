@@ -6,9 +6,10 @@ import { test } from "node:test";
 import type { KeyAvailability } from "../src/availability.ts";
 import type { Model, OpenRouterEndpointRecord, RankData, RoleDef } from "../src/engine.ts";
 import { startExplorer, type ExplorerBootOpts } from "../src/explorer/boot.ts";
-import { readScopeRoles, resolveScopes, unionRoles, type Scope } from "../src/explorer/scopes.ts";
+import { readScopeConfig, readScopeRoles, resolveScopes, scopeDir, unionRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { PROJECT_REGISTRY_FILE } from "../src/project-registry.ts";
+import { DEFAULT_ROLES } from "../src/settings.ts";
 import { USAGE_LEDGER_FILE } from "../src/usage-ledger.ts";
 import { makeCatalog, makeModel } from "./helpers.ts";
 
@@ -496,4 +497,139 @@ test("readScopeRoles defaults the selection to the shipped value mode", () => {
   const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
   const { selection } = readScopeRoles(scope, lockPath);
   assert.deepEqual(selection, { mode: "value", qualityFloor: 0.9 });
+});
+
+// ---------------------------------------------------------------------------
+// The scope payload (spec #109, issue #112): the scope's global settings in
+// three shapes, its merged raw map, the agent dir its config/state/history live
+// in, and its own `config.yml` current selectors.
+// ---------------------------------------------------------------------------
+
+/** A lock file carrying both global keys and roles, in the flat dotted-key
+ * convention the plugin writes. */
+function writeLockWithGlobals(path: string, globals: Record<string, unknown>, roles: Record<string, RoleDef>): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { ...globals, roles } } }, null, 2));
+}
+
+test("scopeDir resolves a project scope to <root>/.omp and the user scope to the agent dir", () => {
+  const user: Scope = { id: "user", label: "user-level", kind: "user", lockPath: "/tmp/x/lock.json", present: true };
+  const project: Scope = { id: "project:/tmp/proj", label: "/tmp/proj", kind: "project", lockPath: "/tmp/proj/.omp/plugins/omp-plugins.lock.json", present: true, root: "/tmp/proj" };
+  assert.equal(scopeDir(user, "/home/u/.omp/agent"), "/home/u/.omp/agent");
+  assert.equal(scopeDir(project, "/home/u/.omp/agent"), join("/tmp/proj", ".omp"));
+});
+
+test("readScopeConfig reads the scope's own config.yml modelRoles", () => {
+  const root = tempDir("explorer-scope-config-");
+  const agentDir = join(root, "agent");
+  const project = join(root, "proj");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "config.yml"), "modelRoles:\n  userrole: budget\n");
+  mkdirSync(join(project, ".omp"), { recursive: true });
+  writeFileSync(join(project, ".omp", "config.yml"), "modelRoles:\n  projrole: premium\n");
+
+  const user: Scope = { id: "user", label: "user-level", kind: "user", lockPath: join(root, "lock.json"), present: true };
+  const projectScope: Scope = { id: `project:${project}`, label: project, kind: "project", lockPath: join(project, ".omp", "plugins", "omp-plugins.lock.json"), present: true, root: project };
+
+  assert.deepEqual(readScopeConfig(user, agentDir), { modelRoles: { userrole: "budget" } });
+  assert.deepEqual(readScopeConfig(projectScope, agentDir), { modelRoles: { projrole: "premium" } });
+});
+
+test("readScopeConfig yields an empty map for a missing or unparseable config", () => {
+  const root = tempDir("explorer-scope-config-bad-");
+  const agentDir = join(root, "agent");
+  mkdirSync(agentDir, { recursive: true });
+  const user: Scope = { id: "user", label: "user-level", kind: "user", lockPath: join(root, "lock.json"), present: true };
+
+  // Missing file: no throw, every role reads `no-current`.
+  assert.deepEqual(readScopeConfig(user, agentDir), { modelRoles: {} });
+
+  // A structural surprise `parseConfig` rejects (an inline flow-style block).
+  writeFileSync(join(agentDir, "config.yml"), "modelRoles: {}\n");
+  assert.deepEqual(readScopeConfig(user, agentDir), { modelRoles: {} });
+});
+
+test("readScopeRoles returns the scope's authored, resolved and default global settings", () => {
+  const root = tempDir("explorer-scope-settings-");
+  const lockPath = join(root, "omp-plugins.lock.json");
+  writeLockWithGlobals(
+    lockPath,
+    { switchMargin: 0.05, "tokenProfile.inputTokens": 1000, "tokenProfile.outputTokens": 200, "features.costCap": true },
+    { userrole: USER_ROLE },
+  );
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { settings, raw, roles, errors } = readScopeRoles(scope, lockPath);
+
+  assert.deepEqual(errors, []);
+  // `authored` is the raw map's global keys verbatim: the flat dotted keys stay
+  // flat, and `roles` is not a global setting.
+  assert.deepEqual(settings.authored, {
+    switchMargin: 0.05,
+    "tokenProfile.inputTokens": 1000,
+    "tokenProfile.outputTokens": 200,
+    "features.costCap": true,
+  });
+  // `resolved` is the effective value (shipped defaults + authored).
+  assert.equal(settings.resolved.switchMargin, 0.05);
+  assert.deepEqual(settings.resolved.tokenProfile, { inputTokens: 1000, outputTokens: 200 });
+  assert.equal(settings.resolved.features.costCap, true);
+  // `defaults` is the shipped set, independent of the lock file.
+  assert.deepEqual(settings.defaults, {
+    switchMargin: 0.02,
+    priceSwitchFraction: 0.5,
+    writeFallbackChains: true,
+    fallbackChainDepth: 2,
+    fallbackQualityFloor: 0.9,
+    selection: "value",
+    qualityFloor: 0.9,
+    activateDefaultOnEmptySession: true,
+    errorReporting: "off",
+    tokenProfile: null,
+    features: {},
+  });
+  // `raw` is the merged map the updater reads, roles included.
+  assert.equal(raw.switchMargin, 0.05);
+  assert.deepEqual(raw.roles, { userrole: USER_ROLE });
+  // The existing fields are unchanged: `roles` is the RESOLVED map (the shipped
+  // roles that are enabled by default, plus the authored role), and the authored
+  // def survives verbatim.
+  const enabledShipped = Object.keys(DEFAULT_ROLES).filter((name) => DEFAULT_ROLES[name].enabled !== false);
+  assert.deepEqual(Object.keys(roles), [...enabledShipped, "userrole"]);
+  assert.equal(roles.userrole.description, USER_ROLE.description);
+});
+
+test("readScopeRoles reports no authored global settings when the lock file has only roles", () => {
+  const root = tempDir("explorer-scope-settings-empty-");
+  const lockPath = join(root, "omp-plugins.lock.json");
+  writeLock(lockPath, { userrole: USER_ROLE });
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { settings } = readScopeRoles(scope, lockPath);
+
+  assert.deepEqual(settings.authored, {});
+  // Nothing authored: the resolved values are the shipped defaults.
+  assert.equal(settings.resolved.switchMargin, 0.02);
+  assert.equal(settings.resolved.selection, "value");
+  assert.equal(settings.resolved.tokenProfile, null);
+});
+
+test("a project scope's raw settings are the project lock merged over the user-level lock", () => {
+  const root = tempDir("explorer-scope-merge-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLockWithGlobals(userLock, { switchMargin: 0.05, "features.costCap": true }, { userrole: USER_ROLE });
+  const project = join(root, "proj");
+  const projectLock = join(project, ".omp", "plugins", "omp-plugins.lock.json");
+  // The project authors its own `switchMargin` (which must win) and a role.
+  writeLockWithGlobals(projectLock, { switchMargin: 0.1 }, { projrole: PROJECT_ROLE });
+
+  const scope: Scope = { id: `project:${project}`, label: project, kind: "project", lockPath: projectLock, present: true, root: project };
+  const { settings, raw } = readScopeRoles(scope, userLock);
+
+  // The project's own key wins; the user-level key survives the merge.
+  assert.equal(raw.switchMargin, 0.1);
+  assert.equal(raw["features.costCap"], true);
+  assert.deepEqual(Object.keys(raw.roles as Record<string, unknown>).sort(), ["projrole", "userrole"]);
+  // `authored` reflects the merge, not the project lock alone.
+  assert.equal(settings.authored.switchMargin, 0.1);
+  assert.equal(settings.authored["features.costCap"], true);
+  assert.equal(settings.resolved.switchMargin, 0.1);
 });
