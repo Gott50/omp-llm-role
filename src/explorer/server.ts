@@ -30,7 +30,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, resolve, sep } from "node:path";
 import type { KeyAvailability } from "../availability.ts";
 import { loadDeclaredSources } from "../benchmark-sources.ts";
-import { pinnedRoute, SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { barSelection, pinnedRoute, SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { expandFeatures, FEATURES } from "../features.ts";
 import { isRecord } from "../guards.ts";
 import { validateRole, writeRoleSettings } from "../role-settings.ts";
@@ -39,7 +39,7 @@ import { resolveTokenProfile, type TokenProfile, type UsageRow } from "../usage-
 import { explainModel, focusAssessments, metricMetaFor, rankRows, weightableMetrics } from "./explain.ts";
 import { leaderFlip, thinkingLevelEffect } from "./levers.ts";
 import { asWrittenPool, type PoolInputs, type PoolMode } from "./pool.ts";
-import type { Scope } from "./scopes.ts";
+import type { Scope, ScopeSelection } from "./scopes.ts";
 
 export type ExplorerOpts = {
   webDir: string;
@@ -67,6 +67,9 @@ export type ExplorerOpts = {
      *  expanded with these before ranking so the preview matches the resolved
      *  baseline. Defaults to `{}` when a host omits it. */
     features: Record<string, boolean>;
+    /** The scope's GLOBAL model-selection rule (`selection` + `qualityFloor`);
+     *  a posted def's own `selection`/`qualityFloor` overrides it. */
+    selection: ScopeSelection;
   };
   /** Re-runs loadRankData({ refresh: true }) and swaps the snapshot. */
   refresh(): Promise<void>;
@@ -220,6 +223,9 @@ function bootstrapPayload(opts: ExplorerOpts, session: ExplorerSession, scope: S
     // Features panel and the recommended bundles without duplicating them.
     features: state.features ?? {},
     featureRegistry: FEATURES.map((f) => ({ id: f.id, label: f.label, description: f.description, buys: f.buys, recommended: f.recommended })),
+    // The scope's global model-selection rule; a role's own `selection`/
+    // `qualityFloor` overrides it, and the rank payload reports the effective one.
+    selection: state.selection,
     metrics,
     metricMeta: metricMetaFor(metrics, declared),
     focusAssessments: focus,
@@ -285,11 +291,32 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   // selecting it still shows deltas, not an empty baseline.
   const baselineDef = state.roles[role] ?? state.universe[role]?.def ?? state.defaults[role];
   const baseline = baselineDef ? rankRole(baselineDef, rank.models) : [];
-  const rows = rankRows(def, rank.models, baseline, state.availability, resolveTokenProfile(role, opts.getUsageRows?.(scope) ?? [], opts.tokenProfile ?? null));
+  // The EFFECTIVE selection rule: the posted def's own `selection`/`qualityFloor`
+  // wins over the scope's global. `cheapest` computes the bar over the same
+  // ranking the rows show; `value` has no bar and marks the value leader, so the
+  // SPA always has a pick to mark. An empty pool has neither.
+  const ranked = rankRole(def, rank.models);
+  const mode = def.selection ?? state.selection.mode;
+  const floor = def.qualityFloor ?? state.selection.qualityFloor;
+  const bar = mode === "cheapest" ? barSelection(ranked, floor) : null;
+  const pick = bar?.pick ?? ranked[0];
+  // The anchor is the highest-`q` candidate — the same definition `barSelection`
+  // uses. In `value` mode there is no bar, so report the max-`q` model rather
+  // than the value leader: the anchor is a quality statement, not a price one.
+  const anchor = bar?.anchor ?? ranked.reduce<Ranked | undefined>((best, r) => (best === undefined || r.q > best.q ? r : best), undefined);
+  const rows = rankRows(def, rank.models, baseline, state.availability, resolveTokenProfile(role, opts.getUsageRows?.(scope) ?? [], opts.tokenProfile ?? null), bar);
   sendJson(res, 200, {
     eligible: rows.length,
     lambda: roleLambda(def),
     derivedLambda: roleLambda({ ...def, lambda: undefined }),
+    selection: {
+      mode,
+      pick: pick?.model.id ?? "",
+      anchor: anchor?.model.id ?? "",
+      anchorQ: anchor?.q ?? 0,
+      floor,
+      bar: bar?.bar ?? null,
+    },
     rows,
     // Validate the AUTHORED def: an unknown feature id must surface here, and
     // `expandFeatures` strips `features` (validating the expanded def would hide it).

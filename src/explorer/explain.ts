@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { autoPinApplies, BENCHMARK_CHANCE, blendOutputPrice, blendRoutePool, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, routeInputPrice, routeOutputPrice, routePassesEndpointFilters, thinkingAdjustedPrice, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { autoPinApplies, BENCHMARK_CHANCE, blendOutputPrice, blendRoutePool, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, routeInputPrice, routeOutputPrice, routePassesEndpointFilters, thinkingAdjustedPrice, type BarSelection, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 import { type TokenProfile } from "../usage-ledger.ts";
 
@@ -233,6 +233,9 @@ export type RankRow = {
   /** dollars per task under the role's token profile, or null when no profile
    * was supplied or the model has no usable route price. Display-only. */
   perTask: number | null;
+  /** whether the `cheapest` selection's bar excludes this model (its `q` is
+   * under the bar). Always false in `value` mode, which has no bar. */
+  excludedByBar: boolean;
 };
 
 /** The availability overlay verdict for one model id: `"usable"` when the keyed
@@ -250,13 +253,18 @@ function keyVerdict(availability: KeyAvailability | undefined, id: string): "usa
  * `baseline` (the effective role's ranking, i.e. what the plugin does today) and
  * its keyed-catalog availability overlay. Ranking order, deltas, and every other
  * field are unaffected by `availability` or `profile`; `profile` only fills the
- * display-only `perTask` column. */
-export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], availability?: KeyAvailability, profile?: TokenProfile | null): RankRow[] {
+ * display-only `perTask` column.
+ *
+ * `bar` is the `cheapest` selection's bar over the same ranking (the caller
+ * computes it with `barSelection`); it only fills `excludedByBar`. `null`/absent
+ * (the `value` mode, which has no bar) flags no row. */
+export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], availability?: KeyAvailability, profile?: TokenProfile | null, bar?: BarSelection | null): RankRow[] {
   const ranked = rankRole(def, models);
   const frontier = paretoFrontier(ranked);
   const baselineRank = new Map<string, number>();
   baseline.forEach((r, i) => baselineRank.set(r.model.id, i + 1));
   const weightedNonPrice = Object.keys(def.weights).filter((k) => k !== "price");
+  const good = bar == null ? null : new Set(bar.good.map((g) => g.model.id));
   return ranked.map((r, i) => {
     const rank = i + 1;
     const b = baselineRank.get(r.model.id) ?? null;
@@ -279,6 +287,7 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], avai
       baselineRank: b,
       delta: b == null ? null : b - rank,
       perTask: profile == null ? null : perTaskPrice(r.model, def, profile)?.total ?? null,
+      excludedByBar: good !== null && !good.has(r.model.id),
     };
   });
 }

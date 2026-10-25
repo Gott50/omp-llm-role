@@ -80,6 +80,76 @@ value = q − λ · priceEff
 - `value` is the sort key; ties break score desc → blended $/M asc → id asc
   (determinism).
 
+### Selection rule — the cheapest model above the bar
+
+`value` is the default objective, but it is a **linear** tradeoff: a role with a
+low price weight will pay any multiple for a small `q` gain, so "cheap enough
+*and* good enough" is a region the objective cannot express. Two settings add
+that region as an opt-in rule (per-role overrides `roles.<role>.selection` /
+`roles.<role>.qualityFloor` — an explicit per-role value wins over the global):
+
+- `selection` — `"value"` (default, today's behaviour) or `"cheapest"`.
+- `qualityFloor` — a number in `[0, 1]`, default `0.9`. **Inert in `"value"`
+  mode** (the same declared-but-inert convention the `features.*` flags ship
+  with).
+
+In `"cheapest"` mode the per-role selection step (`src/updater.ts`) replaces the
+value leader with:
+
+- the **anchor** — the highest-`q` candidate in the role's usable pool (a
+  quality statement, not a price one, so the bar reads the same on every role's
+  quality scale);
+- the **bar** — `qualityFloor × anchor.q`;
+- the **pick** — the cheapest candidate at or above the bar (ties: higher `q`,
+  then `model.id` ascending).
+
+`barSelection(pool, qualityFloor)` (`src/engine.ts`) is the pure implementation;
+`qualityFloor` `0` admits every candidate, `1` admits only the anchor.
+
+The decision table (`current` = the model the selector names, `good` = the
+bar-clearing candidates, `pick` = the cheapest of them):
+
+| condition | reason | chosen |
+|---|---|---|
+| `current` not in the pool | `adopted` | `pick` |
+| `current` in the pool, not in `good` | `switched` | `pick` |
+| `current` in `good`, `pick` is `current` | `kept-eligible` | `current` |
+| `current` in `good`, `pick.priceEff <= current.priceEff × (1 − priceSwitchFraction)` | `switched-cost` | `pick` |
+| `current` in `good`, otherwise | `kept-margin` | `current` |
+
+(plus `no-current` when the role has no selector at all). `switched` now means
+"the incumbent fell below the bar" — the existing reason vocabulary is reused,
+no new reason value. The kept branch **re-checks the bar**: a role holding an
+under-bar model drops it with no margin.
+
+The primary hysteresis is **cost-side only** in this mode: `switchMargin` is not
+consulted, `priceSwitchFraction` (default `0.5`) is the only margin, and `0`
+disables the cost-side switch (matching value mode's `cheaperInsideMargin`). The
+value ranking is still computed and still reported in the decision's `value` /
+`bestValue` / `currentValue` fields, so history rows stay comparable.
+
+The rule's pool is the role's **usable candidate set** (the catalog/tier gate +
+the allowed-providers prune + the keyed-catalog prune) — **not** the probe
+window, which is only the top few value-ranked candidates and would miss a cheap
+model that ranks low by value. The pick is **probe-verified on demand** (the walk
+probes the incumbent first; a blocked pick falls through to the next-cheapest
+bar-clearing candidate, budgeted like the walk). The anchor is a **quality**
+statement only: it is taken over the usable pool, so a probe verdict never moves
+the bar — the probe verdicts gate the **pick** alone. (The spec's Implementation
+Decisions phrase the pool as including "the probe walk's verdicts"; the Solution
+and the measured blast radius both define it as the as-written pool, and a
+probe-dependent bar would make two runs on the same data write different
+selectors.) The fallback chain, the
+auto-pin, the route expansion, the thinking levels and the prune-on-pin-change
+are unchanged; a locked role and a disabled role are untouched, and a manual
+`providerPin` keeps its **hard-gate** meaning — the rule picks within the
+pin-eligible pool (never the value leader), and a model with no matching route is
+ineligible. An empty or all-key-blocked pool leaves the role untouched.
+
+The two floors are **not merged**: `fallbackQualityFloor` (below) keeps its own
+meaning and default and gates chain membership only; `qualityFloor` gates the
+**primary** choice only.
+
 ### Cache-read pricing (cache-hit rate)
 
 A role may declare an assumed **cache-hit rate** for its input tokens
@@ -213,6 +283,12 @@ Two readouts make the price posture visible (spec #81). Both are pure
 (`src/explorer/levers.ts`), computed on the pool the explorer is viewing, and
 reuse the engine's own `roleLambda`/`rankRole`/`SUFFIX_LEVELS`/
 `thinkingPriceFactor` — never a re-derivation.
+
+**The price weight's role in `cheapest` mode.** `weights.price` no longer decides
+the primary choice there — the bar and the cheapest-above-bar pick do (see
+*Selection rule* above). It still shapes the value ranking (the explorer's value
+column, the history's `value` fields) and the fallback chain's ordering, and the
+leader-flip readout below still describes the value leader.
 
 ### The leader-flip threshold
 

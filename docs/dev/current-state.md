@@ -17,6 +17,40 @@ work, and spec #81's explorer surfaces. The provider-pin numbers are the
 2026-10-11 measurement (spec #71; see the top bullet). Neither is re-derived on
 read.
 
+- Cheapest-model selection (2026-10-20, spec #103): a new opt-in rule replaces
+  the primary choice's objective. `selection` (`"value"` default, or
+  `"cheapest"`) and `qualityFloor` (a number in `[0, 1]`, default `0.9`, inert in
+  `"value"` mode) — with per-role overrides `roles.<role>.selection` /
+  `roles.<role>.qualityFloor` — let a role pick the **cheapest** candidate at or
+  above `qualityFloor × anchor.q`, where the anchor is the pool's highest-`q`
+  candidate. The decision table reuses the existing reason vocabulary: `adopted`
+  (no incumbent in the pool), `switched` (the incumbent fell below the bar —
+  dropped with no margin), `kept-eligible` (the pick is the incumbent),
+  `switched-cost` (a bar-clearing incumbent undercut by `priceSwitchFraction`),
+  `kept-margin` (otherwise). The primary hysteresis is cost-side only in this
+  mode: `switchMargin` is not consulted, `priceSwitchFraction` (default `0.5`) is
+  the only margin, and `0` disables the cost-side switch. The value ranking is
+  still computed and still reported in the decision's `value`/`bestValue`/
+  `currentValue` fields, so history rows stay comparable. The rule's pool is the
+  role's usable candidate set (catalog/tier gate + allowed-providers prune +
+  keyed-catalog prune) — not the probe window — and the pick is probe-verified on
+  demand. The two floors are not merged: `fallbackQualityFloor` keeps its own
+  meaning and gates chain membership only. **Measured blast radius** (2026-10-20
+  cache, live resolved defs, as-written pool): with `selection: "cheapest"` and
+  the bar at 0.9 the prospective pick differs from today's value leader for 6 of
+  10 roles — `smol`, `slow`, `plan`, `commit`, `advisor` move to
+  `deepseek-v4.1-flash-1017`, `tiny` to `glm-5.3-flash`; `default`, `vision`,
+  `task` and `designer` are unchanged. The *written* change set is smaller (the
+  cost-side margin holds a role whose challenger is not meaningfully cheaper —
+  today's dry run shows `default` and `task` as `kept-margin`). The bar value is
+  the differentiation knob: distinct picks across the 10 roles by bar value are
+  0.80 → 1, 0.85 → 2, **0.90 → 2**, 0.95 → 3, 0.98 → 5, 1.00 → 6 — at the default
+  0.9, 9 of 10 roles collapse onto one model. The explorer's as-written pool
+  gained the keyed-catalog prune (key-blocked rows are pruned, not kept; the key
+  diagnostic moves to raw mode), and the role payload gained the selection
+  surface (the prospective pick, the bar, the per-row `excludedByBar` flag). The
+  suite grew 688 → 738.
+
 - `/refresh-roles --no-margin` (2026-10-19, spec #99): the command's args were
   ignored; they are now parsed by `parseRefreshRolesArgs` (an unrecognized token
   is reported as a usage line and **no run happens** — a deliberate change,

@@ -223,7 +223,8 @@ models (the account's key cannot use them) and models whose probe verdict is
 `blocked`. An **unprobed** candidate stays — the chain's deeper entries are
 never probe-verified (they are not a new class: chain entries are already
 route-level unprobed, and omp fails over on an unroutable entry). `after` is
-that list **below the chosen model** — the leader on a fresh pick, the kept
+that list **below the chosen model** — the value leader on a fresh pick in
+`value` mode, the bar-clearing pick on a fresh pick in `cheapest` mode, the kept
 current candidate on a kept role (`kept-eligible` / `kept-margin`) — so the
 `after` set and the floor both key off the model the selector actually names —
 the previous `pool.slice(chosenIdx + 1)` keyed off the same index in the
@@ -299,6 +300,43 @@ false — the pin is simply absent). The case where the model *has* candidates b
 none is routable is different: that is the **dropped pin** above — still no pin,
 but recorded (`pinDropped`). With the capability off the written config is
 byte-identical to before.
+
+## The selection decision (spec #103)
+
+The per-role selection step (`src/updater.ts`) names the model the selector
+writes. Two settings choose the rule: `selection` (`"value"` default, or
+`"cheapest"`) and `qualityFloor` (a number in `[0, 1]`, default `0.9`, inert in
+`"value"` mode); a role's own `roles.<role>.selection` / `roles.<role>.qualityFloor`
+overrides the global. The rule and its math are in scoring.md, *Selection rule —
+the cheapest model above the bar*; this section is the write path's view.
+
+`"value"` mode (the default) is unchanged: the pool leader is the value leader
+and the hysteresis ladder is `switchMargin`-first. `"cheapest"` mode replaces the
+objective with the cheapest candidate at or above `qualityFloor × anchor.q`
+(anchor = the pool's highest-`q` candidate). The decision table itself lives
+there (a fact has one home); the write-path-specific facts are:
+
+- the reason vocabulary is unchanged — no new `DecisionReason` — but `switched`
+  now also means "the incumbent fell below the bar" (dropped with no margin), and
+  the kept branch re-checks the bar;
+- the primary hysteresis is **cost-side only** in this mode: `switchMargin` is
+  **not consulted**; `priceSwitchFraction` (default `0.5`) is the only margin,
+  and `0` disables the cost-side switch;
+- the value ranking is still computed and still reported in the decision's
+  `value` / `bestValue` / `currentValue` fields, so history rows stay comparable
+  across modes.
+
+The rule's pool is the role's **usable candidate set** (catalog/tier gate +
+allowed-providers prune + keyed-catalog prune) — not the probe window; the pick
+is probe-verified on demand (a blocked pick falls through to the next-cheapest
+bar-clearing candidate). The fallback chain, the auto-pin, the route expansion,
+the thinking levels and the prune-on-pin-change are unchanged; a locked role and
+a disabled role are untouched, and a manual `providerPin` keeps its **hard-gate**
+meaning — the rule picks within the pin-eligible pool (never the value leader),
+and a model with no matching route is ineligible. An empty or all-key-blocked
+pool leaves the role untouched. The two floors are **not merged**:
+`fallbackQualityFloor` (below) gates chain membership only; `qualityFloor` gates
+the primary choice only.
 
 ## State, history, lock
 

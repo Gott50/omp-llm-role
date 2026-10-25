@@ -187,6 +187,10 @@ export type RoleDef = {
   };
   /** explicit λ override ($ per quality point); default derives from the price weight */
   lambda?: number;
+  /** Per-role model selection rule; overrides the global `selection` (authored-wins). */
+  selection?: SelectionMode;
+  /** Per-role quality floor for `cheapest` mode; overrides the global `qualityFloor`. */
+  qualityFloor?: number;
   /** thinking level appended to the role's selector (`:level`) when the chosen
    * catalog entry supports thinking; absent = bare (session default level).
    * Also scales the price axis for ranking (thinkingPriceFactor). */
@@ -1336,6 +1340,51 @@ export function paretoFrontier(ranked: Ranked[]): Set<string> {
     if (!dominated) frontier.add(a.model.id);
   }
   return frontier;
+}
+
+/** A role's primary-selection rule: `value` (the highest value — today's
+ * behaviour) or `cheapest` (the cheapest candidate clearing `qualityFloor`). */
+export type SelectionMode = "value" | "cheapest";
+
+/** The bar and the pick for a `cheapest` selection over a rank-ordered pool. */
+export type BarSelection = {
+  /** the highest-`q` candidate (the bar's anchor) */
+  anchor: Ranked;
+  /** `qualityFloor × anchor.q` */
+  bar: number;
+  /** the candidates at or above the bar, in rank order */
+  good: Ranked[];
+  /** the cheapest good candidate (ties: higher `q`, then `model.id` ascending) */
+  pick: Ranked;
+};
+
+/** The `cheapest` pick order: cheapest first, ties by higher `q`, then
+ * `model.id` ascending — the order `barSelection` picks from. Exported so the
+ * updater can fall through a probe-blocked pick to the next-cheapest
+ * bar-clearing candidate while the bar itself stays fixed. */
+export function pickOrder(a: Ranked, b: Ranked): number {
+  if (a.priceEff !== b.priceEff) return a.priceEff - b.priceEff;
+  if (a.q !== b.q) return b.q - a.q;
+  return a.model.id < b.model.id ? -1 : a.model.id > b.model.id ? 1 : 0;
+}
+
+/** The cheapest-above-bar selection over `pool`. `null` for an empty pool.
+ *
+ * The anchor is the highest-`q` candidate — a quality statement, not a price
+ * one — so the bar reads the same on every role's quality scale. `qualityFloor`
+ * 0 admits every candidate; 1 admits only the anchor. Pure: no I/O, and `pool`
+ * is never mutated. */
+export function barSelection(pool: Ranked[], qualityFloor: number): BarSelection | null {
+  if (pool.length === 0) return null;
+  let anchor = pool[0];
+  for (const r of pool) if (r.q > anchor.q) anchor = r;
+  const bar = qualityFloor * anchor.q;
+  // The anchor is the bar's anchor: only a negative anchor `q` (a model below
+  // every benchmark's chance line) could put it under its own bar.
+  const good = pool.filter((r) => r.q >= bar || r === anchor);
+  let pick = good[0];
+  for (const r of good) if (pickOrder(r, pick) < 0) pick = r;
+  return { anchor, bar, good, pick };
 }
 
 // ---------------------------------------------------------------------------

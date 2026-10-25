@@ -4,7 +4,9 @@ Ranks today's LLM leaderboard into best-fit picks for each omp model role
 (`default, smol, slow, vision, plan, commit, tiny, task, advisor`, plus the
 opt-in `designer`) and ships an omp plugin that applies those picks to
 `~/.omp/agent/config.yml` daily. Every role weights price and throughput, so
-the pick is the cheapest model that can do the job, not the strongest one.
+the shipped default is the best-value pick, not the strongest one; set
+`selection: "cheapest"` to make it literally the cheapest model that can do the
+job.
 
 ## Example output
 
@@ -130,6 +132,8 @@ Global knobs:
 | `activateDefaultOnEmptySession` | `true` | Reapply the new `default` selector to an empty session's active model |
 | `tokenProfile` | unset | `{ inputTokens, outputTokens }` per task for the explorer's `$/task` column, used when a role has no recorded usage. Display-only; the recorded usage takes precedence. Unset = the column reads `—` |
 | `errorReporting` | `off` | Opt-in reporting of **unexpected** plugin errors as GitHub issues on `Gott50/omp-llm-role`; one of `off`, `ask`, `auto` (see below) |
+| `selection` | `value` | Model selection rule: `value` picks the best-value model (today's behaviour); `cheapest` picks the cheapest model that clears `qualityFloor`. Opt-in — an upgrade changes nothing until you ask |
+| `qualityFloor` | `0.9` | In `cheapest` mode, the fraction of the pool's best model's quality a cheaper candidate must retain; `0` disables the bar, `1` requires the anchor's exact `q`. Inert in `"value"` mode |
 
 Per-role knobs (`roles.<name>.*`):
 
@@ -148,6 +152,8 @@ Per-role knobs (`roles.<name>.*`):
 | `providerPin` | `""` (unset) | Pin the role's requests to one OpenRouter provider route (`@<slug>`, may be tiered like `deepinfra/fp8`). The role is then priced and gated by that route — its billed price and p50 throughput, not the `1/price²` blend — and a model with no matching route is ineligible. A manual pin **overrides** the automatic pin the `providerPinning` capability would write |
 | `cacheHitRate` | `0` (off) | Assumed cache-hit rate (0–1) for the role's input tokens; each route's effective input price becomes `h·cacheRead + (1−h)·input` before the 3:1 billed blend and the thinking factor. The `1/price²` weight basis stays the **listed** input price (the router's sort key), so a cheap cache on a lightly-weighted route cannot dominate; a route with no cache-read price keeps its full input price. `0`/absent = off (byte-identical ranking) |
 | `lambda` | derived | Explicit λ ($ per quality point) override |
+| `selection` | global | Per-role selection rule (`value`/`cheapest`); overrides the global `selection` |
+| `qualityFloor` | global | Per-role quality floor for `cheapest` mode; overrides the global `qualityFloor` |
 | `locked` | `false` | Leave the role alone: rank it but never rewrite its selector or chain (explorer toggle) |
 
 **Capability flags** (`features.<id>` global, `roles.<role>.features.<id>` per
@@ -227,6 +233,8 @@ weights not summing to 1.0 ± 0.01; a `required` entry or a weighted metric
 outside the known-metric set; a `thinking` level outside
 `off|minimal|low|medium|high|xhigh|max|auto`; `switchMargin`/`priceSwitchFraction`
 outside `[0, 1]`; a non-boolean `enabled`; a `cacheHitRate` outside `[0, 1]`; a
+`selection` outside `value|cheapest`; a non-finite or out-of-range
+`qualityFloor` (never silently clamped); a
 `providerPin` that is empty or
 contains `@`/`:` (the selector's own delimiters); an unknown capability id
 (global or per-role) or a non-boolean flag value; a non-boolean
@@ -244,6 +252,21 @@ plugin). The lock file stores **flat dotted keys** (`roles.slow.weights.code`);
 the reader also accepts nested objects, so an existing nested lock file keeps
 working and normalizes on the next role write. Invalid settings abort the run
 with the offending role/key and no write.
+
+**The blast radius of `selection: "cheapest"`.** The rule is opt-in, so an
+upgrade changes nothing until you set it. On the 2026-10-20 cache, with the live
+resolved defs and the as-written pool, the prospective pick at the default bar
+(`qualityFloor: 0.9`) differs from today's value leader for **6 of 10 roles**:
+`smol`, `slow`, `plan`, `commit` and `advisor` move to
+`deepseek-v4.1-flash-1017`, and `tiny` moves to `glm-5.3-flash`; `default`,
+`vision`, `task` and `designer` are unchanged. The *written* change set is
+smaller — the cost-side margin (`priceSwitchFraction`) holds a role whose
+challenger is not meaningfully cheaper, so today's dry run leaves `default` and
+`task` as `kept-margin`. The bar value is the differentiation knob: distinct
+picks across the ten roles by bar value are 0.80 → 1, 0.85 → 2, **0.90 → 2**,
+0.95 → 3, 0.98 → 5, 1.00 → 6 — at the default 0.9, nine of the ten roles
+collapse onto one model. Raise `qualityFloor` to spread the picks; lower it to
+concentrate them.
 
 ## Commands
 
@@ -444,11 +467,15 @@ editing source and re-running the CLI.
 - **Pool toggle** — the header switches the ranked pool between **raw** (the
   account-agnostic fetch) and **as-written** (the pool the updater actually
   writes from: the catalog/tier gate plus your account's allowed-providers
-  whitelist). The as-written pool is what you will get, so its leader is the
-  model the next `/refresh-roles` will pick; the raw pool shows the
-  account-agnostic ranking. The toggle is best-effort (a failed whitelist fetch
-  degrades to the raw pool) and per-scope, and it never affects **Export** —
-  Export always writes the role you authored, from either pool.
+  whitelist plus the keyed-catalog prune — models your key cannot run are
+  dropped). The as-written pool is the pool the next `/refresh-roles` ranks, but
+  its leader is not necessarily the model you will get: the hysteresis can keep
+  the incumbent, and in `cheapest` mode the pick is the cheapest bar-clearing
+  model, not the leader. The raw pool shows the account-agnostic ranking and
+  keeps every row — key-blocked models included — with their verdicts. The
+  toggle is best-effort (a failed whitelist fetch degrades to the raw pool) and
+  per-scope, and it never affects **Export** — Export always writes the role you
+  authored, from either pool.
 - **Role tabs** — every role the plugin knows: the nine omp built-in roles, the
   shipped opt-in `designer`, and any role present only in the lock file. Each
   tab is tinted by provenance — `default` (omp built-in), `plugin` (shipped but
@@ -507,7 +534,10 @@ posture binds (a small bump flips the pick) or is slack. It is absent when no
 cheaper challenger exists. The **thinking level** table shows which model wins
 at each level, with the level's price factor — the factor multiplies the price
 axis, so it penalizes expensive models more, which is why `auto` favours the
-cheap model. Both readouts are computed on the pool you are viewing.
+cheap model. Both readouts are computed on the pool you are viewing. In
+`cheapest` mode `weights.price` no longer decides the primary choice — the bar
+does — but it still shapes the value ranking (this panel's value column and the
+history's `value` fields) and the fallback chain's ordering.
 
 The UI never reimplements the ranking math: the numbers on screen are exactly
 the numbers the plugin would use. The server binds `[IP_ADDRESS]` only (no auth)

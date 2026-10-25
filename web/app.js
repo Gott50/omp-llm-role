@@ -17,6 +17,9 @@ const state = {
   thinkingFactors: {},
   rows: [],
   selectedId: null,
+  // The /api/rank selection block: the effective mode, the prospective pick,
+  // the bar's anchor/threshold and the floor. null until the first rank.
+  selection: null,
   lambda: 0,
   derivedLambda: 0,
   errors: [],
@@ -146,13 +149,16 @@ const TIPS = {
   hideBlocked: "Drop rows your OpenRouter key cannot run (key = blocked). Applied after the text filter and the top-n slice.",
   lock: "Plugin settings lock file that Export writes to (the active scope's lock file).",
   scope: "Role-config source: the user-level scope, or a project where /project-roles was used. Switching re-reads that scope's roles and universe from disk and points Export at its lock file. A project whose lock file is gone is unavailable.",
-  pool: "Ranked pool. raw = the full cached dataset (account-agnostic). as-written = the same catalog/tier gate and allowed-providers whitelist prune the updater applies before writing, so the leader you see is the model you will get. Best-effort: a failed whitelist fetch degrades to the raw pool. Export is unaffected — it always writes the authored role.",
+  pool: "Ranked pool. raw = the full cached dataset (account-agnostic), key-blocked models included with their key verdicts. as-written = the pool the updater ranks on: the catalog/tier gate, the allowed-providers whitelist prune, and the keyed-catalog prune — key-blocked models are dropped here, so switch to raw to see them and their verdicts. It is not the written selector: hysteresis can keep a different model than this pool's leader, and Export always writes the authored role. Best-effort: a failed whitelist fetch degrades to the raw pool.",
   refresh: "Refetch llm-stats and OpenRouter data (hits the network).",
   rank: "Rank among this role's eligible models, by value, descending.",
   delta: "Rank change against the role's saved (effective) definition: + means this definition ranks the model higher than the plugin does today.",
   frontier: "Pareto frontier on (effective price, q): no other model is both cheaper and at least as good. Price is the thinking-adjusted effective price.",
   value: "Sort key: value = q − λ·$/M on the thinking-adjusted effective price. λ is the price of one quality point, in $/M.",
   q: "Quality q = Σ (wᵢ/(1−w_price))·tᵢ over the weighted quality metrics. Price is not blended in — it is the penalty axis.",
+  pick: "The prospective pick: the model the role's selection rule would choose — in cheapest mode the cheapest candidate at or above the bar, in value mode the value leader. A pure function of the pool and the role def, not the written selector: the plugin's hysteresis can still keep a different model, and Export always writes the authored role.",
+  bar: "The quality floor: bar = qualityFloor × the anchor's q, where the anchor is the pool's highest-q model. Candidates under the bar are excluded from the cheapest pick. The fill shows the bar as a share of the anchor's q. Absent in value mode, which has no bar.",
+  excluded: "Candidates the bar excluded: their q is under the bar, so the cheapest pick never considers them. The missing metrics are the weighted non-price metrics with no value for that model — they contribute 0 to its q.",
   price: "Effective price in $/M: OpenRouter standard-route blend (3:1 in:out) scaled by the role's thinking factor when the model supports thinking; unadjusted for bare/off roles.",
   perTask: "Dollars per task: your own token mix (the role's recorded usage, else the tokenProfile setting) × the role's priced route, thinking-adjusted. Display-only — the ranking still sorts on $/M. — when no token profile is available (no recorded usage and no tokenProfile set).",
   throughput: "Output throughput in tok/s (OpenRouter p50 when matched, else llm-stats).",
@@ -298,8 +304,9 @@ function scopeSelect() {
   return sel;
 }
 
-/** The pool selector: the raw dataset (account-agnostic) or the as-written pool
- * (the catalog/tier gate + allowed-providers prune the updater ranks on). The
+/** The pool selector: the raw dataset (account-agnostic, key-blocked models
+ * kept with their verdicts) or the as-written pool (the catalog/tier gate +
+ * allowed-providers prune + keyed-catalog prune the updater ranks on). The
  * value is the server's mode, so the header always names the active pool. */
 function poolSelect() {
   const sel = el("select", { id: "pool", "data-tip": TIPS.pool });
@@ -430,6 +437,7 @@ async function recompute() {
     return;
   }
   state.rows = data.rows;
+  state.selection = data.selection;
   state.lambda = data.lambda;
   state.derivedLambda = data.derivedLambda;
   state.errors = data.errors;
@@ -487,8 +495,15 @@ function renderTable() {
   // the top-n count is the ranking's own prefix, not a post-filter count.
   if (state.hideBlocked) rows = rows.filter((r) => r.key !== "blocked");
   for (const r of rows) {
+    // Row marks: `selected` is the clicked row, `pick` the selection rule's
+    // prospective model, `excluded` a candidate the bar dropped. The pick is
+    // never re-derived here — it is the server's `selection.pick`.
+    const classes = ["row"];
+    if (r.id === state.selectedId) classes.push("selected");
+    if (state.selection && r.id === state.selection.pick) classes.push("pick");
+    if (r.excludedByBar === true) classes.push("excluded");
     tbody.append(
-      el("tr", { class: "row" + (r.id === state.selectedId ? " selected" : ""), onclick: () => selectModel(r.id) }, [
+      el("tr", { class: classes.join(" "), onclick: () => selectModel(r.id) }, [
         el("td", { class: "num", text: String(r.rank) }),
         el("td", { class: "delta " + deltaClass(r.delta), text: deltaText(r.delta) }),
         el("td", { class: "star", text: r.frontier ? "★" : "" }),
@@ -505,6 +520,67 @@ function renderTable() {
     );
   }
   table.append(tbody);
+  renderSelection();
+}
+
+/** The selection readout: the bar (cheapest mode only) and the candidates it
+ * excluded. Both are absent in `value` mode, which has no bar. The bar is the
+ * threshold q against the anchor's q, with the floor named; the fill shows the
+ * threshold as a share of the anchor's q. The excluded list names each dropped
+ * candidate and the weighted metrics its q is missing (they contribute 0). */
+function renderSelection() {
+  const barBox = document.getElementById("selection-bar");
+  const exBox = document.getElementById("excluded");
+  if (!barBox || !exBox) return;
+  barBox.textContent = "";
+  exBox.textContent = "";
+  const sel = state.selection;
+  if (!sel || sel.mode !== "cheapest" || sel.bar === null) return;
+  const rowOf = (id) => state.rows.find((r) => r.id === id) || null;
+  const anchorQ = sel.anchorQ;
+  const frac = anchorQ > 0 ? Math.max(0, Math.min(1, sel.bar / anchorQ)) : 0;
+  const bar = el("div", { class: "bar", "data-tip": TIPS.bar });
+  const fill = el("div", { class: "fill" });
+  fill.style.width = frac * 100 + "%";
+  bar.append(fill);
+  const anchor = rowOf(sel.anchor);
+  const pick = rowOf(sel.pick);
+  barBox.append(
+    el("div", { class: "sel-line" }, [
+      el("span", { class: "sel-title", text: "cheapest above the bar" }),
+      el("span", { class: "muted", text: "floor " + fmt(sel.floor, 2) + " × anchor q " + fmt(anchorQ, 3) + " = bar " + fmt(sel.bar, 3) }),
+    ]),
+    el("div", { class: "sel-bar" }, [
+      bar,
+      el("span", { class: "muted", text: "bar " + fmt(sel.bar, 3) + " of anchor q " + fmt(anchorQ, 3) }),
+    ]),
+    el("div", { class: "sel-line" }, [
+      el("span", { class: "muted", text: "anchor: " + (anchor ? anchor.name : sel.anchor) + " (q " + fmt(anchorQ, 3) + ")" }),
+      el("span", { class: "muted", "data-tip": TIPS.pick, text: "pick: " + (pick ? pick.name : sel.pick) + (pick ? " (q " + fmt(pick.q, 3) + ")" : "") }),
+    ]),
+  );
+  const excluded = state.rows.filter((r) => r.excludedByBar === true);
+  if (excluded.length === 0) return;
+  exBox.append(
+    el("div", { class: "excluded-head", "data-tip": TIPS.excluded, text: "excluded by the bar — " + excluded.length + " candidate(s) under q " + fmt(sel.bar, 3) }),
+  );
+  const list = el("ul", { class: "excluded-list" });
+  for (const r of excluded) {
+    const li = el("li", {}, [
+      el("span", { class: "model", text: r.name }),
+      el("span", { class: "muted", text: " q " + fmt(r.q, 3) + " · missing: " }),
+    ]);
+    if (r.missing && r.missing.length) {
+      r.missing.forEach((m, i) => {
+        if (i > 0) li.append(document.createTextNode(", "));
+        li.append(el("span", { class: "metric", "data-tip": metricTip(m), text: metricLabel(m) }));
+      });
+    } else {
+      li.append(el("span", { class: "muted", text: "none — its q is measured" }));
+    }
+    list.append(li);
+  }
+  exBox.append(list);
 }
 
 function selectModel(id) {
@@ -1350,6 +1426,7 @@ function applyBootstrap(data) {
   state.featureRegistry = data.featureRegistry || [];
   state.rows = [];
   state.selectedId = null;
+  state.selection = null;
   state.explain = null;
   state.errors = [];
   state.exportMessage = "";

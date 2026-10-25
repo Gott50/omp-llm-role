@@ -191,7 +191,12 @@ passing.
     The auto-pin indicator (spec #90): `explainModel`'s `autoPin` is the route the
     updater's walk pins when every route probes clean, and it deliberately differs
     from the written pin when the walk skips a blocked leader — the panel names
-    the *candidate*.
+    the *candidate*. The selection surface (spec #103): the rank payload's
+    `selection` names the prospective pick and the bar (`anchor`/`anchorQ`/`floor`/
+    `bar`) in `cheapest` mode, marks the value leader as `pick` with `bar: null` in
+    `value` mode (the anchor stays the highest-`q` model in either mode), and a
+    per-role `selection`/`qualityFloor` beats the scope's global; each row's
+    `excludedByBar` flags the candidates under the bar.
 24. **Project scope** (`project-updater.test.ts`, `project-setup.test.ts`,
     `project-roles-command.test.ts`) — project mode scopes config/state/history/
     lock to `<cwd>/.omp`; the day gate is per scope; the registry write;
@@ -310,9 +315,14 @@ passing.
     with the engine's own factor and the leader at that level, and `null` for a
     bare role.
 35. **As-written pool** (`explorer-pool.test.ts`) — `asWrittenPool` applies the
-    catalog/tier gate (`resolveVariant`) and the allowed-providers prune
-    (`providerAllowed`), leaves the routes untouched on a `null` whitelist,
-    yields an empty pool on `tier: "none"`, and never mutates its input.
+    catalog/tier gate (`resolveVariant`), the allowed-providers prune
+    (`providerAllowed`), and the keyed-catalog prune (spec #103: a key-blocked
+    model is dropped, a model in neither keyed set is kept, and an inactive
+    keyed record prunes nothing even with a non-empty `blocked` set); it leaves
+    the routes untouched on a `null` whitelist, yields an empty pool on
+    `tier: "none"`, and never mutates its input. The raw path keeps every row
+    with its `key` verdict, and the as-written leader is the model the updater
+    picks when the value leader is key-blocked.
 36. **Route probe** (`route-probe.test.ts`) — `probeRoute` sends the exact
     one-token completion shape (POST, bearer, `max_tokens: 1`, `provider: { only:
     [slug] }`): 200 → `ok`; the no-allowed-providers 404 → `blocked`; a 404 with
@@ -320,6 +330,27 @@ passing.
     walk that consumes it (skip a `blocked` route, accept `unknown`, drop the pin
     when nothing is clean, the per-role budget, the cross-role verdict cache) is
     covered by the auto-pin cases above.
+37. **Cheapest selection** (`selection-cheapest.test.ts`) — a full `runUpdater`
+    run with injected deps, asserting the written selector and the decision
+    reason. `value` (the default) writes the value leader, byte-identical to an
+    explicit `value`; `cheapest` picks the cheap bar-clearing candidate over a
+    20× value leader; an under-bar incumbent is dropped with no margin
+    (`switched`); a bar-clearing incumbent undercut by less than
+    `priceSwitchFraction` is kept (`kept-margin`) and by more is switched
+    (`switched-cost`); `priceSwitchFraction: 0` keeps it; a probe-blocked
+    incumbent is adopted away from, not kept; the anchor is the max-`q`
+    candidate, not the value leader; equal-price equal-quality candidates
+    tie-break on `model.id` ascending; `qualityFloor` `0` selects the cheapest
+    usable candidate and `1` the anchor; a key-blocked cheap candidate is never
+    selected; a probe-blocked pick falls through to the next-cheapest
+    bar-clearing candidate, and a role whose every bar-clearing candidate is
+    probe-blocked is left untouched; the fallback chain is byte-identical with
+    the mode on and off; a locked role and a manual `providerPin` keep their
+    meaning; two runs on the same data write the same selector. `barSelection`
+    itself: an empty pool has no selection, the anchor is the max-`q` row, `good`
+    keeps the pool's rank order, ties break on higher `q` then `model.id`
+    ascending, `qualityFloor` `0`/`1` admit every row / only the anchor, and the
+    pool is never mutated.
 
 ## Live checks
 

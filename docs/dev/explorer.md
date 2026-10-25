@@ -14,8 +14,8 @@ explorer never reimplements `value = q − λ·$/M`.
 | `src/explorer/server.ts` | Zero-dependency `node:http` surface: static SPA + JSON API. Exports `createExplorerServer`, `ExplorerOpts`. |
 | `src/explorer/explain.ts` | Pure explanation layer (no I/O): rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, the keyed-catalog availability overlay, and the display-only per-task price. Exports `rankRows`, `explainModel`, `perTaskPrice`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`. |
 | `src/explorer/levers.ts` | Pure price-lever readouts (no I/O): the leader-flip threshold and the thinking level's effect on the leader, computed on the pool they are handed. Exports `leaderFlip`, `thinkingLevelEffect`, `LeaderFlip`, `ThinkingLevelRow`. |
-| `src/explorer/pool.ts` | The as-written pool (no I/O): the dataset filtered exactly as the updater filters it before ranking (catalog/tier gate + allowed-providers prune). Exports `asWrittenPool`, `PoolMode`, `PoolInputs`. |
-| `src/explorer/scopes.ts` | Scope resolution (no HTTP): the user-level scope, the registry's projects, and the session's project; the per-scope read; the dataset union. Exports `Scope`, `resolveScopes`, `defaultScopeId`, `resolveScope`, `readScopeRoles`, `unionRoles`. |
+| `src/explorer/pool.ts` | The as-written pool (no I/O): the dataset filtered exactly as the updater filters it before ranking (catalog/tier gate + allowed-providers prune + keyed-catalog prune). Exports `asWrittenPool`, `PoolMode`, `PoolInputs`. |
+| `src/explorer/scopes.ts` | Scope resolution (no HTTP): the user-level scope, the registry's projects, and the session's project; the per-scope read; the dataset union. Exports `Scope`, `ScopeSelection`, `resolveScopes`, `defaultScopeId`, `resolveScope`, `readScopeRoles`, `unionRoles`. |
 | `src/explorer/boot.ts` | Shared launcher: bind/port fallback, scope resolution, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, `ExplorerHandle`, `ExplorerBootOpts`. |
 | `src/project-registry.ts` | The global project registry (`llm-role-projects.json` in the agent dir): read/register/prune, atomic write. Exports `PROJECT_REGISTRY_FILE`, `readProjectRegistry`, `registerProject`. |
 | `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write). Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `timestamp`. |
@@ -47,11 +47,13 @@ type ExplorerOpts = {
     universe: Record<string, UniverseEntry>;  // every known role, disabled included
     defaults: Record<string, RoleDef>;
     availability: KeyAvailability;            // keyed-catalog overlay (re-derived on refresh)
+    selection: ScopeSelection;                // the scope's global selection rule (mode + qualityFloor)
   };
   refresh(): Promise<void>;                   // re-runs loadRankData({ refresh: true, roles, extraMetrics }) and swaps rank
-  // The as-written pool's inputs: the omp catalog, the key's tier, and the
-  // account's allowed-providers whitelist (null = no whitelist / harvest failed,
-  // which leaves every route in place). Re-derived per call, so a project's
+  // The as-written pool's inputs: the omp catalog, the key's tier, the account's
+  // allowed-providers whitelist (null = no whitelist / harvest failed, which
+  // leaves every route in place), and the keyed-catalog availability (the
+  // blocked set the keyed prune reads). Re-derived per call, so a project's
   // whitelist cannot leak into another scope's view.
   getPoolInputs(): PoolInputs;
   // The recorded usage rows the per-task price resolves its token profile from,
@@ -82,7 +84,7 @@ Endpoints:
 | `GET /api/bootstrap` | — | `bootstrapPayload(opts, activeScope)` |
 | `POST /api/scope` | `{scope}` | switch the active scope, then the bootstrap payload (404 unknown id, 409 non-present) |
 | `POST /api/pool` | `{mode}` | switch the ranked pool (`"raw"` \| `"as-written"`), then the bootstrap payload (400 on any other mode) |
-| `POST /api/rank` | `{role, def}` | `{eligible, lambda, derivedLambda, rows, errors}` — each row carries the display-only `perTask` |
+| `POST /api/rank` | `{role, def}` | `{eligible, lambda, derivedLambda, selection, rows, errors}` — each row carries the display-only `perTask` and the `excludedByBar` flag |
 | `POST /api/explain` | `{role, def, modelId}` | `explainModel(...)` spread + `leaderFlip` + `thinkingLevels` + `errors` |
 | `POST /api/export` | `{roles}` | `{ok:true, backupPath, roles, lockPath}` or `{ok:false, errors}` |
 | `POST /api/refresh` | — | `await opts.refresh()` (re-ranks and re-derives the availability overlay) then the bootstrap payload |
@@ -96,7 +98,9 @@ Endpoints:
   (per-level billed-blend multiplier from the engine's own `thinkingPriceFactor`,
   so the UI readout cannot drift), `fetchedAt`, `modelCount`, `orMatched`,
   `orPriced`, `poolMode` (the ranked pool the counts describe — `"raw"` or
-  `"as-written"`), `tokenProfile` (the user-set per-task token profile, or
+  `"as-written"`), `selection` (the scope's global selection rule —
+  `{mode, qualityFloor}`; a role's own `selection`/`qualityFloor` overrides it),
+  `tokenProfile` (the user-set per-task token profile, or
   `null`), `lockPath` (the **active scope's** lock file), `scopes` (id, label,
   kind, present per known scope), `activeScope` (the active scope id),
   the active scope's global capability flags and the feature registry (the
@@ -121,6 +125,16 @@ Endpoints:
   expansion the preview would omit the preset the baseline includes and every
   row's Δ would be a lie. The posted def is the **authored** def (flags + explicit
   keys); the expansion is applied only for the ranking call, never persisted.
+- The **selection surface** (spec #103): `POST /api/rank` returns
+  `selection: {mode, pick, anchor, anchorQ, floor, bar}` — the **effective** rule
+  (the posted def's own `selection`/`qualityFloor` wins over the scope's global),
+  the prospective pick's model id, the anchor and its `q` (the highest-`q` model
+  in either mode — the bar's anchor in `"cheapest"` mode, the max-`q` model in
+  `"value"` mode, where the pick is the value leader), the floor value, and the
+  threshold `q` (`bar` is `null` in `"value"` mode, which has no bar).
+  Each row carries `excludedByBar` (its `q` is under the bar; always `false` in
+  `"value"` mode). The bar is computed with the engine's own `barSelection` over
+  the same ranking the rows show, so the panel and the updater cannot drift.
 - `handleExport` validates every dirty role first — `validateRole` plus a
   **provider-pin check**: a `providerPin` that matches no route in the loaded
   dataset is rejected (`role "<name>": provider pin "<slug>" matches no route in
@@ -146,17 +160,19 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   declared?)`** merges the shipped table with a derived entry per external metric.
 - **`weightableMetrics(extra?)`** — the shipped keys plus any external metric in
   `extra`; exactly what the validator accepts.
-- **`rankRows(def, models, baseline, availability?, profile?)`** — `rankRole(def, models)` +
+- **`rankRows(def, models, baseline, availability?, profile?, bar?)`** — `rankRole(def, models)` +
   `paretoFrontier`, annotating each row with `baselineRank`/`delta`
   (`baselineRank − rank`; positive = moved up) against the effective role's
   ranking. Rows carry `priceEff` (the thinking-adjusted price the ranking
   penalized), `parts`, `missing` (weighted non-price metrics whose raw value is
   null), `frontier`, `key` — the availability overlay verdict
   (`usable`/`blocked`/`unknown`), orthogonal to `missing` and to the eligibility
-  gates — and `perTask` (the display-only dollars-per-task, or `null`).
-  `availability` and `profile` are optional and pure (no I/O); omitted or
-  inactive ⇒ every row reads `unknown` / `perTask: null`. Neither affects the
-  ranking order or the deltas.
+  gates — `perTask` (the display-only dollars-per-task, or `null`), and
+  `excludedByBar` (the `cheapest` selection's bar excludes the row; always
+  `false` in `value` mode, which has no bar). `availability`, `profile` and `bar`
+  are optional and pure (no I/O); omitted or inactive ⇒ every row reads
+  `unknown` / `perTask: null` / `excludedByBar: false`. None affects the ranking
+  order or the deltas.
 - **`inverseCardinal(metric, t)`** — inverse of `cardinalMetric` for the "what
   would it take" targets: `index` → `t*80 − 20`; `throughput` → `10 * 30**t`
   (null outside `[0,1]`, because the forward transform clamps); everything else
@@ -334,6 +350,17 @@ a scraped third-party site, so the DOM is built with
   pool *inputs* are re-derived per call, so a project's whitelist never leaks
   into another scope's view. Export is unaffected: it always
   writes the authored def, never the pool.
+  The **as-written** pool applies the same three filters the updater applies
+  before ranking — the catalog/tier gate, the allowed-providers prune, and the
+  **keyed-catalog prune** (spec #103) — so its leader is the model the updater
+  would pick. Key-blocked rows are **pruned, not kept-and-marked**: in
+  as-written mode the `key` column therefore reads `usable` (or `unknown`) for
+  every row, and the key diagnostic ("`gemini-4-argon` is #1 but your key cannot
+  run it") moves to **raw** mode, which keeps every row and its verdict. The
+  `#pool` tooltip says the same: `as-written` is the pool the updater ranks on
+  (key-blocked models dropped — switch to `raw` to see them and their verdicts),
+  and it is **not** the written selector (hysteresis can keep a different model;
+  Export always writes the authored role).
 - **Scope switcher**: the header renders a `#scope` `<select>` from
   `state.scopes` (the user-level scope plus every known project); a scope whose
   lock file is gone is `disabled` with a reason `title`. Changing the selection
@@ -363,10 +390,21 @@ a scraped third-party site, so the DOM is built with
   `roles.<name>.features.<id>`.
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
   `recompute()`. `recompute()` → `POST /api/rank {role, def}` → `state.rows`,
-  `lambda`, `derivedLambda`, `errors`; re-renders the table and readouts, and
-  reloads the explain panel if the selected model is still present. The table
-  gains a **`$/task`** column (`r.perTask`, rendered `—` when `null`), beside the
-  `$/M` column. Editor changes call `scheduleRecompute()` (120 ms debounce).
+  `lambda`, `derivedLambda`, `selection`, `errors`; re-renders the table and
+  readouts, and reloads the explain panel if the selected model is still present.
+  The table gains a **`$/task`** column (`r.perTask`, rendered `—` when `null`),
+  beside the `$/M` column. Editor changes call `scheduleRecompute()` (120 ms
+  debounce).
+- **Selection readout** (spec #103): `recompute()` stores the rank payload's
+  `selection` in `state.selection`; the table marks the **prospective pick** row
+  (`pick`) and flags each row the bar excluded (`excludedByBar` → `excluded`). A
+  readout beside the table draws the bar (the threshold `q` as a share of the
+  anchor's `q`, with the floor named) and lists the excluded candidates with the
+  weighted metrics their `q` is missing. The pick is the **prospective** pick — a
+  pure function of the pool and the role def, never re-derived from the written
+  selector: the plugin's hysteresis can still keep a different model, and Export
+  always writes the authored role. Both the bar and the excluded list are absent
+  in `"value"` mode, which has no bar.
 - **Explain**: `selectModel(id)` → `POST /api/explain {role, def, modelId}` →
   `renderExplain()` (composition table, cost line, **per-task price** line, "why
   not higher", dominators, the **Price levers** section, and the availability
