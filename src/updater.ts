@@ -15,46 +15,19 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, providerAllowed, resolveVariant, THINKING_LEVELS, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, type RankData } from "./engine.ts";
+import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, providerAllowed, resolveVariant, splitThinkingSuffix, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
-import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type ResolvedSettings } from "./settings.ts";
+import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
 import { registerProject } from "./project-registry.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
+import { agentDisablePatch, buildChains, cheaperInsideMargin, decide, type Candidate, type ChainPlan, type Decision, type DecisionReason } from "./selection.ts";
 
-export type DecisionReason = "adopted" | "switched" | "switched-cost" | "kept-margin" | "kept-eligible" | "no-current";
-
-export type Decision = {
-  role: string;
-  from: string | null;
-  to: string;
-  reason: DecisionReason;
-  value: number;
-  bestValue: number;
-  currentValue: number | null;
-  /** Catalog ids probed blocked (provider allowlist) while selecting this role. */
-  blocked: string[];
-  /** Ranking ids dropped by the role's endpoint capability filters (no capable
-   * standard-tier route) — recorded like a probe-blocked candidate. */
-  endpointBlocked: string[];
-  /** Ranking ids dropped by the role's provider pin (no route matching the pin) —
-   * recorded like a probe-blocked candidate. */
-  pinBlocked: string[];
-  /** Provider slugs the auto-pin's route probe rejected on the chosen model, in
-   * walk order — rendered `; route-blocked: …`. Slugs, not ids: the sibling
-   * `blocked` holds catalog ids and `pinBlocked` ranking ids. Empty when no
-   * probe ran. */
-  routeBlockedSlugs: string[];
-  /** True when the auto-pin applies and the model has gate-passing routes but
-   * every candidate was rejected (or the route-probe budget ran out): the
-   * selector stays bare and OpenRouter routes the request itself. */
-  pinDropped: boolean;
-  /** Availability source for this role's selection: the keyed-catalog fast path or the probe walk. */
-  availabilitySource: "keyed-catalog" | "probe";
-  /** Candidates pruned as key-blocked (present in the public catalog, absent from the keyed one). */
-  keyBlockedCount: number;
-};
+// The decision core lives in `src/selection.ts` (spec #109) so the explorer's
+// preview and the run share one implementation; re-exported here so every
+// existing importer keeps working.
+export type { Decision, DecisionReason };
 
 export type RunResult = {
   decisions: Decision[];
@@ -70,25 +43,16 @@ export type RunResult = {
    * decide whether to file a report.
    */
   defect?: string;
+  /**
+   * The config patch the run computed (the same object `writePatch` receives).
+   * Present whenever the run reached the patch construction — including a dry
+   * run, which writes no `config.yml` to read the chains from. Absent on an
+   * abort.
+   */
+  patch?: ConfigPatch;
 };
 
 export type Trigger = "session-start" | "manual";
-
-/** A ranked model resolved to a concrete catalog id. */
-type Candidate = { ranked: Ranked; catalogId: string };
-
-/** Per managed role: its bare chain key, role suffix, provider pin, the
- * candidates its chain's fallback models are drawn from, the chosen model's
- * index in that list, and the inputs the auto-pin chain builder needs (the
- * expanded def for `rankedRoutes`, and whether the pin was auto-derived).
- * `candidates` is the role's ranked candidate list minus the candidates no
- * chain entry may name (key-blocked, probe-blocked) — not the probe-clean pool
- * — so the chain can reach a cheaper-or-equal model ranked below the probe
- * window. `pinnedSlug` is the route the auto-pin wrote — undefined for a manual
- * pin, for a dropped pin and with the capability off — so the chain builder can
- * exclude the pinned route by slug rather than by its position in the route
- * order. */
-type ChainPlan = { key: string; suffix: string | undefined; pin: string; pinnedSlug: string | undefined; candidates: Candidate[]; chosenIdx: number; def: RoleDef; autoPin: boolean };
 
 export type Deps = {
   getToken(): Promise<string>;
@@ -157,64 +121,10 @@ function decisionLine(d: Decision): string {
     : `@${d.role}: ${from} -> ${d.to} (${d.reason}; ${scores}${blocked}${endpoint}${pin}${routes}${dropped})`;
 }
 
-/**
- * Cost-side escape from the hysteresis margin. `switchMargin` is a
- * flat band on `value`, so it can veto a switch worth up to `switchMargin / λ`
- * $/M while the incumbent is only marginally better — e.g. a role at λ 0.003
- * refuses up to $7/M of savings. A challenger inside that band is adopted when
- * it undercuts the incumbent's effective price by `priceSwitchFraction` (0.5 =
- * at least twice as cheap). 0 disables the override.
- *
- * The effective switch margin rides on `settings.switchMargin`: `runUpdater`
- * passes a copy of the resolved settings carrying a per-run override (spec #99),
- * so this helper reads one input, not two.
- */
-function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSettings): boolean {
-  if (settings.priceSwitchFraction <= 0 || current.priceEff <= 0) return false;
-  if (best.value < current.value - settings.switchMargin) return false;
-  return best.priceEff <= current.priceEff * (1 - settings.priceSwitchFraction);
-}
-
 /** Abort lines for the two write-path failures (shared by the full run and the
  * settings-derived agent sync). */
 const LOCK_ABORT = "omp-llm-role: could not acquire the refresh lock (concurrent run?) — no write";
 const CONFLICT_ABORT = `omp-llm-role: config.yml kept changing underneath (${CONFLICT_RETRIES} mtime conflicts) — no write`;
-
-/**
- * `task.disabledAgents` entries the plugin manages: each discovered agent is
- * disabled exactly while the role its `model:` chain pins is disabled. An agent
- * whose pinned role is unknown (the `@role, @default` chain falls back) or that
- * pins no role is left alone, as are unrelated entries.
- *
- * `previouslyManaged` is the set the plugin added on a previous run (state
- * `managedDisabledAgents`): a name no longer in the desired add-set — its agent
- * file was removed (`/remove-agent`) or its role is no longer disabled — is
- * removed, so the plugin never leaves a stale entry behind. The returned
- * `agentDisableAdds` is the new managed set.
- */
-function agentDisablePatch(
-  raw: Record<string, unknown>,
-  settings: ResolvedSettings,
-  previouslyManaged: readonly string[],
-): Pick<ConfigPatch, "agentDisableAdds" | "agentDisableRemoves"> {
-  const universe = roleUniverse(raw, settings.roles);
-  const agentDisableAdds: string[] = [];
-  const agentDisableRemoves: string[] = [];
-  const desired = new Set<string>();
-  for (const pin of discoverAgentPins()) {
-    const entry = universe[pin.role];
-    if (entry === undefined) continue; // unknown role — the chain falls back, leave the agent alone
-    if (entry.enabled) agentDisableRemoves.push(pin.agent);
-    else {
-      agentDisableAdds.push(pin.agent);
-      desired.add(pin.agent);
-    }
-  }
-  for (const name of previouslyManaged) {
-    if (!desired.has(name) && !agentDisableRemoves.includes(name)) agentDisableRemoves.push(name);
-  }
-  return { agentDisableAdds, agentDisableRemoves };
-}
 
 /**
  * Read → patch → atomic write under the refresh lock, with mtime-conflict
@@ -293,14 +203,17 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     );
 
     const configPath = join(dir, "config.yml");
-    const agentDisables = agentDisablePatch(raw, settings, state.managedDisabledAgents);
+    // The agent pins are a filesystem scan, harvested once here and passed in so
+    // the same pins can be handed to the explorer's preview (spec #109).
+    const agentDisables = agentDisablePatch(raw, settings, state.managedDisabledAgents, discoverAgentPins());
     const nextManagedDisabled = agentDisables.agentDisableAdds;
 
     // The settings-derived agent sync is not day-gated: enabling/disabling a
     // shipped role must take effect on the next session, not the next day.
     if (!opts?.force && state.lastRunDay === today) {
       if (opts?.dryRun) return { decisions: [], wrote: false };
-      const res = writePatch(configPath, dir, { roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [], ...agentDisables });
+      const patch: ConfigPatch = { roleSelectors: {}, roleRemovals: [], chainUpserts: {}, chainPrunes: [], ...agentDisables };
+      const res = writePatch(configPath, dir, patch);
       if (res.status === "locked") return { decisions: [], wrote: false }; // another session is syncing — benign
       if (res.status === "conflict") return abort([CONFLICT_ABORT]);
       if (res.status === "written") {
@@ -308,7 +221,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         saveState(state, dir);
         if (notifyAll) deps.notify(["omp-llm-role: task.disabledAgents updated"]);
       }
-      return { decisions: [], wrote: res.status === "written" };
+      return { decisions: [], wrote: res.status === "written", patch };
     }
 
     let rank: RankData;
@@ -511,8 +424,6 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       }
       const best = pool[0];
       const mode = def.selection ?? settings.selection;
-      let chosen: Candidate;
-      let reason: Decision["reason"];
       let currentEntry: Candidate | null;
       // The challenger and the two switch predicates are the only per-mode
       // inputs to the shared decision ladder below.
@@ -594,30 +505,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         switchedPredicate = (cur) => best.ranked.value - cur.ranked.value >= hysteresis.switchMargin;
         costEscapePredicate = (cur) => cheaperInsideMargin(best.ranked, cur.ranked, hysteresis);
       }
-      // The six-arm decision ladder, shared by both modes. First match wins:
-      // no-current → adopted → kept-eligible → switched → switched-cost →
-      // kept-margin. The order is safe for both modes: in cheapest mode an
-      // under-bar incumbent can never be the pick (the pick is bar-clearing),
-      // so `kept-eligible` cannot shadow `switched`.
-      if (currentSelector === null) {
-        chosen = challenger;
-        reason = "no-current";
-      } else if (currentEntry === null) {
-        chosen = challenger;
-        reason = "adopted";
-      } else if (currentEntry.ranked.model.id === challenger.ranked.model.id) {
-        chosen = currentEntry;
-        reason = "kept-eligible";
-      } else if (switchedPredicate(currentEntry)) {
-        chosen = challenger;
-        reason = "switched";
-      } else if (costEscapePredicate(currentEntry)) {
-        chosen = challenger;
-        reason = "switched-cost";
-      } else {
-        chosen = currentEntry;
-        reason = "kept-margin";
-      }
+      // The six-arm decision ladder, shared by both modes (see `decide`).
+      const { chosen, reason } = decide({ currentSelector, currentEntry, challenger, switched: switchedPredicate, costEscape: costEscapePredicate });
 
       const suffix = def.thinking;
       // A provider pin rides as the selector's `@<slug>` suffix, before the
@@ -715,88 +604,22 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     const roleSelectors: Record<string, string> = {};
     for (const d of decisions) roleSelectors[d.role] = d.to;
     const defaultSelector = roleSelectors["default"];
-    const chainUpserts: Record<string, string[]> = {};
-    const referenced = new Set<string>();
-    if (settings.writeFallbackChains) {
-      // A chain key is model-oriented: when several managed roles land on the same
-      // model, one chain serves all of them, so its values stay level-free instead
-      // of imposing whichever role iterated last. A key claimed by exactly one role
-      // carries that role's thinking suffix on every entry whose target advertises
-      // thinking support — so a fallback runs at the role's effort, not the
-      // session default. Deduped, key excluded.
-      const claims: Record<string, number> = {};
-      for (const d of decisions) claims[chainPlanByRole[d.role].key] = (claims[chainPlanByRole[d.role].key] ?? 0) + 1;
-      for (const d of decisions) {
-        const plan = chainPlanByRole[d.role];
-        const suffix = claims[plan.key] === 1 ? plan.suffix : undefined;
-        // Cost-aware ordering with a quality floor: prefer fallbacks priced at or
-        // below the chosen model that still retain `fallbackQualityFloor` of its
-        // quality (a failover must not silently drop the role onto a much weaker
-        // model), then fill any remaining depth with the next-best by value. The
-        // floor and the `after` set both key off the chosen model — the leader on
-        // a fresh pick, the kept current candidate on a kept role — and the floor
-        // never filters the pricier set, so a cheap-but-weak candidate set cannot
-        // starve the chain.
-        const after = plan.candidates.slice(plan.chosenIdx + 1);
-        const chosen = plan.candidates[plan.chosenIdx];
-        const cheaper = after.filter((p) => p.ranked.priceEff <= chosen.ranked.priceEff && p.ranked.q >= chosen.ranked.q * settings.fallbackQualityFloor);
-        const pricier = after.filter((p) => p.ranked.priceEff > chosen.ranked.priceEff);
-        const chainPool = [...cheaper, ...pricier].slice(0, settings.fallbackChainDepth);
-        // A chain value's thinking level is appended only when the target's
-        // catalog entry advertises support (or the level is a meta level).
-        const levelFor = (catalogId: string): string => {
-          const row = rowById.get(catalogId);
-          return suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix)) ? `:${suffix}` : "";
-        };
-        const values: string[] = [];
-        if (plan.autoPin) {
-          // Auto-pin chain (spec #58, expanded by #69): every gate-passing route
-          // of the primary model except the pinned route, then every
-          // gate-passing route of each fallback model, in the role's
-          // value-for-money score order (`rankedRoutes`, spec #71) — every entry
-          // bound to its route's provider, so a down primary
-          // provider falls back to the same model on another provider rather
-          // than a different model. `rankedRoutes` already applies every gate
-          // (non-degraded, endpoint filters, usable billed price, the
-          // maxPriceUsdPerM cap, the allowed-providers whitelist), so the chain
-          // carries exactly the routes the role can use. The pin is excluded by
-          // slug, not by position: the route probe can pin a route other than
-          // the score leader, and with a dropped pin no route is excluded at
-          // all. The dedup below collapses two routes that share a provider slug
-          // (same chain value), so the chain length is (R_primary − 1) + Σ
-          // R_fallback over distinct gate-passing provider slugs (R_primary with
-          // no pin). Only the pinned route is probe-verified: one unroutable
-          // chain entry is survivable, omp fails over.
-          const chosenCandidate = plan.candidates[plan.chosenIdx];
-          for (const r of rankedRoutes(chosenCandidate.ranked.model, plan.def)) {
-            if (r.providerSlug === plan.pinnedSlug) continue;
-            values.push(`openrouter/${chosenCandidate.catalogId}@${r.providerSlug}${levelFor(chosenCandidate.catalogId)}`);
-          }
-          for (const p of chainPool) {
-            for (const r of rankedRoutes(p.ranked.model, plan.def)) {
-              values.push(`openrouter/${p.catalogId}@${r.providerSlug}${levelFor(p.catalogId)}`);
-            }
-          }
-        } else {
-          // Manual pin (every value carries it) or no pin (bare values).
-          for (const p of chainPool) values.push(`openrouter/${p.catalogId}${plan.pin}${levelFor(p.catalogId)}`);
-        }
-        chainUpserts[plan.key] = [...new Set(values)].filter((v) => v !== plan.key);
-        referenced.add(plan.key);
-      }
-      // Locked roles keep their current chain: the plugin neither rewrites nor
-      // prunes it, so its key must count as referenced. A chain key is the
-      // current selector minus a trailing `:level` (chain keys are level-free).
-      // A role whose pin matched no route is likewise left unchanged, so its
-      // current chain must survive the prune.
-      for (const role of [...lockedRoles, ...pinUnmatched]) {
-        const sel = current.modelRoles[role];
-        if (sel === undefined) continue;
-        const colon = sel.lastIndexOf(":");
-        referenced.add(colon !== -1 && sel.slice(colon + 1) in THINKING_LEVELS ? sel.slice(0, colon) : sel);
-      }
+    // Locked roles keep their current chain: the plugin neither rewrites nor
+    // prunes it, so its key must count as referenced. A role whose pin matched
+    // no route is likewise left unchanged, so its current chain must survive the
+    // prune. A chain key is the current selector minus a trailing `:level`
+    // (chain keys are level-free).
+    const keepKeys: string[] = [];
+    for (const role of [...lockedRoles, ...pinUnmatched]) {
+      const sel = current.modelRoles[role];
+      if (sel === undefined) continue;
+      keepKeys.push(splitThinkingSuffix(sel).base);
     }
-    const chainPrunes = settings.writeFallbackChains ? state.pluginWrittenChainKeys.filter((k) => !referenced.has(k)) : [];
+    const plans = settings.writeFallbackChains ? decisions.map((d) => ({ role: d.role, plan: chainPlanByRole[d.role] })) : [];
+    const { chainUpserts, chainPrunes } = buildChains({ plans, settings, rowById, keepKeys, writtenKeys: state.pluginWrittenChainKeys });
+    // The chain keys the plugin now owns: every written chain key plus the keys
+    // of the roles it left untouched — the same set `buildChains` prunes against.
+    const referenced = new Set<string>([...plans.map((p) => p.plan.key), ...keepKeys]);
     // Roles the plugin managed on a previous run but no longer does (disabled via
     // `enabled: false` / `weights: null`, or removed from settings): delete their
     // `modelRoles.<role>` line so a stale pin cannot keep routing `@<role>`.
@@ -865,7 +688,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       }
       if (lines.length > 0 || notes.length > 0) deps.notify([...notes, ...lines]);
     }
-    return { decisions, wrote, defaultSelector };
+    return { decisions, wrote, defaultSelector, patch };
   } catch (err) {
     const message = err instanceof ConfigEditError ? `config edit refused: ${err.message}` : err instanceof Error ? err.message : String(err);
     deps.notify([`omp-llm-role: aborted, no write: ${message}`]);
