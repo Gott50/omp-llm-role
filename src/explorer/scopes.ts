@@ -6,10 +6,12 @@
  * user-level lock), so the explorer and the plugin agree.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parseConfig } from "../config-edit.ts";
 import type { RoleDef, SelectionMode } from "../engine.ts";
 import { readProjectRegistry } from "../project-registry.ts";
-import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type UniverseEntry } from "../settings.ts";
+import { DEFAULT_SETTINGS, PLUGIN_SETTINGS_PATH, globalSettingsOf, projectLockPath, readPluginSettingsMap, resolveSettings, roleUniverse, type GlobalSettings, type UniverseEntry } from "../settings.ts";
 
 export type ScopeKind = "user" | "project";
 
@@ -30,6 +32,31 @@ export type Scope = {
 /** A scope's GLOBAL model-selection rule: the resolved `selection` mode and its
  * `qualityFloor`. A role's own `selection`/`qualityFloor` overrides it. */
 export type ScopeSelection = { mode: SelectionMode; qualityFloor: number };
+
+/** A scope's global (non-role) settings, in the three shapes the Settings panel
+ * needs: what the lock file authors, what that resolves to, and the shipped
+ * defaults to reset to. */
+export type ScopeGlobalSettings = {
+  /** The scope's AUTHORED global keys, verbatim from the lock file (flat dotted
+   *  keys included, e.g. `tokenProfile.inputTokens`). */
+  authored: Record<string, unknown>;
+  /** The scope's RESOLVED global settings (shipped defaults + authored). */
+  resolved: GlobalSettings;
+  /** The shipped defaults, so the panel can show and reset to them. */
+  defaults: GlobalSettings;
+};
+
+/** The raw map's global (non-`roles`) keys, verbatim: the flat dotted keys the
+ *  lock file carries (`tokenProfile.inputTokens`, `features.costCap`) stay flat,
+ *  so the panel renders exactly what is set. */
+function authoredGlobals(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === "roles" || key.startsWith("roles.")) continue;
+    out[key] = value;
+  }
+  return out;
+}
 
 export type ScopeInputs = {
   /** The user-level lock file (the user scope's read/export target). */
@@ -97,8 +124,11 @@ export function resolveScope(scopes: Scope[], requestedId: string | null, cwd: s
  * explorer's rank/explain handlers expand a posted def with so the preview
  * matches the resolved baseline. `selection` is the scope's GLOBAL
  * model-selection rule (`selection` + `qualityFloor`), which a role's own
- * `selection`/`qualityFloor` overrides. */
-export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Record<string, RoleDef>; universe: Record<string, UniverseEntry>; features: Record<string, boolean>; selection: ScopeSelection; errors: string[] } {
+ * `selection`/`qualityFloor` overrides. `settings` is the scope's global
+ * settings in the three shapes the Settings panel needs (authored / resolved /
+ * defaults), and `raw` is the merged raw settings map the updater itself reads
+ * (the project lock deep-merged over the user-level lock). */
+export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Record<string, RoleDef>; universe: Record<string, UniverseEntry>; features: Record<string, boolean>; selection: ScopeSelection; settings: ScopeGlobalSettings; raw: Record<string, unknown>; errors: string[] } {
   const raw = scope.kind === "user"
     ? readPluginSettingsMap({ global: scope.lockPath, project: null })
     : readPluginSettingsMap({ global: userLockPath, project: scope.lockPath });
@@ -108,8 +138,38 @@ export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Rec
     universe: roleUniverse(raw, settings.roles),
     features: settings.features,
     selection: { mode: settings.selection, qualityFloor: settings.qualityFloor },
+    settings: {
+      authored: authoredGlobals(raw),
+      resolved: globalSettingsOf(settings),
+      defaults: globalSettingsOf(DEFAULT_SETTINGS),
+    },
+    raw,
     errors,
   };
+}
+
+/** The agent dir a scope's `config.yml`, state and history live in: the
+ * project's `<root>/.omp`, or the user-level agent dir. The same resolution
+ * `runUpdater` performs (`resolveProjectDir() ?? agentDir()`). */
+export function scopeDir(scope: Scope, userAgentDir: string): string {
+  return scope.kind === "project" && scope.root !== undefined ? join(scope.root, ".omp") : userAgentDir;
+}
+
+/** The scope's `config.yml` current selectors (the hysteresis incumbent). A
+ * missing or unparseable config yields an empty map, so every role reads
+ * `no-current` rather than the read throwing. */
+export function readScopeConfig(scope: Scope, userAgentDir: string): { modelRoles: Record<string, string> } {
+  let text: string;
+  try {
+    text = readFileSync(join(scopeDir(scope, userAgentDir), "config.yml"), "utf8");
+  } catch {
+    return { modelRoles: {} };
+  }
+  try {
+    return { modelRoles: parseConfig(text).modelRoles };
+  } catch {
+    return { modelRoles: {} };
+  }
 }
 
 /** The union of every known scope's resolved roles — the roles map the ranking

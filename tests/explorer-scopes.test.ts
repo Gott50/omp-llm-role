@@ -6,11 +6,12 @@ import { test } from "node:test";
 import type { KeyAvailability } from "../src/availability.ts";
 import type { Model, OpenRouterEndpointRecord, RankData, RoleDef } from "../src/engine.ts";
 import { startExplorer, type ExplorerBootOpts } from "../src/explorer/boot.ts";
-import { readScopeRoles, resolveScopes, unionRoles, type Scope } from "../src/explorer/scopes.ts";
+import { readScopeConfig, readScopeRoles, resolveScopes, scopeDir, unionRoles, type Scope } from "../src/explorer/scopes.ts";
 import { isRecord } from "../src/guards.ts";
 import { PROJECT_REGISTRY_FILE } from "../src/project-registry.ts";
+import { DEFAULT_ROLES } from "../src/settings.ts";
 import { USAGE_LEDGER_FILE } from "../src/usage-ledger.ts";
-import { makeCatalog, makeModel } from "./helpers.ts";
+import { makeCatalog, makeModel, runInTempDir } from "./helpers.ts";
 
 const MODELS = [makeModel("premium", 90, 20, 50), makeModel("budget", 60, 0.5, 200)];
 const RANK: RankData = { models: MODELS, fetchedAt: "2026-10-06T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
@@ -64,8 +65,10 @@ async function boot(
     rank: RANK,
     catalog: [],
     availability: NO_AVAILABILITY,
-    // Hermetic: the ledger dir defaults to `agentDir()`, so a booted explorer
-    // would otherwise read the developer's real ledger.
+    // Hermetic: the agent dir and the ledger dir both default to `agentDir()`,
+    // so a booted explorer would otherwise read the developer's real state,
+    // config.yml and ledger. Point both at the temp dir.
+    agentDir: opts.registryDir,
     usageDir: opts.registryDir,
     reload: async () => RANK,
     port: 0,
@@ -496,4 +499,265 @@ test("readScopeRoles defaults the selection to the shipped value mode", () => {
   const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
   const { selection } = readScopeRoles(scope, lockPath);
   assert.deepEqual(selection, { mode: "value", qualityFloor: 0.9 });
+});
+
+// ---------------------------------------------------------------------------
+// The scope payload (spec #109, issue #112): the scope's global settings in
+// three shapes, its merged raw map, the agent dir its config/state/history live
+// in, and its own `config.yml` current selectors.
+// ---------------------------------------------------------------------------
+
+/** A lock file carrying both global keys and roles, in the flat dotted-key
+ * convention the plugin writes. */
+function writeLockWithGlobals(path: string, globals: Record<string, unknown>, roles: Record<string, RoleDef>): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { ...globals, roles } } }, null, 2));
+}
+
+test("scopeDir resolves a project scope to <root>/.omp and the user scope to the agent dir", () => {
+  const user: Scope = { id: "user", label: "user-level", kind: "user", lockPath: "/tmp/x/lock.json", present: true };
+  const project: Scope = { id: "project:/tmp/proj", label: "/tmp/proj", kind: "project", lockPath: "/tmp/proj/.omp/plugins/omp-plugins.lock.json", present: true, root: "/tmp/proj" };
+  assert.equal(scopeDir(user, "/home/u/.omp/agent"), "/home/u/.omp/agent");
+  assert.equal(scopeDir(project, "/home/u/.omp/agent"), join("/tmp/proj", ".omp"));
+});
+
+test("readScopeConfig reads the scope's own config.yml modelRoles", () => {
+  const root = tempDir("explorer-scope-config-");
+  const agentDir = join(root, "agent");
+  const project = join(root, "proj");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "config.yml"), "modelRoles:\n  userrole: budget\n");
+  mkdirSync(join(project, ".omp"), { recursive: true });
+  writeFileSync(join(project, ".omp", "config.yml"), "modelRoles:\n  projrole: premium\n");
+
+  const user: Scope = { id: "user", label: "user-level", kind: "user", lockPath: join(root, "lock.json"), present: true };
+  const projectScope: Scope = { id: `project:${project}`, label: project, kind: "project", lockPath: join(project, ".omp", "plugins", "omp-plugins.lock.json"), present: true, root: project };
+
+  assert.deepEqual(readScopeConfig(user, agentDir), { modelRoles: { userrole: "budget" } });
+  assert.deepEqual(readScopeConfig(projectScope, agentDir), { modelRoles: { projrole: "premium" } });
+});
+
+test("readScopeConfig yields an empty map for a missing or unparseable config", () => {
+  const root = tempDir("explorer-scope-config-bad-");
+  const agentDir = join(root, "agent");
+  mkdirSync(agentDir, { recursive: true });
+  const user: Scope = { id: "user", label: "user-level", kind: "user", lockPath: join(root, "lock.json"), present: true };
+
+  // Missing file: no throw, every role reads `no-current`.
+  assert.deepEqual(readScopeConfig(user, agentDir), { modelRoles: {} });
+
+  // A structural surprise `parseConfig` rejects (an inline flow-style block).
+  writeFileSync(join(agentDir, "config.yml"), "modelRoles: {}\n");
+  assert.deepEqual(readScopeConfig(user, agentDir), { modelRoles: {} });
+});
+
+test("readScopeRoles returns the scope's authored, resolved and default global settings", () => {
+  const root = tempDir("explorer-scope-settings-");
+  const lockPath = join(root, "omp-plugins.lock.json");
+  writeLockWithGlobals(
+    lockPath,
+    { switchMargin: 0.05, "tokenProfile.inputTokens": 1000, "tokenProfile.outputTokens": 200, "features.costCap": true },
+    { userrole: USER_ROLE },
+  );
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { settings, raw, roles, errors } = readScopeRoles(scope, lockPath);
+
+  assert.deepEqual(errors, []);
+  // `authored` is the raw map's global keys verbatim: the flat dotted keys stay
+  // flat, and `roles` is not a global setting.
+  assert.deepEqual(settings.authored, {
+    switchMargin: 0.05,
+    "tokenProfile.inputTokens": 1000,
+    "tokenProfile.outputTokens": 200,
+    "features.costCap": true,
+  });
+  // `resolved` is the effective value (shipped defaults + authored).
+  assert.equal(settings.resolved.switchMargin, 0.05);
+  assert.deepEqual(settings.resolved.tokenProfile, { inputTokens: 1000, outputTokens: 200 });
+  assert.equal(settings.resolved.features.costCap, true);
+  // `defaults` is the shipped set, independent of the lock file.
+  assert.deepEqual(settings.defaults, {
+    switchMargin: 0.02,
+    priceSwitchFraction: 0.5,
+    writeFallbackChains: true,
+    fallbackChainDepth: 2,
+    fallbackQualityFloor: 0.9,
+    selection: "value",
+    qualityFloor: 0.9,
+    activateDefaultOnEmptySession: true,
+    errorReporting: "off",
+    tokenProfile: null,
+    features: {},
+  });
+  // `raw` is the merged map the updater reads, roles included.
+  assert.equal(raw.switchMargin, 0.05);
+  assert.deepEqual(raw.roles, { userrole: USER_ROLE });
+  // The existing fields are unchanged: `roles` is the RESOLVED map (the shipped
+  // roles that are enabled by default, plus the authored role), and the authored
+  // def survives verbatim.
+  const enabledShipped = Object.keys(DEFAULT_ROLES).filter((name) => DEFAULT_ROLES[name].enabled !== false);
+  assert.deepEqual(Object.keys(roles), [...enabledShipped, "userrole"]);
+  assert.equal(roles.userrole.description, USER_ROLE.description);
+});
+
+test("readScopeRoles reports no authored global settings when the lock file has only roles", () => {
+  const root = tempDir("explorer-scope-settings-empty-");
+  const lockPath = join(root, "omp-plugins.lock.json");
+  writeLock(lockPath, { userrole: USER_ROLE });
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { settings } = readScopeRoles(scope, lockPath);
+
+  assert.deepEqual(settings.authored, {});
+  // Nothing authored: the resolved values are the shipped defaults.
+  assert.equal(settings.resolved.switchMargin, 0.02);
+  assert.equal(settings.resolved.selection, "value");
+  assert.equal(settings.resolved.tokenProfile, null);
+});
+
+test("a project scope's raw settings are the project lock merged over the user-level lock", () => {
+  const root = tempDir("explorer-scope-merge-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLockWithGlobals(userLock, { switchMargin: 0.05, "features.costCap": true }, { userrole: USER_ROLE });
+  const project = join(root, "proj");
+  const projectLock = join(project, ".omp", "plugins", "omp-plugins.lock.json");
+  // The project authors its own `switchMargin` (which must win) and a role.
+  writeLockWithGlobals(projectLock, { switchMargin: 0.1 }, { projrole: PROJECT_ROLE });
+
+  const scope: Scope = { id: `project:${project}`, label: project, kind: "project", lockPath: projectLock, present: true, root: project };
+  const { settings, raw } = readScopeRoles(scope, userLock);
+
+  // The project's own key wins; the user-level key survives the merge.
+  assert.equal(raw.switchMargin, 0.1);
+  assert.equal(raw["features.costCap"], true);
+  assert.deepEqual(Object.keys(raw.roles as Record<string, unknown>).sort(), ["projrole", "userrole"]);
+  // `authored` reflects the merge, not the project lock alone.
+  assert.equal(settings.authored.switchMargin, 0.1);
+  assert.equal(settings.authored["features.costCap"], true);
+  assert.equal(settings.resolved.switchMargin, 0.1);
+});
+
+// ---------------------------------------------------------------------------
+// Spec #109 / ticket #113: the preview's scope-side inputs. A project scope
+// must read its OWN config.yml, state and agents dir — never the user-level
+// ones — or the preview would decide against another scope's incumbent.
+// ---------------------------------------------------------------------------
+
+test("the user scope's preview harvests the session project's agent pins", async () => {
+  const root = tempDir("explorer-scope-user-pins-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLock(userLock, { userrole: USER_ROLE });
+  // The session cwd has a project agents dir but no project role config, so the
+  // active scope stays user-level — while the run's `discoverAgentPins()` (no
+  // args) still scans `<cwd>/.omp/agents`. The preview must harvest the same
+  // pins, or its `task.disabledAgents` sync would differ from the run's.
+  const cwd = join(root, "session");
+  mkdirSync(join(cwd, ".omp", "agents"), { recursive: true });
+  writeFileSync(join(cwd, ".omp", "agents", "helper.md"), '---\nname: helper\ndescription: "h"\nmodel: "@designer"\n---\n\nbody\n');
+
+  await runInTempDir(root, async () => {
+    const handle = await boot({ userLock, cwd, registryDir: root });
+    try {
+      const res = await fetch(`${handle.url}/api/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: {}, roles: {} }),
+      });
+      const body: unknown = await res.json();
+      assert.ok(isRecord(body));
+      const preview = body.preview;
+      assert.ok(isRecord(preview));
+      // `designer` ships disabled, so the agent pinning it must be disabled too.
+      assert.ok((preview.agentDisableAdds as string[]).includes("helper"));
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
+test("the user scope's config and state come from the agent dir, not the ledger dir", async () => {
+  const root = tempDir("explorer-scope-agentdir-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLock(userLock, { userrole: USER_ROLE });
+  // Two distinct dirs: the agent dir holds the user scope's config.yml and state,
+  // the ledger dir holds only usage. They coincide by default, so a boot that
+  // conflates them would read the wrong one.
+  const agentDir = join(root, "agent");
+  const ledgerDir = join(root, "ledger");
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(ledgerDir, { recursive: true });
+  writeFileSync(join(agentDir, "llm-role-state.json"), JSON.stringify({ managedRoles: ["userrole", "gone"] }, null, 2));
+  writeFileSync(join(ledgerDir, "llm-role-state.json"), JSON.stringify({ managedRoles: ["ledgerrole"] }, null, 2));
+  writeFileSync(join(agentDir, "config.yml"), "modelRoles:\n  userrole: openrouter/org/premium\n");
+  writeFileSync(join(ledgerDir, "config.yml"), "modelRoles:\n  userrole: openrouter/org/budget\n");
+
+  await runInTempDir(root, async () => {
+    const handle = await boot({ userLock, cwd: join(root, "elsewhere"), registryDir: root }, { agentDir, usageDir: ledgerDir, catalog: makeCatalog(["premium", "budget"]) });
+    try {
+      const res = await fetch(`${handle.url}/api/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: {}, roles: { userrole: USER_ROLE } }),
+      });
+      const body: unknown = await res.json();
+      assert.ok(isRecord(body));
+      const preview = body.preview;
+      assert.ok(isRecord(preview));
+      // The agent dir's state, not the ledger dir's.
+      assert.deepEqual(preview.roleRemovals, ["gone"]);
+      // The agent dir's config.yml supplied the incumbent.
+      const decisions = preview.decisions as Array<Record<string, unknown>>;
+      const decision = decisions.find((d) => d.role === "userrole");
+      assert.ok(decision, "the preview must decide the user role");
+      assert.equal(decision.from, "openrouter/org/premium");
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
+test("a project scope's preview reads the project's state, config.yml and agents dir", async () => {
+  const root = tempDir("explorer-scope-preview-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLock(userLock, { userrole: USER_ROLE });
+  const project = join(root, "proj");
+  writeProjectLock(project, { projrole: PROJECT_ROLE });
+  // The project's own state: `gone` was managed by a previous run and is no
+  // longer a role, so the preview must report it as a removal.
+  mkdirSync(join(project, ".omp"), { recursive: true });
+  writeFileSync(join(project, ".omp", "llm-role-state.json"), JSON.stringify({ managedRoles: ["projrole", "gone"] }, null, 2));
+  // The user-level state must NOT be read for a project scope.
+  writeFileSync(join(root, "llm-role-state.json"), JSON.stringify({ managedRoles: ["userrole"] }, null, 2));
+  // The project's own config.yml carries the hysteresis incumbent.
+  writeFileSync(join(project, ".omp", "config.yml"), "modelRoles:\n  projrole: openrouter/org/premium\n");
+  // A project agent pinning an enabled role: only the project agents dir has it.
+  mkdirSync(join(project, ".omp", "agents"), { recursive: true });
+  writeFileSync(join(project, ".omp", "agents", "helper.md"), '---\nname: helper\ndescription: "h"\nmodel: "@projrole"\n---\n\nbody\n');
+
+  // Hermetic: `discoverAgentPins`'s userDir default is the live agent dir, so
+  // point it at the temp root for the duration of the boot.
+  await runInTempDir(root, async () => {
+    const handle = await boot({ userLock, cwd: project, registryDir: root }, { catalog: makeCatalog(["premium", "budget"]) });
+    try {
+      const res = await fetch(`${handle.url}/api/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: {}, roles: { projrole: PROJECT_ROLE, userrole: USER_ROLE } }),
+      });
+      const body: unknown = await res.json();
+      assert.ok(isRecord(body));
+      const preview = body.preview;
+      assert.ok(isRecord(preview));
+      // The project's state, not the user-level one.
+      assert.deepEqual(preview.roleRemovals, ["gone"]);
+      // The project's config.yml supplied the incumbent.
+      const decisions = preview.decisions as Array<Record<string, unknown>>;
+      const decision = decisions.find((d) => d.role === "projrole");
+      assert.ok(decision, "the preview must decide the project role");
+      assert.equal(decision.from, "openrouter/org/premium");
+      // The project agents dir was scanned: `helper` pins an enabled role.
+      assert.ok((preview.agentDisableRemoves as string[]).includes("helper"));
+    } finally {
+      await handle.close();
+    }
+  });
 });

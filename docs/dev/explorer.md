@@ -3,9 +3,11 @@
 Maintainer view of the interactive ranking UI. The user-facing description
 (what the panels do, how to launch it) is in
 [`../../README.md`](../../README.md); this file is the internals: the HTTP
-surface, the explanation layer, the shared boot path, the export write, and the
-SPA's data flow. All ranking math is the engine's (`src/engine.ts`) — the
-explorer never reimplements `value = q − λ·$/M`.
+surface, the explanation layer, the shared boot path, the settings editor and
+the decision preview, the export write, and the SPA's data flow. All ranking
+math is the engine's (`src/engine.ts`) — the explorer never reimplements
+`value = q − λ·$/M` — and the preview reuses the updater's own decision core
+(`src/selection.ts`), so the decision it shows is the decision the run makes.
 
 ## Module map
 
@@ -15,10 +17,11 @@ explorer never reimplements `value = q − λ·$/M`.
 | `src/explorer/explain.ts` | Pure explanation layer (no I/O): rank rows with baseline deltas, per-model decomposition, inverse-cardinal targets, the keyed-catalog availability overlay, and the display-only per-task price. Exports `rankRows`, `explainModel`, `perTaskPrice`, `inverseCardinal`, `METRIC_META`, `WEIGHTABLE_METRICS`. |
 | `src/explorer/levers.ts` | Pure price-lever readouts (no I/O): the leader-flip threshold and the thinking level's effect on the leader, computed on the pool they are handed. Exports `leaderFlip`, `thinkingLevelEffect`, `LeaderFlip`, `ThinkingLevelRow`. |
 | `src/explorer/pool.ts` | The as-written pool (no I/O): the dataset filtered exactly as the updater filters it before ranking (catalog/tier gate + allowed-providers prune + keyed-catalog prune). Exports `asWrittenPool`, `PoolMode`, `PoolInputs`. |
-| `src/explorer/scopes.ts` | Scope resolution (no HTTP): the user-level scope, the registry's projects, and the session's project; the per-scope read; the dataset union. Exports `Scope`, `ScopeSelection`, `resolveScopes`, `defaultScopeId`, `resolveScope`, `readScopeRoles`, `unionRoles`. |
+| `src/explorer/scopes.ts` | Scope resolution (no HTTP): the user-level scope, the registry's projects, and the session's project; the per-scope read; the dataset union; the scope's `config.yml` read. Exports `Scope`, `ScopeSelection`, `ScopeGlobalSettings`, `resolveScopes`, `defaultScopeId`, `resolveScope`, `readScopeRoles`, `scopeDir`, `readScopeConfig`, `unionRoles`. |
 | `src/explorer/boot.ts` | Shared launcher: bind/port fallback, scope resolution, browser open, close. Exports `startExplorer`, `EXPLORER_DEFAULT_PORT`, `ExplorerHandle`, `ExplorerBootOpts`. |
 | `src/project-registry.ts` | The global project registry (`llm-role-projects.json` in the agent dir): read/register/prune, atomic write. Exports `PROJECT_REGISTRY_FILE`, `readProjectRegistry`, `registerProject`. |
-| `src/role-settings.ts` | The one validated role write path (validate → merge → backup → atomic write). Exports `validateRole`, `mergeExport`, `writeRoleSettings`, `timestamp`. |
+| `src/selection.ts` | The pure decision core the preview shares with the updater (spec #109): the six-arm hysteresis ladder, the chain builder, the `task.disabledAgents` sync, and `previewSelection`. Exports `decide`, `buildChains`, `agentDisablePatch`, `cheaperInsideMargin`, `previewSelection`, and the `Decision`/`DecisionReason`/`Candidate`/`ChainPlan`/`SelectionPreview` types. |
+| `src/role-settings.ts` | The one validated settings write path (validate → merge → backup → atomic write). Exports `validateRole`, `mergeSettings`, `mergeExport`, `writeRoleSettings`, `mergeRemove`, `removeRoleSettings`, `GLOBAL_SETTING_KEYS`, `timestamp`. |
 | `web/app.js` | The SPA: renders and edits role defs, switches scopes, calls the API. No framework, no build step, no external requests. |
 | `src/extension.ts` | `/explore-roles`: in-process `startExplorer` (catalog from the live model registry), closed on `session_shutdown`. |
 
@@ -48,6 +51,18 @@ type ExplorerOpts = {
     defaults: Record<string, RoleDef>;
     availability: KeyAvailability;            // keyed-catalog overlay (re-derived on refresh)
     selection: ScopeSelection;                // the scope's global selection rule (mode + qualityFloor)
+    settings: ScopeGlobalSettings;            // the scope's global settings (authored / resolved / defaults)
+    raw: Record<string, unknown>;             // the scope's merged raw settings map (the preview's base)
+  };
+  // The preview's scope-side inputs, re-read per call: the scope's config.yml
+  // current selectors (the hysteresis incumbent), the plugin state the preview
+  // reads (managed roles, plugin-written chain keys, managed disabled agents),
+  // and the discovered agent pins (a filesystem scan the caller harvests, so the
+  // preview stays pure and the agreement test sees the same pins as the run).
+  getPreviewInputs(scope: Scope): {
+    currentSelectors: Record<string, string>;
+    pluginState: { managedRoles: string[]; pluginWrittenChainKeys: string[]; managedDisabledAgents: string[] };
+    agentPins: AgentPin[];
   };
   refresh(): Promise<void>;                   // re-runs loadRankData({ refresh: true, roles, extraMetrics }) and swaps rank
   // The as-written pool's inputs: the omp catalog, the key's tier, the account's
@@ -84,10 +99,26 @@ Endpoints:
 | `GET /api/bootstrap` | — | `bootstrapPayload(opts, activeScope)` |
 | `POST /api/scope` | `{scope}` | switch the active scope, then the bootstrap payload (404 unknown id, 409 non-present) |
 | `POST /api/pool` | `{mode}` | switch the ranked pool (`"raw"` \| `"as-written"`), then the bootstrap payload (400 on any other mode) |
-| `POST /api/rank` | `{role, def}` | `{eligible, lambda, derivedLambda, selection, rows, errors}` — each row carries the display-only `perTask` and the `excludedByBar` flag |
-| `POST /api/explain` | `{role, def, modelId}` | `explainModel(...)` spread + `leaderFlip` + `thinkingLevels` + `errors` |
-| `POST /api/export` | `{roles}` | `{ok:true, backupPath, roles, lockPath}` or `{ok:false, errors}` |
+| `POST /api/rank` | `{role, def, settings?}` | `{eligible, lambda, derivedLambda, selection, rows, errors}` — each row carries the display-only `perTask` and the `excludedByBar` flag |
+| `POST /api/explain` | `{role, def, modelId, settings?}` | `explainModel(...)` spread + `leaderFlip` + `thinkingLevels` + `errors` |
+| `POST /api/preview` | `{settings?, roles}` | `{preview, errors}` — the `SelectionPreview` the updater would write (read-only, probe-optimistic) |
+| `POST /api/export` | `{roles, settings?}` | `{ok:true, backupPath, roles, lockPath}` or `{ok:false, errors}` |
 | `POST /api/refresh` | — | `await opts.refresh()` (re-ranks and re-derives the availability overlay) then the bootstrap payload |
+
+- `settings` on `/api/rank`, `/api/explain`, `/api/preview` and `/api/export` is
+  the **edited global settings as a flat dotted-key record** (the lock-file
+  convention), carrying only the keys the user has authored. Absent = the
+  scope's committed values (the pre-#109 behaviour). When it is present, the
+  preview/export handler rebuilds the raw map as the scope's `raw` with every
+  `GLOBAL_SETTING_KEYS` entry (and its nested parents — `tokenProfile`,
+  `features`) deleted and the edited keys assigned (and the flat `roles.*` keys
+  dropped, so a cleared pin cannot survive), then calls
+  `resolveSettings({ ...raw, roles: editedRoles })` — the same
+  `applyGlobalSettings` delete-then-write Export performs, so the preview cannot
+  resolve a global Export would not write. `/api/rank` and
+  `/api/explain` derive the global `features.<id>` flags from `settings` when
+  present (`settings[`features.${id}`] === true` for each `FEATURES` row), else
+  from `state.features` — so an edited-but-unexported flag re-ranks the table.
 
 - `bootstrapPayload` ships `roles` (resolved), `defaults` (`DEFAULT_ROLES`),
   `universe` (kind/enabled/locked + effective def per known role), `metrics`
@@ -101,7 +132,10 @@ Endpoints:
   `"as-written"`), `selection` (the scope's global selection rule —
   `{mode, qualityFloor}`; a role's own `selection`/`qualityFloor` overrides it),
   `tokenProfile` (the user-set per-task token profile, or
-  `null`), `lockPath` (the **active scope's** lock file), `scopes` (id, label,
+  `null`), `settings` (the scope's global settings in the three shapes the
+  Settings panel needs — `authored` (the raw lock-file keys), `resolved` (the
+  effective values) and `defaults` (the shipped defaults to reset to)),
+  `lockPath` (the **active scope's** lock file), `scopes` (id, label,
   kind, present per known scope), `activeScope` (the active scope id),
   the active scope's global capability flags and the feature registry (the
   `FEATURES` rows: id, label, description, recommended bundle, buys), so the SPA
@@ -127,20 +161,41 @@ Endpoints:
   keys); the expansion is applied only for the ranking call, never persisted.
 - The **selection surface** (spec #103): `POST /api/rank` returns
   `selection: {mode, pick, anchor, anchorQ, floor, bar}` — the **effective** rule
-  (the posted def's own `selection`/`qualityFloor` wins over the scope's global),
-  the prospective pick's model id, the anchor and its `q` (the highest-`q` model
-  in either mode — the bar's anchor in `"cheapest"` mode, the max-`q` model in
-  `"value"` mode, where the pick is the value leader), the floor value, and the
-  threshold `q` (`bar` is `null` in `"value"` mode, which has no bar).
-  Each row carries `excludedByBar` (its `q` is under the bar; always `false` in
-  `"value"` mode). The bar is computed with the engine's own `barSelection` over
-  the same ranking the rows show, so the panel and the updater cannot drift.
+  (the posted def's own `selection`/`qualityFloor` wins over the scope's
+  **committed** global), the prospective pick's model id, the anchor and its `q`
+  (the highest-`q` model in either mode — the bar's anchor in `"cheapest"` mode,
+  the max-`q` model in `"value"` mode, where the pick is the value leader), the
+  floor value, and the threshold `q` (`bar` is `null` in `"value"` mode, which
+  has no bar). Each row carries `excludedByBar` (its `q` is under the bar; always
+  `false` in `"value"` mode). The bar is computed with the engine's own
+  `barSelection` over the same ranking the rows show, so the panel and the
+  updater cannot drift.
+  **Deliberately narrow (spec #109):** the edited `settings` record re-ranks the
+  table's `features.<id>` expansion only — it does not move this block. So
+  editing the *global* `selection`/`qualityFloor` in the Settings panel moves the
+  **preview's** bar and pick but not the table's; the table shows the ranking on
+  the pool the toggle selects, the preview shows the decision on the updater's
+  candidate set, and the two answer different questions (the spec's Further
+  Notes). A role's own `selection`/`qualityFloor` moves the table's block.
 - `handleExport` validates every dirty role first — `validateRole` plus a
   **provider-pin check**: a `providerPin` that matches no route in the loaded
   dataset is rejected (`role "<name>": provider pin "<slug>" matches no route in
   the loaded dataset`) before any write, so an exported role cannot carry an
   unroutable pin. It then calls `writeRoleSettings(activeScope.lockPath,
-  body.roles)` and returns its result verbatim plus the written `lockPath`.
+  body.roles, body.settings === undefined ? undefined : { settings: body.settings })`
+  — both halves in one validated, backed-up, atomic write; an absent `settings`
+  leaves the global half of the lock file untouched (the pre-#109 behaviour) —
+  and returns its result verbatim plus the written `lockPath`.
+- `handlePreview` (spec #109) resolves the edited settings and defs into a raw
+  map (`previewRaw`), calls `previewSelection` with the scope's own inputs
+  (`getPreviewInputs`), and returns `{preview, errors}`. Its dataset is the
+  updater's own pre-walk set **regardless of the table's pool toggle**: the raw
+  fetch with the allowed-providers prune (`previewRank`), never `poolRank` (which
+  respects the toggle) and never `asWrittenPool` (which would pre-apply the keyed
+  prune the candidate set must apply itself, so `keyBlockedCount` and the "no
+  usable candidate" skip stay meaningful). The catalog/tier gate is applied
+  inside `previewSelection` via `eligible`. The handler is **read-only**: it
+  never writes `config.yml` and never writes the lock file.
 - Unknown `/api/*` → 404; wrong method → 405; non-API non-GET → 405.
 - `readBody` caps at `MAX_BODY = 1 MiB` (413); `readJson` → 400 on invalid JSON.
 - `serveStatic` resolves against `webDir` and rejects traversal (`full` must be
@@ -255,9 +310,20 @@ launcher `/explore-roles` uses.
   user-level lock for a project scope — the exact read the updater performs, so
   the explorer and the plugin agree. `resolveSettings` → `settings.roles` (the
   resolved set = what the plugin does today); `roleUniverse(raw, roles)` adds the
-  roles it knows but does not rank (shipped opt-ins, lock-file-only roles).
+  roles it knows but does not rank (shipped opt-ins, lock-file-only roles). It
+  also returns the scope's global settings in the three shapes the Settings panel
+  needs (`settings.authored` = the raw lock-file keys, `settings.resolved` =
+  `globalSettingsOf(settings)`, `settings.defaults` = the shipped defaults) and
+  the merged `raw` map the preview rebuilds its edited map from.
   `getState(scope)` re-runs this read on **every** request, so a page reload
   after Export reflects the write instead of the state at boot.
+- **Scope dir and config.** `scopeDir(scope, userAgentDir)` is the agent dir a
+  scope's `config.yml`, state and history live in — the project's `<root>/.omp`,
+  or the user-level agent dir (the same resolution `runUpdater` performs).
+  `readScopeConfig(scope, userAgentDir)` reads that `config.yml`'s `modelRoles`
+  (the hysteresis incumbent the preview needs); a missing or unparseable config
+  yields an empty map, so every role reads `no-current` rather than the read
+  throwing.
 - **Dataset union.** The host loads the ranking data through `unionRoles(scopes,
   userLockPath)` — the union of every known scope's resolved roles — plus the
   shipped keys (`loadRankData({ roles, extraMetrics: Object.keys(KNOWN_METRICS) })`),
@@ -303,27 +369,97 @@ launcher `/explore-roles` uses.
 
 ## Export path (`src/role-settings.ts`)
 
-The one validated role write path, shared by the explorer's Export,
+The one validated settings write path, shared by the explorer's Export,
 `src/cli/create-role.ts` and `/create-agent`.
 
 - `validateRole(name, def)` → `resolveSettings({ roles: { [name]: def } }).errors`
   (`resolveSettings` clones its input, so it is safe per call).
-- `mergeExport(existing, dirty)` → `{lock}` or `{error}`. Preserves `plugins` and
-  every sibling settings key. Writes each dirty role as **flat dotted keys**
+- `GLOBAL_SETTING_KEYS` — every global (non-`roles.`) key of the plugin's
+  settings schema, derived from `deriveSettingsSchema()`, so a new global setting
+  is covered automatically. It is the delete-then-write key set for the global
+  half of an Export.
+- `mergeSettings(existing, { roles, settings })` → `{lock}` or `{error}`.
+  Preserves `plugins`, the `config` escape hatch and every sibling settings key.
+  Writes each dirty role as **flat dotted keys**
   (`roles.<name>.weights.<metric>`, `.description`, `.enabled`, `.locked`,
   `.required`, `.thinking`, `.providerPin`, `.cacheHitRate`, `.lambda`,
   `.filters.image`) because omp's
   `/settings` Plugins tab shallow-merges the settings object and does not
   flatten nested objects — a nested `roles` object would render as schema
   defaults. A pre-existing nested entry for a dirty role is deleted, so an older
-  lock file normalizes on the next write.
-- `writeRoleSettings(lockPath, dirty, { dryRun })` → `{ok, backupPath, roles}` or
-  `{ok:false, errors}`. Validates every dirty role first (never writes on a
-  validation error), reads the lock file (missing → `{}`; invalid JSON →
-  refuse), merges, and — unless `dryRun` — writes a `.bak-<timestamp>` sibling
-  (`timestamp()` = local `YYYYMMDD-HHMMSS`) then `writeConfigAtomic` with the
-  pre-read mtime. A concurrent change returns `conflict` ("lock file changed
-  since load — reload and retry").
+  lock file normalizes on the next write. The `settings` half writes the global
+  keys as flat dotted keys too (`switchMargin`, `priceSwitchFraction`,
+  `writeFallbackChains`, `fallbackChainDepth`, `fallbackQualityFloor`,
+  `selection`, `qualityFloor`, `activateDefaultOnEmptySession`,
+  `errorReporting`, `tokenProfile.inputTokens`, `tokenProfile.outputTokens`,
+  `features.<id>`) with the same "make this match" semantics: every
+  `GLOBAL_SETTING_KEYS` entry — and the nested `tokenProfile` / `features`
+  parents — is deleted first, then the edited keys are assigned, so a cleared
+  setting falls back to the shipped default rather than leaving a stale value.
+  An absent `settings` leaves the global half untouched (the pre-#109
+  behaviour).
+- `mergeExport(existing, dirty)` is a thin wrapper over
+  `mergeSettings(existing, { roles: dirty })` (existing tests import it).
+- `writeRoleSettings(lockPath, dirty, { dryRun, settings })` → `{ok, backupPath,
+  roles}` or `{ok:false, errors}`. Validates first — with `opts.settings` present
+  it runs `resolveSettings({ ...settings, roles: dirty }).errors`, so an
+  out-of-range global setting aborts with the offending key and no write — reads
+  the lock file (missing → `{}`; invalid JSON → refuse), merges, and — unless
+  `dryRun` — writes a `.bak-<timestamp>` sibling (`timestamp()` = local
+  `YYYYMMDD-HHMMSS`) then `writeConfigAtomic` with the pre-read mtime. A
+  concurrent change returns `conflict` ("lock file changed since load — reload
+  and retry").
+
+## The Settings panel and the Preview panel (spec #109)
+
+The explorer is a settings editor, not only a role editor, and it previews the
+**decision** the updater would make, not only the ranking.
+
+- **The Settings panel** renders one control per global setting (number /
+  boolean / enum / the two `tokenProfile` fields) plus a toggle per capability
+  flag, each with the effective value, the shipped default, a dirty marker and a
+  reset. It is reachable with no role selected. `activateDefaultOnEmptySession`
+  and `errorReporting` are labelled **no visual impact** — they change a session
+  behaviour and a side channel, not the ranking or the preview. The panel renders
+  the scope's **authored** values (the raw lock-file keys) and shows the
+  **effective** ones; Export writes the authored values only, never the
+  `expandFeatures` output.
+- **The per-role editor** renders the five endpoint filters (`filters.tools`,
+  `filters.minContextTokens`, `filters.minOutputTokens`,
+  `filters.maxPriceUsdPerM`, `filters.preferredMinThroughput`) as first-class
+  fields, and `bundleKnobs` **skips** the four keys a capability bundle also
+  recommends, so one def key has exactly one input. `cacheHitRate` and
+  `preferOwnProvider` stay bundle-only.
+- **The Preview panel** lists every managed role's decision (from → to, reason,
+  value / bestValue), its chain, the config side effects (`roleRemovals`, the
+  `task.disabledAgents` adds/removes), the per-role `endpointBlocked` /
+  `pinBlocked` / `keyBlockedCount` counts, and the `skipped` roles with their
+  reasons. It is labelled **probe-optimistic**.
+- **The preview's candidate set** is the updater's pre-walk set:
+  `computeRankings(rank.models, { [role]: def })[role]` → `resolveVariant(...)`
+  (the catalog/tier gate), on a dataset whose `m.routes` already carry the
+  allowed-providers prune, **minus** the key-blocked
+  (`availability.active && availability.blocked.has(ranked.model.id)`). The
+  preview's dataset (`previewRank`) pre-applies only the allowed-providers
+  prune, so the keyed prune inside `previewSelection` drops a candidate the
+  dataset keeps — the pick can differ from the dataset's leader and
+  `keyBlockedCount` stays meaningful (the issue #104 case).
+- **The probe-optimistic boundary.** `previewSelection` never issues a request:
+  every candidate in the pre-walk set is treated as clean, so the walk's window
+  is the prefix of the walk order its stop condition admits (`probeWindow` — the
+  incumbent first, then rank order, stopping at `1 + fallbackChainDepth` clean
+  candidates and capped at `PROBE_BUDGET`), no candidate is ever probe-blocked,
+  and the auto-pin takes the route leader. The written pin can therefore differ
+  (a later route, or none) and a probe-blocked candidate can leave the pool —
+  both are labelled, not simulated. The agreement test
+  (`tests/selection-preview.test.ts`) pins the probe-clean case against a real
+  dry run.
+- **`skipped` reasons** (one entry per role the preview could not decide): a
+  locked role; a role whose `providerPin` matches no route; a role with no
+  eligible candidate; a role with no usable (non-key-blocked) candidate.
+- **Read-only.** The preview never writes `config.yml` and never writes the lock
+  file; the updater still owns `config.yml`, and Export writes the lock file
+  only.
 
 ## SPA data flow (`web/app.js`)
 
@@ -336,7 +472,9 @@ a scraped third-party site, so the DOM is built with
   `state` (`scopes`, `activeScope`, `poolMode`, `tokenProfile`, `universe`,
   `effective` = each entry's `def`,
   `defs` = a structuredClone of it, `defaults`, `metrics`, `metricMeta`,
-  `focusAssessments`, `levels`, `thinkingFactors`, `lockPath`, `availability`),
+  `focusAssessments`, `levels`, `thinkingFactors`, `lockPath`, `availability`,
+  and the settings triple `settingsAuthored` / `settingsResolved` /
+  `settingsDefaults` plus the working copy `settingsEdited`),
   renders the header/roles/table, and selects the previously selected role when
   the new scope has it, else the first role. `boot()` then wires the
   filter/topn/hide-key-blocked/export/copy/download controls.
@@ -361,6 +499,24 @@ a scraped third-party site, so the DOM is built with
   (key-blocked models dropped — switch to `raw` to see them and their verdicts),
   and it is **not** the written selector (hysteresis can keep a different model;
   Export always writes the authored role).
+- **Settings panel**: `renderSettings()` renders one row per key of
+  `state.settingsDefaults` (excluding `features`) — `tokenProfile` as two number
+  fields, `selection` and `errorReporting` as enum pickers, the rest number or
+  boolean by their default's type — plus one toggle per capability flag
+  (`features.<id>`). Each row shows the effective value (authored, else the
+  shipped default), the shipped default, an `authored`/`default` badge, a dirty
+  marker and a reset; `activateDefaultOnEmptySession` and `errorReporting` carry
+  a **no visual impact** note. `setGlobal(key, value)` deletes a key whose value
+  equals the shipped default (or an empty field), so Export never accumulates a
+  redundant key. The panel is reachable with no role selected and is rebuilt per
+  scope on a scope switch. `settingsErrors()` mirrors the server's validation
+  (the `GLOBAL_RANGES` bounds, and the `tokenProfile` pair — a lone half is an
+  error) so the error shows as you type.
+- **Endpoint filters**: the per-role editor renders the five endpoint filters
+  (`ENDPOINT_FILTERS`) as first-class fields, and `bundleKnobs` skips the four
+  keys a capability bundle also recommends (`BUNDLE_SKIPPED_KEYS`), so one def
+  key has exactly one input; `cacheHitRate` and `preferOwnProvider` stay
+  bundle-only.
 - **Scope switcher**: the header renders a `#scope` `<select>` from
   `state.scopes` (the user-level scope plus every known project); a scope whose
   lock file is gone is `disabled` with a reason `title`. Changing the selection
@@ -389,12 +545,21 @@ a scraped third-party site, so the DOM is built with
   baseline), so a role whose only change is a flag exports just
   `roles.<name>.features.<id>`.
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
-  `recompute()`. `recompute()` → `POST /api/rank {role, def}` → `state.rows`,
-  `lambda`, `derivedLambda`, `selection`, `errors`; re-renders the table and
-  readouts, and reloads the explain panel if the selected model is still present.
-  The table gains a **`$/task`** column (`r.perTask`, rendered `—` when `null`),
-  beside the `$/M` column. Editor changes call `scheduleRecompute()` (120 ms
-  debounce).
+  `recompute()`. `recompute()` → `POST /api/rank {role, def, settings:
+  state.settingsEdited}` → `state.rows`, `lambda`, `derivedLambda`, `selection`,
+  `errors`; re-renders the table and readouts, and reloads the explain panel if
+  the selected model is still present. The table gains a **`$/task`** column
+  (`r.perTask`, rendered `—` when `null`), beside the `$/M` column. Editor
+  changes call `scheduleRecompute()` (120 ms debounce).
+- **Preview panel** (spec #109): `runPreview()` → `POST /api/preview {settings:
+  state.settingsEdited, roles: state.defs}` → `state.preview` +
+  `state.previewErrors`; `renderPreview()` lists the decisions (from → to,
+  reason, value / bestValue), the chain, the config side effects, the per-role
+  `endpointBlocked` / `pinBlocked` / `keyBlockedCount` counts, and the `skipped`
+  roles, under a **probe-optimistic** label. Any edit re-runs it through
+  `schedulePreview()` (150 ms debounce, like `scheduleRecompute`), so the panel
+  follows the edited settings and defs without applying them. The preview is
+  read-only: it never writes `config.yml` or the lock file.
 - **Selection readout** (spec #103): `recompute()` stores the rank payload's
   `selection` in `state.selection`; the table marks the **prospective pick** row
   (`pick`) and flags each row the bar excluded (`excludedByBar` → `excluded`). A
@@ -405,7 +570,8 @@ a scraped third-party site, so the DOM is built with
   selector: the plugin's hysteresis can still keep a different model, and Export
   always writes the authored role. Both the bar and the excluded list are absent
   in `"value"` mode, which has no bar.
-- **Explain**: `selectModel(id)` → `POST /api/explain {role, def, modelId}` →
+- **Explain**: `selectModel(id)` → `POST /api/explain {role, def, modelId,
+  settings: state.settingsEdited}` →
   `renderExplain()` (composition table, cost line, **per-task price** line, "why
   not higher", dominators, the **Price levers** section, and the availability
   line). The cost line appends `· best route`
@@ -446,10 +612,12 @@ a scraped third-party site, so the DOM is built with
   and the tooltip/hint names OpenRouter → Settings → **"Filter the model catalog
   for API keys"** — the explorer never guesses.
 - **Dirty tracking**: `dirtyRoles()` compares `JSON.stringify(defs[role])` to
-  `effective[role]`; only dirty roles are sent to `POST /api/export`. On success
-  the client updates `effective` for the written roles and the status names the
-  written lock file. The state is rebuilt from the payload on a scope switch, so
-  dirty tracking is per scope.
+  `effective[role]`, and `settingsDirty()` compares `settingsEdited` to
+  `settingsAuthored`; Export is enabled when either half is dirty and posts
+  `{roles, settings}`. On success the client updates `effective` for the written
+  roles, re-derives the committed globals (`resolvedFromFlat`), and the status
+  names the written lock file. The state is rebuilt from the payload on a scope
+  switch, so dirty tracking is per scope.
 - **Deep-merge parking**: `dropWeight(metric)` parks an inherited metric (one
   the shipped default weights) at `EPSILON = 0.001` instead of deleting the key
   — the plugin deep-merges over `DEFAULT_ROLES`, so the default's weight would

@@ -14,13 +14,15 @@
 import { execFile } from "node:child_process";
 import type { Server } from "node:http";
 import { join } from "node:path";
+import { projectAgentsDir } from "../agent-file.ts";
+import { discoverAgentPins } from "../agent-pins.ts";
 import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
 import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH } from "../settings.ts";
-import { agentDir } from "../state.ts";
+import { agentDir, loadState } from "../state.ts";
 import { readUsageRows, type TokenProfile } from "../usage-ledger.ts";
 import type { PoolInputs } from "./pool.ts";
-import { readScopeRoles, resolveScope, resolveScopes, type Scope, type ScopeInputs } from "./scopes.ts";
+import { readScopeConfig, readScopeRoles, resolveScope, resolveScopes, scopeDir, type Scope, type ScopeInputs } from "./scopes.ts";
 import { createExplorerServer } from "./server.ts";
 
 /** Preferred loopback port; a busy port falls back to an OS-assigned one. */
@@ -69,9 +71,16 @@ export type ExplorerBootOpts = {
   /** The user-set token profile the per-task price falls back to (the
    *  `tokenProfile` setting); absent = unset. */
   tokenProfile?: TokenProfile | null;
+  /**
+   * The user-level agent dir holding the user scope's `config.yml`, state and
+   * history (default: `agentDir()`). A project scope reads its own `<root>/.omp`
+   * instead. Distinct from `usageDir`: the two coincide only because both
+   * default to `agentDir()`.
+   */
+  agentDir?: string;
   /** Dir holding the user-level usage ledger the per-task price resolves its
-   *  profile from (default: `agentDir()`, beside the plugin's other state). A
-   *  project scope reads its own `<root>/.omp` ledger instead. */
+   * profile from (default: `agentDir()`, beside the plugin's other state). A
+   * project scope reads its own `<root>/.omp` ledger instead. */
   usageDir?: string;
   port?: number;
   /** Open the URL in the default browser (macOS only). */
@@ -122,6 +131,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   // facts. `null` = no pruning.
   let allowed = opts.allowedProviders ?? null;
   const tier = opts.tier ?? "billed";
+  const userAgentDir = opts.agentDir ?? agentDir();
   const usageDir = opts.usageDir ?? agentDir();
   enrichThinkingLevels(rank.models, opts.catalog);
 
@@ -139,9 +149,29 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     listScopes,
     resolveScope: (requestedId) => resolveScope(listScopes(), requestedId, cwd),
     getState: (scope) => {
-      const { roles, universe, features, selection, errors } = readScopeRoles(scope, userLockPath);
+      const { roles, universe, features, selection, settings, raw, errors } = readScopeRoles(scope, userLockPath);
       for (const e of errors) onLog(`settings warning: ${e}`);
-      return { rank, roles, universe, defaults: DEFAULT_ROLES, availability, features, selection };
+      return { rank, roles, universe, defaults: DEFAULT_ROLES, availability, features, selection, settings, raw };
+    },
+    // The preview's scope-side inputs, re-read per call: the scope's own
+    // `config.yml` (the hysteresis incumbent), its plugin state (the managed
+    // roles and the chain keys the plugin owns), and the agent pins the
+    // `task.disabledAgents` sync reads. A project scope reads its own
+    // `<root>/.omp` state and its own `.omp/agents`; the user scope reads the
+    // user-level agent dir and the SESSION cwd's project agents dir — the same
+    // pins the run's `discoverAgentPins()` (no args) harvests, so the preview's
+    // agent-disable sync cannot differ from the run's.
+    getPreviewInputs: (scope) => {
+      const state = loadState(scopeDir(scope, userAgentDir));
+      return {
+        currentSelectors: readScopeConfig(scope, userAgentDir).modelRoles,
+        pluginState: {
+          managedRoles: state.managedRoles,
+          pluginWrittenChainKeys: state.pluginWrittenChainKeys,
+          managedDisabledAgents: state.managedDisabledAgents,
+        },
+        agentPins: discoverAgentPins({ projectDir: scope.kind === "project" && scope.root !== undefined ? projectAgentsDir(scope.root) : projectAgentsDir(cwd) }),
+      };
     },
     refresh: async () => {
       rank = await opts.reload(true);

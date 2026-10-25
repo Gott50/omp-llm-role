@@ -93,8 +93,8 @@ that region as an opt-in rule (per-role overrides `roles.<role>.selection` /
   mode** (the same declared-but-inert convention the `features.*` flags ship
   with).
 
-In `"cheapest"` mode the per-role selection step (`src/updater.ts`) replaces the
-value leader with:
+In `"cheapest"` mode the per-role selection step (`decide` in
+`src/selection.ts`, called by `src/updater.ts`) replaces the value leader with:
 
 - the **anchor** — the highest-`q` candidate in the role's usable pool (a
   quality statement, not a price one, so the bar reads the same on every role's

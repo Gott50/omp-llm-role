@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FEATURES, expandFeatures } from "../src/features.ts";
-import { DEFAULT_ROLES, DEFAULT_SETTINGS, isKnownMetric, resolveSettings, roleUniverse } from "../src/settings.ts";
+import { DEFAULT_ROLES, DEFAULT_SETTINGS, deriveSettingsSchema, globalSettingsOf, isKnownMetric, resolveSettings, roleUniverse } from "../src/settings.ts";
 
 test("opt-in roles: designer ships disabled and is dropped unless enabled", () => {
   const { settings, errors } = resolveSettings({});
@@ -280,4 +280,30 @@ test("tokenProfile rejects a malformed profile with a named error", () => {
       `expected a tokenProfile.inputTokens error for ${JSON.stringify(bad)}, got ${JSON.stringify(errors)}`,
     );
   }
+});
+test("globalSettingsOf projects exactly the global keys (no roles)", () => {
+  const { settings, errors } = resolveSettings({
+    switchMargin: 0.3,
+    "features.costCap": true,
+    "tokenProfile.inputTokens": 100,
+    "tokenProfile.outputTokens": 200,
+  });
+  assert.deepEqual(errors, []);
+  const global = globalSettingsOf(settings);
+
+  // The projection's keys are exactly the top-level segments of the schema's
+  // non-`roles.` keys — no `roles`, nothing missing.
+  const schemaGlobal = Object.keys(deriveSettingsSchema()).filter((key) => !key.startsWith("roles."));
+  const expected = [...new Set(schemaGlobal.map((key) => key.split(".")[0]))].sort();
+  assert.deepEqual(Object.keys(global).sort(), expected);
+
+  assert.equal(global.switchMargin, 0.3);
+  assert.equal(global.selection, DEFAULT_SETTINGS.selection);
+  assert.deepEqual(global.features, { costCap: true });
+  assert.deepEqual(global.tokenProfile, { inputTokens: 100, outputTokens: 200 });
+  assert.equal("roles" in global, false);
+
+  // The two maps are copies: mutating the projection cannot reach the resolved settings.
+  global.features.costCap = false;
+  assert.equal(settings.features.costCap, true);
 });

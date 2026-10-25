@@ -218,6 +218,26 @@ export function providerAllowed(allowed: ReadonlySet<string>, slug: string): boo
   return false;
 }
 
+/**
+ * Prune every model's route pool to the allowed providers — the ONE
+ * implementation of the whitelist prune the updater, the as-written pool and the
+ * explorer's preview all apply, so the three cannot drift. A null whitelist (no
+ * whitelist set / harvest failed) leaves the pools untouched. Returns the pruned
+ * models and the number of routes dropped (the updater's notify line).
+ */
+export function pruneRoutesToAllowed(models: readonly Model[], allowed: ReadonlySet<string> | null): { models: Model[]; pruned: number } {
+  if (allowed === null) return { models: [...models], pruned: 0 };
+  let pruned = 0;
+  const out = models.map((m) => {
+    const routes = m.routes;
+    if (routes === undefined) return m;
+    const kept = routes.filter((r) => providerAllowed(allowed, r.providerSlug));
+    pruned += routes.length - kept.length;
+    return { ...m, routes: kept };
+  });
+  return { models: out, pruned };
+}
+
 // ---------------------------------------------------------------------------
 // Keyed-catalog availability
 // ---------------------------------------------------------------------------

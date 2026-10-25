@@ -12,13 +12,15 @@
  *                             new bootstrap payload
  *   POST /api/pool         -> { mode } -> switch the ranked pool (raw vs
  *                             as-written), return the new bootstrap payload
- *   POST /api/rank         -> { role, def } -> rows with baseline deltas, a
- *                             per-row `key` badge (usable/blocked/unknown), and
- *                             the display-only per-task price
- *   POST /api/explain      -> { role, def, modelId } -> full decomposition plus
- *                             the two price-lever readouts
- *   POST /api/export       -> { roles } -> validated, backed-up write of the
- *                             active scope's lock file
+ *   POST /api/rank         -> { role, def, settings? } -> rows with baseline
+ *                             deltas, a per-row `key` badge (usable/blocked/
+ *                             unknown), and the display-only per-task price
+ *   POST /api/explain      -> { role, def, modelId, settings? } -> full
+ *                             decomposition plus the two price-lever readouts
+ *   POST /api/preview      -> { settings, roles } -> the SelectionPreview the
+ *                             updater would write (read-only, probe-optimistic)
+ *   POST /api/export       -> { roles, settings? } -> validated, backed-up write
+ *                             of the active scope's lock file
  *   POST /api/refresh      -> refetch the dataset, return the bootstrap payload
  *
  * Bound to loopback by the caller; no auth. Every handler is
@@ -28,18 +30,20 @@
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
-import type { KeyAvailability } from "../availability.ts";
+import type { AgentPin } from "../agent-pins.ts";
+import { filterCatalog, pruneRoutesToAllowed, type KeyAvailability } from "../availability.ts";
 import { loadDeclaredSources } from "../benchmark-sources.ts";
 import { barSelection, pinnedRoute, SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { expandFeatures, FEATURES } from "../features.ts";
 import { isRecord } from "../guards.ts";
-import { validateRole, writeRoleSettings } from "../role-settings.ts";
-import { KNOWN_METRICS, type UniverseEntry } from "../settings.ts";
+import { applyGlobalSettings, validateRole, writeRoleSettings } from "../role-settings.ts";
+import { previewSelection } from "../selection.ts";
+import { KNOWN_METRICS, resolveSettings, type UniverseEntry } from "../settings.ts";
 import { resolveTokenProfile, type TokenProfile, type UsageRow } from "../usage-ledger.ts";
 import { explainModel, focusAssessments, metricMetaFor, rankRows, weightableMetrics } from "./explain.ts";
 import { leaderFlip, thinkingLevelEffect } from "./levers.ts";
 import { asWrittenPool, type PoolInputs, type PoolMode } from "./pool.ts";
-import type { Scope, ScopeSelection } from "./scopes.ts";
+import type { Scope, ScopeGlobalSettings, ScopeSelection } from "./scopes.ts";
 
 export type ExplorerOpts = {
   webDir: string;
@@ -70,6 +74,23 @@ export type ExplorerOpts = {
     /** The scope's GLOBAL model-selection rule (`selection` + `qualityFloor`);
      *  a posted def's own `selection`/`qualityFloor` overrides it. */
     selection: ScopeSelection;
+    /** The scope's global settings in the three shapes the Settings panel needs
+     *  (authored / resolved / defaults). */
+    settings: ScopeGlobalSettings;
+    /** The scope's merged raw settings map — the updater's own read, and the
+     *  base the preview rebuilds its edited map from. */
+    raw: Record<string, unknown>;
+  };
+  /**
+   * The preview's scope-side inputs, re-read per call: the scope's own
+   * `config.yml` current selectors (the hysteresis incumbent), its plugin state
+   * (the managed roles and the chain keys the plugin owns), and the discovered
+   * agent pins the `task.disabledAgents` sync reads.
+   */
+  getPreviewInputs(scope: Scope): {
+    currentSelectors: Record<string, string>;
+    pluginState: { managedRoles: string[]; pluginWrittenChainKeys: string[]; managedDisabledAgents: string[] };
+    agentPins: AgentPin[];
   };
   /** Re-runs loadRankData({ refresh: true }) and swaps the snapshot. */
   refresh(): Promise<void>;
@@ -197,6 +218,46 @@ function poolRank(opts: ExplorerOpts, session: ExplorerSession, rank: RankData):
   return session.poolMode === "as-written" ? asWrittenPool(rank, opts.getPoolInputs()) : rank;
 }
 
+/** The global `features.<id>` flags an edited settings record carries: a flag is
+ * on only when the record says `true` (the lock-file convention). An absent
+ * record means the caller posted no edit, so the scope's committed flags apply. */
+function editedFeatures(settings: Record<string, unknown> | undefined, committed: Record<string, boolean>): Record<string, boolean> {
+  if (settings === undefined) return committed;
+  const out: Record<string, boolean> = {};
+  for (const feature of FEATURES) out[feature.id] = settings[`features.${feature.id}`] === true;
+  return out;
+}
+
+/** The raw settings map a preview resolves: the scope's own map with every
+ * global key replaced by the edited set and `roles` replaced by the edited defs,
+ * so `roleUniverse` sees the edited `enabled` flags. The global half is the SAME
+ * delete-then-write Export performs (`applyGlobalSettings`), so the preview
+ * cannot resolve a global Export would not write. An ABSENT edited set means the
+ * caller posted no edit, so the scope's committed globals stay in place (the
+ * pre-#109 behaviour, and the contract `/api/rank`/`/api/explain`/`/api/export`
+ * honour). The flat `roles.<name>.*` keys the lock file carries are dropped too —
+ * otherwise a stale authored value would survive for any path the edited def
+ * does not cover. */
+function previewRaw(scopeRaw: Record<string, unknown>, editedSettings: Record<string, unknown> | undefined, editedRoles: Record<string, RoleDef>): Record<string, unknown> {
+  const raw: Record<string, unknown> = { ...scopeRaw };
+  if (editedSettings !== undefined) applyGlobalSettings(raw, editedSettings);
+  for (const key of Object.keys(raw)) if (key === "roles" || key.startsWith("roles.")) delete raw[key];
+  raw.roles = editedRoles;
+  return raw;
+}
+
+/** The dataset the preview ranks: the raw fetch with the allowed-providers
+ * whitelist pruned from each model's routes — the updater's own pre-walk dataset
+ * (`pruneRoutesToAllowed`, `src/updater.ts:310-316`). The catalog/tier gate and
+ * the keyed-catalog prune are applied INSIDE `previewSelection` (via `eligible`
+ * and `availability`), so they must not be pre-applied here: pre-applying the
+ * keyed prune would make `keyBlockedCount` always 0 and the "no usable
+ * candidate" skip unreachable, and pre-applying the gate would undercount
+ * `endpointBlocked`/`pinBlocked` (both iterate `rank.models`). */
+function previewRank(rank: RankData, allowed: ReadonlySet<string> | null): RankData {
+  return { ...rank, models: pruneRoutesToAllowed(rank.models, allowed).models };
+}
+
 function bootstrapPayload(opts: ExplorerOpts, session: ExplorerSession, scope: Scope): object {
   const state = opts.getState(scope);
   // Every count and assessment below describes the pool the user is looking at,
@@ -222,6 +283,10 @@ function bootstrapPayload(opts: ExplorerOpts, session: ExplorerSession, scope: S
     // The scope's global capability flags + the registry, so the SPA renders the
     // Features panel and the recommended bundles without duplicating them.
     features: state.features ?? {},
+    // The scope's global settings in the three shapes the Settings panel needs:
+    // what the lock file authors, what that resolves to, and the shipped
+    // defaults to reset to.
+    settings: state.settings,
     featureRegistry: FEATURES.map((f) => ({ id: f.id, label: f.label, description: f.description, buys: f.buys, recommended: f.recommended })),
     // The scope's global model-selection rule; a role's own `selection`/
     // `qualityFloor` overrides it, and the rank payload reports the effective one.
@@ -279,13 +344,17 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   }
   const role = body.role;
   const authored = body.def as unknown as RoleDef;
+  const edited = body.settings;
+  if (edited !== undefined && !isRecord(edited)) throw new HttpError(400, "expected { role: string, def: object, settings?: object }");
   const scope = activeScope(opts, session);
   const state = opts.getState(scope);
   const rank = poolRank(opts, session, state.rank);
   // The posted def is AUTHORED (flags + explicit keys); expand it with the
   // scope's global flags so the preview matches the resolved baseline
-  // (`state.roles[role]`) — otherwise every row's Δ would be a lie.
-  const def = expandFeatures(authored, state.features ?? {});
+  // (`state.roles[role]`) — otherwise every row's Δ would be a lie. An edited
+  // global-flags record re-expands with the edited `features.<id>` set, so the
+  // table re-ranks before the write lands.
+  const def = expandFeatures(authored, editedFeatures(edited, state.features ?? {}));
   // Enabled roles baseline against their resolved def; a disabled or lock-file-only
   // role against its effective def (shipped defaults merged with its overrides) so
   // selecting it still shows deltas, not an empty baseline.
@@ -330,12 +399,15 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
     throw new HttpError(400, "expected { role: string, def: object, modelId: string }");
   }
   const authored = body.def as unknown as RoleDef;
+  const edited = body.settings;
+  if (edited !== undefined && !isRecord(edited)) throw new HttpError(400, "expected { role: string, def: object, modelId: string, settings?: object }");
   const scope = activeScope(opts, session);
   const state = opts.getState(scope);
   const rank = poolRank(opts, session, state.rank);
   // Same expansion as handleRank: the posted def is authored, the baseline is
-  // resolved, so the preview must apply the scope's global flags first.
-  const def = expandFeatures(authored, state.features ?? {});
+  // resolved, so the preview must apply the scope's global flags first — the
+  // edited ones when the caller posted them.
+  const def = expandFeatures(authored, editedFeatures(edited, state.features ?? {}));
   const explanation = explainModel(def, rank.models, body.modelId, body.role, state.availability, resolveTokenProfile(body.role, opts.getUsageRows?.(scope) ?? [], opts.tokenProfile ?? null));
   // The two price-lever readouts are role-level, so they ride beside the
   // per-model decomposition — computed on the active pool, so the readout and
@@ -348,9 +420,43 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
   });
 }
 
+async function handlePreview(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
+  const body = await readJson(req);
+  if (!isRecord(body) || !isRecord(body.roles)) throw new HttpError(400, "expected { settings: object, roles: object }");
+  const editedSettings = body.settings;
+  if (editedSettings !== undefined && !isRecord(editedSettings)) throw new HttpError(400, "expected { settings: object, roles: object }");
+  const scope = activeScope(opts, session);
+  const state = opts.getState(scope);
+  const editedRoles = body.roles as unknown as Record<string, RoleDef>;
+  // The preview's dataset is the updater's own pre-walk set, regardless of the
+  // table's pool toggle (user story 33): the raw fetch with the
+  // allowed-providers prune, never `poolRank` (which respects the toggle) and
+  // never `asWrittenPool` (which would pre-apply the keyed prune the candidate
+  // set must apply itself).
+  const pool = opts.getPoolInputs();
+  const raw = previewRaw(state.raw, editedSettings, editedRoles);
+  const { settings, errors } = resolveSettings(raw);
+  const inputs = opts.getPreviewInputs(scope);
+  const preview = previewSelection({
+    settings,
+    rank: previewRank(state.rank, pool.allowed),
+    eligible: filterCatalog(pool.catalog, pool.tier),
+    availability: state.availability,
+    currentSelectors: inputs.currentSelectors,
+    state: inputs.pluginState,
+    agentPins: inputs.agentPins,
+    raw,
+    tier: pool.tier,
+  });
+  // Read-only: no lock write, no config.yml write.
+  sendJson(res, 200, { preview, errors });
+}
+
 async function handleExport(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
   const body = await readJson(req);
   if (!isRecord(body) || !isRecord(body.roles)) throw new HttpError(400, "expected { roles: object }");
+  const editedSettings = body.settings;
+  if (editedSettings !== undefined && !isRecord(editedSettings)) throw new HttpError(400, "expected { roles: object, settings?: object }");
   const scope = activeScope(opts, session);
   const dirty = body.roles as unknown as Record<string, RoleDef>;
   // A manual provider pin must name a route the loaded dataset actually has, or
@@ -365,7 +471,9 @@ async function handleExport(req: IncomingMessage, res: ServerResponse, opts: Exp
     if (!known) errors.push(`role "${name}": provider pin "${def.providerPin}" matches no route in the loaded dataset`);
   }
   if (errors.length > 0) return sendJson(res, 200, { ok: false, errors });
-  const result = writeRoleSettings(scope.lockPath, dirty);
+  // Both halves in one validated, backed-up, atomic write. An absent `settings`
+  // leaves the global half of the lock file untouched (the pre-#109 behaviour).
+  const result = writeRoleSettings(scope.lockPath, dirty, editedSettings === undefined ? undefined : { settings: editedSettings });
   if (!result.ok) return sendJson(res, 200, { ok: false, errors: result.errors });
   sendJson(res, 200, { ok: true, backupPath: result.backupPath, roles: result.roles, lockPath: scope.lockPath });
 }
@@ -395,6 +503,10 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: ExplorerO
     if (path === "/api/explain") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");
       return handleExplain(req, res, opts, session);
+    }
+    if (path === "/api/preview") {
+      if (method !== "POST") return sendText(res, 405, "method not allowed");
+      return handlePreview(req, res, opts, session);
     }
     if (path === "/api/export") {
       if (method !== "POST") return sendText(res, 405, "method not allowed");

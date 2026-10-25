@@ -118,7 +118,13 @@ Settings live in `~/.omp/plugins/omp-plugins.lock.json` →
 also exposes the whole shipped surface in omp's **`/settings` → Plugins →
 *omp-llm-role*** tab (booleans as toggles, `thinking` as a picker, `required` as
 a comma-separated string); an edit there takes effect on the next
-`/refresh-roles` (or the next day-gated session start).
+`/refresh-roles` (or the next day-gated session start). The explorer's
+**Settings panel** edits the global knobs below (and the capability flags) with
+the effective value, the shipped default and a reset, and its per-role editor
+edits the role's description, weights, `required` set, filters (the five
+endpoint filters as first-class fields), `thinking`, `λ`, `providerPin`,
+`enabled`/`locked` and the capability flags. Both write the same lock file
+through the same validated path.
 
 Global knobs:
 
@@ -148,6 +154,7 @@ Per-role knobs (`roles.<name>.*`):
 | `filters.minContextTokens` | `0` (off) | Drop routes whose endpoint context is below this (tokens) |
 | `filters.minOutputTokens` | `0` (off) | Drop routes whose endpoint output ceiling is below this (tokens) |
 | `filters.maxPriceUsdPerM` | `0` (off) | Drop a model whose thinking-adjusted blend exceeds this ($/M) |
+| `filters.preferredMinThroughput` | `0` (off) | Prefer routes at or above this output throughput (tok/s); a below-floor route is deprioritized, not dropped (the soft floor the `providerPinning` preset sets to 50) |
 | `thinking` | shipped level | Thinking level appended to the selector (`off`…`max`, `auto`) |
 | `providerPin` | `""` (unset) | Pin the role's requests to one OpenRouter provider route (`@<slug>`, may be tiered like `deepinfra/fp8`). The role is then priced and gated by that route — its billed price and p50 throughput, not the `1/price²` blend — and a model with no matching route is ineligible. A manual pin **overrides** the automatic pin the `providerPinning` capability would write |
 | `cacheHitRate` | `0` (off) | Assumed cache-hit rate (0–1) for the role's input tokens; each route's effective input price becomes `h·cacheRead + (1−h)·input` before the 3:1 billed blend and the thinking factor. The `1/price²` weight basis stays the **listed** input price (the router's sort key), so a cheap cache on a lightly-weighted route cannot dominate; a route with no cache-read price keeps its full input price. `0`/absent = off (byte-identical ranking) |
@@ -471,11 +478,22 @@ editing source and re-running the CLI.
   dropped). The as-written pool is the pool the next `/refresh-roles` ranks, but
   its leader is not necessarily the model you will get: the hysteresis can keep
   the incumbent, and in `cheapest` mode the pick is the cheapest bar-clearing
-  model, not the leader. The raw pool shows the account-agnostic ranking and
+  model, not the leader. For the decision itself — the model and chain the
+  updater would write — use the **Preview** panel, which runs the updater's own
+  candidate set and hysteresis regardless of the toggle. The raw pool shows the
+  account-agnostic ranking and
   keeps every row — key-blocked models included — with their verdicts. The
   toggle is best-effort (a failed whitelist fetch degrades to the raw pool) and
   per-scope, and it never affects **Export** — Export always writes the role you
   authored, from either pool.
+- **Settings panel** — one control per global setting (the global knobs table
+  above), plus a toggle per capability flag, each with the effective value, the
+  shipped default, a dirty marker and a reset. It is reachable with no role
+  selected, so you can tune the globals first. `activateDefaultOnEmptySession`
+  and `errorReporting` are labelled **no visual impact** — they change a session
+  behaviour and a side channel, not the ranking or the preview. An edit re-ranks
+  the table and re-runs the preview; Export writes the global half and the role
+  half in one validated, backed-up, atomic write.
 - **Role tabs** — every role the plugin knows: the nine omp built-in roles, the
   shipped opt-in `designer`, and any role present only in the lock file. Each
   tab is tinted by provenance — `default` (omp built-in), `plugin` (shipped but
@@ -495,9 +513,27 @@ editing source and re-running the CLI.
   section (below).
 - **Weight editor** — edit the role's description, weights, `required` set,
   `filters.image`, `thinking` level, and `λ` override live; the table re-ranks
-  on every change. Weights are edited freely (no implicit rescaling): the `Σ`
-  readout turns red until `|Σ − 1| ≤ 0.01`, and `Normalize` rescales in one
-  click.
+  on every change. The five endpoint filters (`filters.tools`,
+  `filters.minContextTokens`, `filters.minOutputTokens`,
+  `filters.maxPriceUsdPerM`, `filters.preferredMinThroughput`) are first-class
+  fields here, not only knobs of the capability bundle that recommends them, so
+  one def key has exactly one input. Weights are edited freely (no implicit
+  rescaling): the `Σ` readout turns red until `|Σ − 1| ≤ 0.01`, and `Normalize`
+  rescales in one click.
+- **Preview panel** — for every managed role, the decision the updater would
+  make: the model (`from → to`), the reason (`adopted` / `switched` /
+  `switched-cost` / `kept-margin` / `kept-eligible` / `no-current`), the value
+  and the best value, the fallback chain, and the config side effects (a
+  disabled role's `modelRoles` line removed, the `task.disabledAgents` sync). It
+  is computed on the updater's own candidate set — the catalog/tier gate, your
+  allowed-providers whitelist and the keyed-catalog prune — regardless of the
+  pool toggle, and it is **probe-optimistic**: it never issues a request, so the
+  written pin can be a later route or absent, and a probe-blocked candidate can
+  leave the pool. Both are labelled, not simulated. A role it could not decide
+  (locked, no eligible candidate, a pin that matches no route) is listed with
+  its reason, so a blank row is not read as "no change". The preview is
+  read-only — it never writes `config.yml` or the lock file — and it updates
+  live as you edit.
 - **Enabled toggle** — opts a role in or out. Exporting writes `enabled` into
   the lock file; the next updater run drops a disabled role from the resolved
   set and deletes its `modelRoles.<role>` line, and re-enabling restores it.
@@ -506,8 +542,11 @@ editing source and re-running the CLI.
   chain and never removes it. Enable/disable still applies.
 - **+ new role** — creates a role from a template
   (`general/code/price/throughput`, Σ 1.0) that you then tune and Export.
-- **Export** — writes the edited roles into the settings lock file atomically
-  and with a `.bak-<timestamp>` sibling, touching only the roles you edited. The
+- **Export** — writes the edited roles **and the edited global settings** into
+  the settings lock file atomically and with a `.bak-<timestamp>` sibling,
+  touching only the roles and global keys you edited. It is enabled when a role
+  **or** a global setting is dirty, and it validates both halves before any
+  write (an out-of-range global setting is refused with the offending key). The
   change takes effect on the next `/refresh-roles` **in any running session**
   (the lock file is re-read from disk on every run). `Copy JSON` / `Download
   JSON` emit the same payload for manual use.
@@ -540,7 +579,9 @@ does — but it still shapes the value ranking (this panel's value column and th
 history's `value` fields) and the fallback chain's ordering.
 
 The UI never reimplements the ranking math: the numbers on screen are exactly
-the numbers the plugin would use. The server binds `[IP_ADDRESS]` only (no auth)
+the numbers the plugin would use, and the Preview panel reuses the updater's own
+decision core, so the decision it shows is the decision the run makes. The
+server binds `[IP_ADDRESS]` only (no auth)
 and serves the SPA with no build step and no external requests.
 
 ## Availability

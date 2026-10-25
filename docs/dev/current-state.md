@@ -1,4 +1,4 @@
-# Current state (2026-10-20)
+# Current state (2026-10-25)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
@@ -16,6 +16,33 @@ basis #21, the #17/#18/#19/#20 wave, the #34–#40 focus-axis/capability-flag
 work, and spec #81's explorer surfaces. The provider-pin numbers are the
 2026-10-11 measurement (spec #71; see the top bullet). Neither is re-derived on
 read.
+
+- Explorer settings editor and decision preview (2026-10-25, spec #109): the
+  explorer becomes a full settings editor with a live "what the updater would
+  write" preview. A **Settings panel** edits every global setting (the global
+  knobs, plus the capability flags) with the effective value, the shipped
+  default, a dirty marker and a reset; the per-role editor gains the five
+  endpoint filters as first-class fields; a **Preview panel** shows, per managed
+  role, the decision the updater would make (the model, the reason, the
+  value/best value), the fallback chain and the config side effects, computed on
+  the updater's own pre-walk candidate set (catalog/tier gate +
+  allowed-providers prune + keyed-catalog prune) regardless of the table's pool
+  toggle, and labelled **probe-optimistic** (it never issues a request, so the
+  written pin can be a later route or absent). The decision core moved into a new
+  pure module `src/selection.ts` (`decide`, `buildChains`, `agentDisablePatch`,
+  `previewSelection`), shared by `runUpdater` and the preview, so the two cannot
+  drift; `RunResult` gained `patch` so the agreement test can compare the chains
+  a dry run would write. The one validated write path gained a global half:
+  `mergeSettings` writes the global keys as flat dotted keys with the same
+  delete-then-write semantics as the role half (`GLOBAL_SETTING_KEYS`), and
+  `writeRoleSettings` validates both halves before any write. Export writes the
+  global settings and the role defs in one validated, backed-up, atomic write.
+  The ranking numbers are unchanged — the preview is read-only and the settings
+  editor writes the lock file, not the ranking — so `docs/llm-role-rankings.md`
+  is not regenerated and the dated numbers below stand as written; the suite grew
+  738 → 792 (a two-axis review pass on this spec added five fixtures: the
+  depth-0 agreement case, the user-scope agent pins, the agent-dir split, the
+  nested global parent, and the absent-settings preview).
 
 - Cheapest-model selection (2026-10-20, spec #103): a new opt-in rule replaces
   the primary choice's objective. `selection` (`"value"` default, or

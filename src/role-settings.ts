@@ -1,6 +1,7 @@
 /**
- * The one validated write path for role definitions in the plugin settings lock
- * file (`~/.omp/plugins/omp-plugins.lock.json` -> `settings["omp-llm-role"]`).
+ * The one validated write path for the plugin's settings in the lock file
+ * (`~/.omp/plugins/omp-plugins.lock.json` -> `settings["omp-llm-role"]`): the
+ * per-role defs and the global (non-`roles.`) settings.
  *
  * `omp plugin config set` stores every value as a string, and the plugin's
  * validator rejects a string weight/required/boolean, so role settings must be
@@ -13,7 +14,7 @@ import { copyFileSync, existsSync, readFileSync, statSync } from "node:fs";
 import { writeConfigAtomic } from "./config-edit.ts";
 import type { RoleDef } from "./engine.ts";
 import { isRecord } from "./guards.ts";
-import { resolveSettings } from "./settings.ts";
+import { deriveSettingsSchema, resolveSettings } from "./settings.ts";
 
 /** Validate one role def through the plugin's own validator (resolveSettings
  * clones its input, so this is safe per call). Errors are returned verbatim. */
@@ -21,22 +22,45 @@ export function validateRole(name: string, def: RoleDef): string[] {
   return resolveSettings({ roles: { [name]: def } }).errors;
 }
 
-/** Merge dirty role defs into a parsed lock file, preserving `plugins` and every
- * sibling settings key. Returns the new lock object or a refusal.
+/** Every global (non-`roles.`) key of the plugin's settings schema — the
+ *  delete-then-write key set for the global half of an Export. Derived from
+ *  `deriveSettingsSchema()`, so a new global setting is covered automatically. */
+export const GLOBAL_SETTING_KEYS: readonly string[] = Object.keys(deriveSettingsSchema()).filter(
+  (key) => !key.startsWith("roles."),
+);
+
+/** The nested parents of the dotted global keys (`tokenProfile`, `features`): a
+ *  hand-written nested object is normalized away with the flat keys, so a
+ *  cleared setting cannot survive as a nested value. */
+const GLOBAL_SETTING_PARENTS: readonly string[] = [
+  ...new Set(GLOBAL_SETTING_KEYS.filter((key) => key.includes(".")).map((key) => key.split(".")[0])),
+];
+
+/** Delete-then-write the global half of a plugin settings map: every global key
+ *  the edited set no longer carries is removed — the flat dotted keys AND their
+ *  nested parents (`tokenProfile`, `features`), so a cleared setting falls back
+ *  to the shipped default rather than surviving as a nested value — and only
+ *  keys of the plugin's own schema are written, so `config` and any sibling key
+ *  survive even if the caller passes them. Shared by `mergeSettings` and the
+ *  explorer's preview, so the two cannot drift. */
+export function applyGlobalSettings(plugin: Record<string, unknown>, settings: Record<string, unknown>): void {
+  for (const key of GLOBAL_SETTING_KEYS) delete plugin[key];
+  for (const parent of GLOBAL_SETTING_PARENTS) {
+    if (isRecord(plugin[parent])) delete plugin[parent];
+  }
+  for (const [key, value] of Object.entries(settings)) {
+    if (GLOBAL_SETTING_KEYS.includes(key)) plugin[key] = value;
+  }
+}
+
+/** Write `dirty` role defs into a plugin settings map as flat dotted keys.
  *
  * Roles are written as flat dotted keys (`roles.<name>.weights.<metric>`) because
  * omp's `/settings` Plugins tab shallow-merges the settings object and does not
  * flatten nested objects — a nested `roles` object would render as schema
  * defaults. A pre-existing nested entry for a dirty role is deleted so an older
  * lock file is normalized on the next write. */
-export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): { lock: object } | { error: string } {
-  if (!isRecord(existing)) return { error: "lock file root is not an object" };
-  const lock = structuredClone(existing);
-  if (!isRecord(lock.settings)) lock.settings = {};
-  const settings = lock.settings as Record<string, unknown>;
-  if (!isRecord(settings["omp-llm-role"])) settings["omp-llm-role"] = {};
-  const plugin = settings["omp-llm-role"] as Record<string, unknown>;
-
+function mergeRolesInto(plugin: Record<string, unknown>, dirty: Record<string, RoleDef>): void {
   for (const [name, def] of Object.entries(dirty)) {
     // Normalize: drop any nested entry left by an older write path.
     const nested = plugin.roles;
@@ -77,7 +101,44 @@ export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): 
     }
     for (const [metric, weight] of Object.entries(def.weights)) plugin[`${prefix}.weights.${metric}`] = weight;
   }
+}
+
+/** Merge dirty role defs AND edited global settings into a parsed lock file,
+ * preserving `plugins`, the `config` escape hatch and every sibling settings key.
+ * Returns the new lock object or a refusal.
+ *
+ * The global half has the same "make this match" semantics as the role half: the
+ * edited settings map is the full authored global set, so every global key it no
+ * longer carries is deleted and falls back to the shipped default. Only keys of
+ * the plugin's own schema are written, so `config` and any sibling key survive
+ * even if the caller passes them. Omitting `settings` leaves the global half
+ * untouched (the pre-#109 `mergeExport` behaviour). */
+export function mergeSettings(
+  existing: unknown,
+  dirty: { roles?: Record<string, RoleDef>; settings?: Record<string, unknown> },
+): { lock: object } | { error: string } {
+  if (!isRecord(existing)) return { error: "lock file root is not an object" };
+  if (dirty.settings !== undefined && !isRecord(dirty.settings)) {
+    return { error: "settings must be an object of flat dotted keys" };
+  }
+  const lock = structuredClone(existing);
+  if (!isRecord(lock.settings)) lock.settings = {};
+  const settings = lock.settings as Record<string, unknown>;
+  if (!isRecord(settings["omp-llm-role"])) settings["omp-llm-role"] = {};
+  const plugin = settings["omp-llm-role"] as Record<string, unknown>;
+
+  if (dirty.roles !== undefined) mergeRolesInto(plugin, dirty.roles);
+
+  if (dirty.settings !== undefined) {
+    applyGlobalSettings(plugin, dirty.settings);
+  }
   return { lock };
+}
+
+/** Merge dirty role defs into a parsed lock file, preserving `plugins` and every
+ * sibling settings key. The role half of `mergeSettings`. */
+export function mergeExport(existing: unknown, dirty: Record<string, RoleDef>): { lock: object } | { error: string } {
+  return mergeSettings(existing, { roles: dirty });
 }
 
 /**
@@ -167,24 +228,32 @@ function commitLock(lockPath: string, lock: object, names: string[], dryRun: boo
 }
 
 /**
- * Validate every dirty role, then merge them into the lock file and write it
- * atomically (backup sibling first, mtime-guarded). Never writes on a validation
- * error, an unreadable lock file, or a concurrent change. `dryRun` runs the same
- * validation and merge but stops before the backup and the write.
+ * Validate every dirty role and the edited global settings, then merge them into
+ * the lock file and write it atomically (backup sibling first, mtime-guarded).
+ * Never writes on a validation error, an unreadable lock file, or a concurrent
+ * change. `dryRun` runs the same validation and merge but stops before the backup
+ * and the write.
+ *
+ * `opts.settings` is the edited global settings as a flat dotted-key record; it
+ * is validated through the same resolver as the role half, so an out-of-range
+ * global setting aborts with the offending key and no write. Omitting it leaves
+ * the global half of the lock file untouched.
  */
 export function writeRoleSettings(
   lockPath: string,
   dirty: Record<string, RoleDef>,
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; settings?: Record<string, unknown> } = {},
 ): RoleWriteResult {
-  const errors: string[] = [];
-  for (const [name, def] of Object.entries(dirty)) errors.push(...validateRole(name, def));
+  const errors: string[] =
+    opts.settings === undefined
+      ? Object.entries(dirty).flatMap(([name, def]) => validateRole(name, def))
+      : resolveSettings({ ...opts.settings, roles: dirty }).errors;
   if (errors.length > 0) return { ok: false, errors };
 
   const read = readLock(lockPath);
   if ("error" in read) return { ok: false, errors: [read.error] };
 
-  const merged = mergeExport(read.parsed, dirty);
+  const merged = mergeSettings(read.parsed, { roles: dirty, settings: opts.settings });
   if ("error" in merged) return { ok: false, errors: [merged.error] };
   return commitLock(lockPath, merged.lock, Object.keys(dirty), opts.dryRun === true);
 }
