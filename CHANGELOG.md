@@ -54,6 +54,18 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
   any write. Export is enabled when a role **or** a global setting is dirty.
   (spec #109)
 
+### Fixed
+
+- **The explorer's preview now agrees with the run** — the preview's value-mode
+  pool is the probe walk's window (the incumbent first, then rank order, stopping
+  at `1 + fallbackChainDepth` clean candidates), not the whole usable set, so at
+  `fallbackChainDepth: 0` a kept role reads `kept-eligible` in the preview
+  exactly as the run reports it. The user-scope preview also harvests the session
+  project's agent pins (the run's own `discoverAgentPins()` default), an absent
+  `settings` resolves the scope's committed globals rather than the shipped
+  defaults, and a hand-written nested global object (`tokenProfile`, `features`)
+  is deleted with the flat keys, exactly as Export does. (spec #109)
+
 ## [1.5.0] - 2026-10-20
 
 ### Added

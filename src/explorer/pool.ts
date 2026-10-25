@@ -8,8 +8,8 @@
  *    models whose ranking id resolves to a tier-eligible entry
  *    (`resolveVariant`), mirroring `src/updater.ts:300` + `:376`;
  * 2. the allowed-providers whitelist prune — each kept model's routes are
- *    filtered to allowed providers (`providerAllowed`), mirroring
- *    `src/updater.ts:349-357`. A null whitelist (no whitelist set / harvest
+ *    filtered to allowed providers (`pruneRoutesToAllowed`), mirroring
+ *    `src/updater.ts:310-316`. A null whitelist (no whitelist set / harvest
  *    failed) leaves the routes untouched;
  * 3. the keyed-catalog prune — drop every model the account's key cannot run
  *    (`availability.active && availability.blocked.has(id)`), mirroring the
@@ -24,7 +24,7 @@
  * not the pool, and is carried through unchanged.
  */
 
-import { filterCatalog, providerAllowed, resolveVariant, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
+import { filterCatalog, pruneRoutesToAllowed, resolveVariant, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
 
 /** Which dataset the explorer ranks: the raw fetch, or the pool the updater writes from. */
@@ -49,14 +49,7 @@ export function asWrittenPool(rank: RankData, inputs: PoolInputs): RankData {
   const eligible = filterCatalog(inputs.catalog, tier);
   const gated = tier === "none" ? [] : rank.models.filter((m) => resolveVariant(m.id, eligible, tier) !== null);
   const allowed = inputs.allowed;
-  const routed =
-    allowed === null
-      ? gated
-      : gated.map((m) => {
-          const routes = m.routes;
-          if (routes === undefined) return m;
-          return { ...m, routes: routes.filter((r) => providerAllowed(allowed, r.providerSlug)) };
-        });
+  const routed = pruneRoutesToAllowed(gated, allowed).models;
   const availability = inputs.availability;
   const models = availability.active ? routed.filter((m) => !availability.blocked.has(m.id)) : routed;
   return { ...rank, models };

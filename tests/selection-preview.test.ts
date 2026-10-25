@@ -222,6 +222,9 @@ test("a chain key claimed by two roles stays level-free", () => {
   const p = preview(raw);
   assert.deepEqual(Object.keys(p.chains), ["openrouter/org/model-a"]);
   assert.deepEqual(p.chains["openrouter/org/model-a"], ["openrouter/org/model-b", "openrouter/org/model-c"]);
+  // Each decision carries the chain key its chain is filed under, so the SPA
+  // reads it instead of re-deriving it from the selector and the resolved level.
+  assert.deepEqual(p.decisions.map((d) => d.chainKey), ["openrouter/org/model-a", "openrouter/org/model-a"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -368,6 +371,19 @@ test("agreement: the preview matches a real dry run with the auto-pin chain", as
   // The chain key carries the pin (a chain key is the selector minus its level).
   assert.equal(preview.decisions[0].to, "openrouter/org/model-a@alpha:auto");
   assert.deepEqual(preview.chains["openrouter/org/model-a@alpha"], ["openrouter/org/model-a@beta:auto", "openrouter/org/model-b@gamma:auto"]);
+});
+
+test("agreement: at fallbackChainDepth 0 the walk window is the incumbent alone", async () => {
+  // The walk probes the incumbent first and stops as soon as `1 + depth` clean
+  // candidates exist, so at depth 0 the window is the incumbent alone: the
+  // updater keeps it even though the value leader beats it by the margin. The
+  // preview must use the same window, not the whole usable set — otherwise it
+  // reports `switched` where the run reports `kept-eligible` (user story 27).
+  const raw = onlyDefault({ fallbackChainDepth: 0, switchMargin: 0.1 });
+  const { result, preview } = await agreement(raw, MODELS, 'modelRoles:\n  default: "openrouter/org/model-b"\n');
+  assertAgrees(result, preview);
+  assert.deepEqual(preview.decisions.map((d) => d.reason), ["kept-eligible"]);
+  assert.equal(preview.decisions[0].to, "openrouter/org/model-b:auto");
 });
 
 test("agreement: the preview matches a real dry run on a shared chain key", async () => {

@@ -36,6 +36,23 @@ const GLOBAL_SETTING_PARENTS: readonly string[] = [
   ...new Set(GLOBAL_SETTING_KEYS.filter((key) => key.includes(".")).map((key) => key.split(".")[0])),
 ];
 
+/** Delete-then-write the global half of a plugin settings map: every global key
+ *  the edited set no longer carries is removed — the flat dotted keys AND their
+ *  nested parents (`tokenProfile`, `features`), so a cleared setting falls back
+ *  to the shipped default rather than surviving as a nested value — and only
+ *  keys of the plugin's own schema are written, so `config` and any sibling key
+ *  survive even if the caller passes them. Shared by `mergeSettings` and the
+ *  explorer's preview, so the two cannot drift. */
+export function applyGlobalSettings(plugin: Record<string, unknown>, settings: Record<string, unknown>): void {
+  for (const key of GLOBAL_SETTING_KEYS) delete plugin[key];
+  for (const parent of GLOBAL_SETTING_PARENTS) {
+    if (isRecord(plugin[parent])) delete plugin[parent];
+  }
+  for (const [key, value] of Object.entries(settings)) {
+    if (GLOBAL_SETTING_KEYS.includes(key)) plugin[key] = value;
+  }
+}
+
 /** Write `dirty` role defs into a plugin settings map as flat dotted keys.
  *
  * Roles are written as flat dotted keys (`roles.<name>.weights.<metric>`) because
@@ -113,13 +130,7 @@ export function mergeSettings(
   if (dirty.roles !== undefined) mergeRolesInto(plugin, dirty.roles);
 
   if (dirty.settings !== undefined) {
-    for (const key of GLOBAL_SETTING_KEYS) delete plugin[key];
-    for (const parent of GLOBAL_SETTING_PARENTS) {
-      if (isRecord(plugin[parent])) delete plugin[parent];
-    }
-    for (const [key, value] of Object.entries(dirty.settings)) {
-      if (GLOBAL_SETTING_KEYS.includes(key)) plugin[key] = value;
-    }
+    applyGlobalSettings(plugin, dirty.settings);
   }
   return { lock };
 }

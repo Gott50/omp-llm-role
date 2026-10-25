@@ -216,11 +216,17 @@ passing.
     bootstrap payload carries the scope's global settings; `POST /api/preview`
     returns the decisions for the edited settings, names the roles it could not
     decide, applies the keyed prune inside the candidate set (not to the
-    dataset), and drops the scope's flat `roles.*` keys so a cleared pin cannot
-    survive; `POST /api/export` writes a global key and a role key in one lock
-    file; an out-of-range `switchMargin` is refused with `switchMargin: must be a
-    number in [0, 1]` and no write; `startExplorer` serves the preview from the
-    scope's lock file and `config.yml` and writes nothing.
+    dataset), drops the scope's flat `roles.*` keys so a cleared pin cannot
+    survive, resolves the scope's committed globals when `settings` is absent,
+    and deletes a hand-written nested global parent (`features`, `tokenProfile`)
+    with the flat keys; a project scope's preview reads its own state,
+    `config.yml` and agents dir, and the user scope's preview harvests the
+    session cwd's project agent pins and reads its `config.yml`/state from the
+    agent dir (not the ledger dir); `POST /api/export` writes a global key and a
+    role key in one lock file; an out-of-range `switchMargin` is refused with
+    `switchMargin: must be a number in [0, 1]` and no write; `startExplorer`
+    serves the preview from the scope's lock file and `config.yml` and writes
+    nothing.
 24. **Project scope** (`project-updater.test.ts`, `project-setup.test.ts`,
     `project-roles-command.test.ts`) — project mode scopes config/state/history/
     lock to `<cwd>/.omp`; the day gate is per scope; the registry write;
@@ -340,7 +346,7 @@ passing.
     bare role.
 35. **As-written pool** (`explorer-pool.test.ts`) — `asWrittenPool` applies the
     catalog/tier gate (`resolveVariant`), the allowed-providers prune
-    (`providerAllowed`), and the keyed-catalog prune (spec #103: a key-blocked
+    (`pruneRoutesToAllowed`), and the keyed-catalog prune (spec #103: a key-blocked
     model is dropped, a model in neither keyed set is kept, and an inactive
     keyed record prunes nothing even with a non-empty `blocked` set); it leaves
     the routes untouched on a `null` whitelist, yields an empty pool on
@@ -384,7 +390,8 @@ passing.
     the dataset keeps — the pick differs from the dataset's leader and
     `keyBlockedCount` is 1 (the issue #104 case); the chain's quality floor at 0,
     0.9 and 1; a shared chain key
-    claimed by two roles stays level-free; a disabled role appears in
+    claimed by two roles stays level-free (and each decision carries the chain
+    key its chain is filed under); a disabled role appears in
     `roleRemovals`, an agent whose pinned role is disabled in `agentDisableAdds`,
     a previously-managed name whose role is re-enabled in `agentDisableRemoves`;
     a locked role, a role with no eligible candidate and a pin that matches no
@@ -394,8 +401,10 @@ passing.
     (the one that pins "the preview is the updater's decision"): `previewSelection`
     and a real `runUpdater("manual", deps, { dryRun: true })` with
     `probeModel`/`probeRoute` stubbed to `"ok"` produce the same decisions and
-    chains on the same fixture — including the auto-pin chain and a shared chain
-    key. Without it the preview would be a second implementation. The preview's
+    chains on the same fixture — including the auto-pin chain, a shared chain
+    key, and the `fallbackChainDepth: 0` window (the incumbent alone, so a kept
+    role reads `kept-eligible` in both). Without it the preview would be a second
+    implementation. The preview's
     HTTP surface (the spec's second seam) is covered in the Explorer seam (23).
 
 ## Live checks

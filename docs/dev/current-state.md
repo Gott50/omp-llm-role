@@ -40,7 +40,9 @@ read.
   The ranking numbers are unchanged — the preview is read-only and the settings
   editor writes the lock file, not the ranking — so `docs/llm-role-rankings.md`
   is not regenerated and the dated numbers below stand as written; the suite grew
-  738 → 787.
+  738 → 792 (a two-axis review pass on this spec added five fixtures: the
+  depth-0 agreement case, the user-scope agent pins, the agent-dir split, the
+  nested global parent, and the absent-settings preview).
 
 - Cheapest-model selection (2026-10-20, spec #103): a new opt-in rule replaces
   the primary choice's objective. `selection` (`"value"` default, or

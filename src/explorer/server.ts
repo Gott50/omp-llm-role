@@ -31,12 +31,12 @@ import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import type { AgentPin } from "../agent-pins.ts";
-import { filterCatalog, providerAllowed, type KeyAvailability } from "../availability.ts";
+import { filterCatalog, pruneRoutesToAllowed, type KeyAvailability } from "../availability.ts";
 import { loadDeclaredSources } from "../benchmark-sources.ts";
 import { barSelection, pinnedRoute, SUFFIX_LEVELS, rankRole, roleLambda, thinkingPriceFactor, type RankData, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { expandFeatures, FEATURES } from "../features.ts";
 import { isRecord } from "../guards.ts";
-import { GLOBAL_SETTING_KEYS, validateRole, writeRoleSettings } from "../role-settings.ts";
+import { applyGlobalSettings, validateRole, writeRoleSettings } from "../role-settings.ts";
 import { previewSelection } from "../selection.ts";
 import { KNOWN_METRICS, resolveSettings, type UniverseEntry } from "../settings.ts";
 import { resolveTokenProfile, type TokenProfile, type UsageRow } from "../usage-ledger.ts";
@@ -230,36 +230,32 @@ function editedFeatures(settings: Record<string, unknown> | undefined, committed
 
 /** The raw settings map a preview resolves: the scope's own map with every
  * global key replaced by the edited set and `roles` replaced by the edited defs,
- * so `roleUniverse` sees the edited `enabled` flags. The flat `roles.<name>.*`
- * keys the lock file carries are dropped too — otherwise a stale authored value
- * would survive for any path the edited def does not cover. */
-function previewRaw(scopeRaw: Record<string, unknown>, editedSettings: Record<string, unknown>, editedRoles: Record<string, RoleDef>): Record<string, unknown> {
+ * so `roleUniverse` sees the edited `enabled` flags. The global half is the SAME
+ * delete-then-write Export performs (`applyGlobalSettings`), so the preview
+ * cannot resolve a global Export would not write. An ABSENT edited set means the
+ * caller posted no edit, so the scope's committed globals stay in place (the
+ * pre-#109 behaviour, and the contract `/api/rank`/`/api/explain`/`/api/export`
+ * honour). The flat `roles.<name>.*` keys the lock file carries are dropped too —
+ * otherwise a stale authored value would survive for any path the edited def
+ * does not cover. */
+function previewRaw(scopeRaw: Record<string, unknown>, editedSettings: Record<string, unknown> | undefined, editedRoles: Record<string, RoleDef>): Record<string, unknown> {
   const raw: Record<string, unknown> = { ...scopeRaw };
-  for (const key of GLOBAL_SETTING_KEYS) delete raw[key];
+  if (editedSettings !== undefined) applyGlobalSettings(raw, editedSettings);
   for (const key of Object.keys(raw)) if (key === "roles" || key.startsWith("roles.")) delete raw[key];
-  for (const [key, value] of Object.entries(editedSettings)) raw[key] = value;
   raw.roles = editedRoles;
   return raw;
 }
 
 /** The dataset the preview ranks: the raw fetch with the allowed-providers
  * whitelist pruned from each model's routes — the updater's own pre-walk dataset
- * (`src/updater.ts:349-357`). The catalog/tier gate and the keyed-catalog prune
- * are applied INSIDE `previewSelection` (via `eligible` and `availability`), so
- * they must not be pre-applied here: pre-applying the keyed prune would make
- * `keyBlockedCount` always 0 and the "no usable candidate" skip unreachable, and
- * pre-applying the gate would undercount `endpointBlocked`/`pinBlocked` (both
- * iterate `rank.models`). */
+ * (`pruneRoutesToAllowed`, `src/updater.ts:310-316`). The catalog/tier gate and
+ * the keyed-catalog prune are applied INSIDE `previewSelection` (via `eligible`
+ * and `availability`), so they must not be pre-applied here: pre-applying the
+ * keyed prune would make `keyBlockedCount` always 0 and the "no usable
+ * candidate" skip unreachable, and pre-applying the gate would undercount
+ * `endpointBlocked`/`pinBlocked` (both iterate `rank.models`). */
 function previewRank(rank: RankData, allowed: ReadonlySet<string> | null): RankData {
-  if (allowed === null) return rank;
-  return {
-    ...rank,
-    models: rank.models.map((m) => {
-      const routes = m.routes;
-      if (routes === undefined) return m;
-      return { ...m, routes: routes.filter((r) => providerAllowed(allowed, r.providerSlug)) };
-    }),
-  };
+  return { ...rank, models: pruneRoutesToAllowed(rank.models, allowed).models };
 }
 
 function bootstrapPayload(opts: ExplorerOpts, session: ExplorerSession, scope: Scope): object {
@@ -427,8 +423,8 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
 async function handlePreview(req: IncomingMessage, res: ServerResponse, opts: ExplorerOpts, session: ExplorerSession): Promise<void> {
   const body = await readJson(req);
   if (!isRecord(body) || !isRecord(body.roles)) throw new HttpError(400, "expected { settings: object, roles: object }");
-  const editedSettings = body.settings === undefined ? {} : body.settings;
-  if (!isRecord(editedSettings)) throw new HttpError(400, "expected { settings: object, roles: object }");
+  const editedSettings = body.settings;
+  if (editedSettings !== undefined && !isRecord(editedSettings)) throw new HttpError(400, "expected { settings: object, roles: object }");
   const scope = activeScope(opts, session);
   const state = opts.getState(scope);
   const editedRoles = body.roles as unknown as Record<string, RoleDef>;

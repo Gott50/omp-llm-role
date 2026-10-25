@@ -101,18 +101,21 @@ Endpoints:
 | `POST /api/pool` | `{mode}` | switch the ranked pool (`"raw"` \| `"as-written"`), then the bootstrap payload (400 on any other mode) |
 | `POST /api/rank` | `{role, def, settings?}` | `{eligible, lambda, derivedLambda, selection, rows, errors}` — each row carries the display-only `perTask` and the `excludedByBar` flag |
 | `POST /api/explain` | `{role, def, modelId, settings?}` | `explainModel(...)` spread + `leaderFlip` + `thinkingLevels` + `errors` |
-| `POST /api/preview` | `{settings, roles}` | `{preview, errors}` — the `SelectionPreview` the updater would write (read-only, probe-optimistic) |
+| `POST /api/preview` | `{settings?, roles}` | `{preview, errors}` — the `SelectionPreview` the updater would write (read-only, probe-optimistic) |
 | `POST /api/export` | `{roles, settings?}` | `{ok:true, backupPath, roles, lockPath}` or `{ok:false, errors}` |
 | `POST /api/refresh` | — | `await opts.refresh()` (re-ranks and re-derives the availability overlay) then the bootstrap payload |
 
 - `settings` on `/api/rank`, `/api/explain`, `/api/preview` and `/api/export` is
   the **edited global settings as a flat dotted-key record** (the lock-file
   convention), carrying only the keys the user has authored. Absent = the
-  scope's committed values (the pre-#109 behaviour). The preview/export handler
-  rebuilds the raw map as the scope's `raw` with every `GLOBAL_SETTING_KEYS`
-  entry deleted and the edited keys assigned (and the flat `roles.*` keys
+  scope's committed values (the pre-#109 behaviour). When it is present, the
+  preview/export handler rebuilds the raw map as the scope's `raw` with every
+  `GLOBAL_SETTING_KEYS` entry (and its nested parents — `tokenProfile`,
+  `features`) deleted and the edited keys assigned (and the flat `roles.*` keys
   dropped, so a cleared pin cannot survive), then calls
-  `resolveSettings({ ...raw, roles: editedRoles })`. `/api/rank` and
+  `resolveSettings({ ...raw, roles: editedRoles })` — the same
+  `applyGlobalSettings` delete-then-write Export performs, so the preview cannot
+  resolve a global Export would not write. `/api/rank` and
   `/api/explain` derive the global `features.<id>` flags from `settings` when
   present (`settings[`features.${id}`] === true` for each `FEATURES` row), else
   from `state.features` — so an edited-but-unexported flag re-ranks the table.
@@ -435,11 +438,14 @@ The explorer is a settings editor, not only a role editor, and it previews the
   `keyBlockedCount` stays meaningful (the issue #104 case).
 - **The probe-optimistic boundary.** `previewSelection` never issues a request:
   every candidate in the pre-walk set is treated as clean, so the walk's window
-  is the whole usable set, no candidate is ever probe-blocked, and the auto-pin
-  takes the route leader. The written pin can therefore differ (a later route, or
-  none) and a probe-blocked candidate can leave the pool — both are labelled, not
-  simulated. The agreement test (`tests/selection-preview.test.ts`) pins the
-  probe-clean case against a real dry run.
+  is the prefix of the walk order its stop condition admits (`probeWindow` — the
+  incumbent first, then rank order, stopping at `1 + fallbackChainDepth` clean
+  candidates and capped at `PROBE_BUDGET`), no candidate is ever probe-blocked,
+  and the auto-pin takes the route leader. The written pin can therefore differ
+  (a later route, or none) and a probe-blocked candidate can leave the pool —
+  both are labelled, not simulated. The agreement test
+  (`tests/selection-preview.test.ts`) pins the probe-clean case against a real
+  dry run.
 - **`skipped` reasons** (one entry per role the preview could not decide): a
   locked role; a role whose `providerPin` matches no route; a role with no
   eligible candidate; a role with no usable (non-key-blocked) candidate.

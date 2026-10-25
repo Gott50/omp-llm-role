@@ -15,14 +15,14 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, loadRankData, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, type RankData } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, providerAllowed, resolveVariant, splitThinkingSuffix, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { autoPinApplies, computeRankings, endpointFilterDrops, loadRankData, providerPinDrops, rankedRoutes, type RankData } from "./engine.ts";
+import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, pruneRoutesToAllowed, resolveVariant, splitThinkingSuffix, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
 import { registerProject } from "./project-registry.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
-import { agentDisablePatch, buildChains, cheaperInsideMargin, decide, type Candidate, type ChainPlan, type Decision, type DecisionReason } from "./selection.ts";
+import { agentDisablePatch, buildChains, chainPlanFor, cheapestOrder, decide, ladderInputs, PROBE_BUDGET, selectorFor, type Candidate, type ChainPlan, type Decision, type DecisionReason } from "./selection.ts";
 
 // The decision core lives in `src/selection.ts` (spec #109) so the explorer's
 // preview and the run share one implementation; re-exported here so every
@@ -90,9 +90,6 @@ export type Deps = {
 };
 
 const CONFLICT_RETRIES = 3;
-
-/** Per-role cap on allowlist probe requests (budget against pathological all-blocked pools). */
-const PROBE_BUDGET = 12;
 
 /** Per-role cap on route-probe requests for the auto-pin walk (budget against a
  * pathological route pool: a fully blocked model with dozens of routes must not
@@ -311,15 +308,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         ? null
         : await (deps.getAllowedProviders ? deps.getAllowedProviders(token, canaryModelId) : fetchAllowedProviders(token, canaryModelId));
     if (allowed !== null) {
-      let prunedCount = 0;
-      const pruned = rank.models.map((m) => {
-        const routes = m.routes;
-        if (routes === undefined) return m;
-        const kept = routes.filter((r) => providerAllowed(allowed, r.providerSlug));
-        prunedCount += routes.length - kept.length;
-        return { ...m, routes: kept };
-      });
-      rank = { ...rank, models: pruned };
+      const { models, pruned: prunedCount } = pruneRoutesToAllowed(rank.models, allowed);
+      rank = { ...rank, models };
       notes.push(
         `omp-llm-role: OpenRouter allowed-providers whitelist active — ${allowed.size} providers; ${prunedCount} routes pruned`,
       );
@@ -424,39 +414,29 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       }
       const best = pool[0];
       const mode = def.selection ?? settings.selection;
-      let currentEntry: Candidate | null;
-      // The challenger and the two switch predicates are the only per-mode
-      // inputs to the shared decision ladder below.
-      let challenger: Candidate;
-      let switchedPredicate: (cur: Candidate) => boolean;
-      let costEscapePredicate: (cur: Candidate) => boolean;
+      // The rule's pool is the role's usable candidate set: the catalog/tier
+      // gate and the allowed-providers prune are already baked into
+      // `rank.models`, and the keyed-catalog prune is `keyBlocked`. NOT `pool`
+      // — that is only the probe window (the top few value-ranked candidates),
+      // and a cheap model ranks low by value, so the cheapest bar-clearing
+      // candidate usually sits outside it.
+      const usable = candidates.filter((c) => !keyBlocked(c));
+      let ordered: Candidate[] = [];
+      let pick: Candidate | null = null;
       if (mode === "cheapest") {
-        // The rule's pool is the role's usable candidate set: the catalog/tier
-        // gate and the allowed-providers prune are already baked into
-        // `rank.models`, and the keyed-catalog prune is `keyBlocked`. NOT `pool`
-        // — that is only the probe window (the top few value-ranked candidates),
-        // and a cheap model ranks low by value, so the cheapest bar-clearing
-        // candidate usually sits outside it.
-        const usable = candidates.filter((c) => !keyBlocked(c));
-        const bar = barSelection(usable.map((c) => c.ranked), def.qualityFloor ?? settings.qualityFloor);
-        if (bar === null) {
+        if (usable.length === 0) {
           notes.push(`@${role}: no usable candidate (key-blocked: ${keyBlockedCount}) — role untouched`);
           continue;
         }
+        ordered = cheapestOrder(usable, def.qualityFloor ?? settings.qualityFloor);
         // The pick may be a candidate the walk never examined: probe it on
         // demand (verdicts are cached by catalog id and shared across roles) and
         // fall through to the next-cheapest bar-clearing candidate when it is
         // blocked. The bar stays fixed — the anchor is a quality statement over
-        // the usable pool, not over the probe-clean subset.
-        const goodIds = new Set(bar.good.map((r) => r.model.id));
-        // `pickOrder` (the engine's, beside `barSelection`) is re-used here so a
-        // probe-blocked pick can fall through to the next-cheapest bar-clearing
-        // candidate while the bar itself stays fixed.
-        const ordered = usable.filter((c) => goodIds.has(c.ranked.model.id)).sort((a, b) => pickOrder(a.ranked, b.ranked));
-        let pick: Candidate | null = null;
-        // Budgeted like the walk: a pathological all-blocked `good` set must not
-        // cost one request per candidate. Cached verdicts are free, so only
-        // newly-issued probes count.
+        // the usable pool, not over the probe-clean subset. Budgeted like the
+        // walk: a pathological all-blocked `good` set must not cost one request
+        // per candidate. Cached verdicts are free, so only newly-issued probes
+        // count.
         let probesSpent = 0;
         for (const c of ordered) {
           let verdict = probeVerdicts.get(c.catalogId);
@@ -471,44 +451,21 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
             break;
           }
         }
-        if (pick === null) {
-          notes.push(`@${role}: no probe-clean candidate at or above the bar (key-blocked: ${keyBlockedCount}) — role untouched`);
-          continue;
-        }
-        // Non-null from here: the closure below captures the narrowed value.
-        const pickCandidate: Candidate = pick;
-        // The incumbent is looked up in `usable` (not `pool`, the probe window:
-        // an incumbent outside it is still a valid incumbent to compare
-        // against), but only when the probe accepts it. A probe-blocked
-        // incumbent is not in the pool at all — value mode would `adopt` away
-        // from it, and cheapest mode must not regress that by keeping a model
-        // the account cannot run. The walk probes the incumbent first, so a
-        // non-key-blocked incumbent's verdict is always known here.
-        currentEntry =
-          currentId === null
-            ? null
-            : usable.find((c) => c.ranked.model.id === currentId && probeVerdicts.get(c.catalogId) !== "blocked") ?? null;
-        challenger = pickCandidate;
-        // The incumbent fell below the bar: dropped with no margin.
-        switchedPredicate = (cur) => !goodIds.has(cur.ranked.model.id);
-        costEscapePredicate = (cur) =>
-          // The same guards as value mode's `cheaperInsideMargin`: a
-          // non-positive fraction disables the cost-side switch (the schema and
-          // README both document `0 disables`), and a non-positive incumbent
-          // price has no fraction to undercut.
-          hysteresis.priceSwitchFraction > 0 &&
-          cur.ranked.priceEff > 0 &&
-          pickCandidate.ranked.priceEff <= cur.ranked.priceEff * (1 - hysteresis.priceSwitchFraction);
-      } else {
-        currentEntry = currentId === null ? null : pool.find((p) => p.ranked.model.id === currentId) ?? null;
-        challenger = best;
-        switchedPredicate = (cur) => best.ranked.value - cur.ranked.value >= hysteresis.switchMargin;
-        costEscapePredicate = (cur) => cheaperInsideMargin(best.ranked, cur.ranked, hysteresis);
+      }
+      // The per-mode inputs to the shared ladder (see `ladderInputs`): the
+      // challenger, the incumbent and the two switch predicates. The incumbent
+      // is looked up in the mode's own pool, and only when the probe accepts it
+      // — a probe-blocked incumbent is not in the pool at all, and cheapest mode
+      // must not keep a model the account cannot run. The walk probes the
+      // incumbent first, so a non-key-blocked incumbent's verdict is known here.
+      const inputs = ladderInputs({ mode, settings: hysteresis, usable, pool, currentId, ordered, pick, clean: (c) => probeVerdicts.get(c.catalogId) !== "blocked" });
+      if (inputs === null) {
+        notes.push(`@${role}: no probe-clean candidate at or above the bar (key-blocked: ${keyBlockedCount}) — role untouched`);
+        continue;
       }
       // The six-arm decision ladder, shared by both modes (see `decide`).
-      const { chosen, reason } = decide({ currentSelector, currentEntry, challenger, switched: switchedPredicate, costEscape: costEscapePredicate });
+      const { chosen, reason } = decide({ currentSelector, currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
 
-      const suffix = def.thinking;
       // A provider pin rides as the selector's `@<slug>` suffix, before the
       // thinking level (`openrouter/<id>@<slug>:<level>`) — omp's
       // `splitUpstreamRouting` parses the trailing `@<slug>` and applies
@@ -531,7 +488,6 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // usable (a transient blip must never unpin a role), and a pool with no
       // clean candidate drops the pin: the selector stays bare and OpenRouter
       // routes the request itself instead of 404ing on an unroutable `@<slug>`.
-      const manualPin = def.providerPin;
       const autoRoutes = autoPinApplies(def) ? rankedRoutes(chosen.ranked.model, def) : [];
       // No gate-passing route means nothing to pin and nothing to drop: the bare
       // selector is default routing, not a dropped pin.
@@ -557,22 +513,15 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         autoSlug = r.providerSlug;
         break;
       }
-      const pinSlug = manualPin ?? autoSlug;
-      const pin = pinSlug !== undefined ? `@${pinSlug}` : "";
-      const chosenRow = rowById.get(chosen.catalogId);
-      // Append only a level the model's catalog thinking[] actually supports —
-      // omp clamps unsupported levels, so an unsupported pin would run at a
-      // different effort than the role intends (and than the ranking priced).
-      const appendSuffix = suffix !== undefined && chosenRow !== undefined && (META_LEVELS[suffix] === true || chosenRow.thinking.includes(suffix));
-      const finalSelector = `openrouter/${chosen.catalogId}${pin}${appendSuffix ? `:${suffix}` : ""}`;
+      const parts = selectorFor({ chosen, def, rowById, autoPin: hasAutoRoutes, autoSlug });
       decisions.push({
         role,
         from: currentSelector,
-        to: finalSelector,
+        to: parts.selector,
         reason,
         value: chosen.ranked.value,
         bestValue: best.ranked.value,
-        currentValue: currentEntry?.ranked.value ?? null,
+        currentValue: inputs.currentEntry?.ranked.value ?? null,
         blocked: blockedForRole,
         endpointBlocked: endpointFilterDrops(def, rank.models),
         pinBlocked: providerPinDrops(def, rank.models),
@@ -580,24 +529,21 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         pinDropped: hasAutoRoutes && autoSlug === undefined,
         availabilitySource: availability.active ? "keyed-catalog" : "probe",
         keyBlockedCount,
+        chainKey: parts.key,
       });
 
       // Fallback chain inputs for every managed role: the bare key (a chain key
       // matches the active model id, never a level) plus the candidate list the
       // chain's fallback models are drawn from. Values are built after the loop,
-      // once every key claim is known.
+      // once every key claim is known. The chain's fallback models come from the
+      // role's whole ranked candidate list, so a cheaper-or-equal model ranked
+      // below the probe window can be chained. Only the candidates the probe
+      // walk would never accept are dropped — key-blocked (the account's key
+      // cannot use them) and probe-verdict-blocked (present in the public
+      // catalog but not for this key). An unprobed candidate stays: the chain's
+      // deeper entries are no longer required to be probe-verified.
       if (settings.writeFallbackChains) {
-        const key = suffix !== undefined && finalSelector.endsWith(`:${suffix}`) ? finalSelector.slice(0, -(suffix.length + 1)) : finalSelector;
-        // The chain's fallback models come from the role's whole ranked
-        // candidate list, so a cheaper-or-equal model ranked below the probe
-        // window can be chained. Only the candidates the probe walk would never
-        // accept are dropped — key-blocked (the account's key cannot use them)
-        // and probe-verdict-blocked (present in the public catalog but not for
-        // this key). An unprobed candidate stays: the chain's deeper entries are
-        // no longer required to be probe-verified. The chosen model passed both
-        // predicates, so it is always in the list and `chosenIdx` is never -1.
-        const chainCandidates = candidates.filter((c) => !keyBlocked(c) && probeVerdicts.get(c.catalogId) !== "blocked");
-        chainPlanByRole[role] = { key, suffix, pin, pinnedSlug: autoSlug, candidates: chainCandidates, chosenIdx: chainCandidates.indexOf(chosen), def, autoPin: hasAutoRoutes };
+        chainPlanByRole[role] = chainPlanFor({ role, chosen, candidates, selector: parts, def, keep: (c) => !keyBlocked(c) && probeVerdicts.get(c.catalogId) !== "blocked" }).plan;
       }
     }
 
