@@ -156,8 +156,10 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   `llm-role-state.json` + `llm-role-history.jsonl` + `llm-role-usage.jsonl`, and
   answered `ok`. The three runs' picks differ (`default` →
   `deepseek-v4.1-flash` in the git run, `deepseek-v4.1-flash-1017` in the npm and
-  marketplace runs) because the live keyed-catalog fetch returned 40 vs 41
-  blocked models — live-data variance, not a route defect.
+  marketplace runs) because the runs saw different live data — the keyed-catalog
+  fetch returned 40 vs 41 blocked models — live-data variance, not a route
+  defect; a repeat of the npm and git smokes read 408 models and 40 blocked in
+  both and picked `deepseek-v4.1-flash` in both, so the variance is transient.
 - **1.5.0 published by CD 2026-10-20** (run 39380792274, tag push): the guard
   and the npm floor passed, `npm publish` completed over OIDC trusted publishing
   with a provenance attestation, and the GitHub Release was created with the

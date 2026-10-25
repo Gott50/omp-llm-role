@@ -49,8 +49,11 @@ read.
   `llm-role-state.json` + `llm-role-history.jsonl` + `llm-role-usage.jsonl`, and
   answered `ok`. The three runs' picks differ (`default` →
   `deepseek-v4.1-flash` in the git run, `deepseek-v4.1-flash-1017` in the npm and
-  marketplace runs) because the live keyed-catalog fetch returned 40 vs 41
-  blocked models — the documented live-data variance, not a route defect.
+  marketplace runs) because the runs saw different live data — the keyed-catalog
+  fetch returned 40 vs 41 blocked models — the documented live-data variance, not
+  a route defect; a repeat of the npm and git smokes read 408 models and 40
+  blocked in both and picked `deepseek-v4.1-flash` in both, so the variance is
+  transient.
 
 - Explorer settings editor and decision preview (2026-10-25, spec #109): the
   explorer becomes a full settings editor with a live "what the updater would
