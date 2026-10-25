@@ -122,6 +122,42 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   push publishes to npm over OIDC and creates the GitHub Release. The guard was
   verified with a negative control — tag `v0.0.1` against version `1.1.0` failed
   in `notes` before any publish.
+- **1.6.0 published by CD 2026-10-25** (run 40197223623, tag push): the guard
+  and the npm floor passed, `npm publish` completed over OIDC trusted publishing
+  with a provenance attestation (transparency log
+  `https://search.sigstore.dev/?logIndex=3461736889`), and the GitHub Release was
+  created with the 1.6.0 CHANGELOG section as its body
+  (`https://github.com/Gott50/omp-llm-role/releases/tag/v1.6.0`). Verified:
+  `dist-tags.latest` = `1.6.0`, npm's `gitHead` = `82b2a29` (the tag's commit),
+  and the publish step's log carries the direct-publish signature (`Publishing
+  to https://registry.npmjs.org/ with tag latest and default access`, `Signed
+  provenance statement`, `+ omp-llm-role@1.6.0`, 61 files / 399.6 kB). The cut
+  (`82b2a29`, tagged `v1.6.0`) bumped the four lockstep fields, renamed
+  `## [Unreleased]` to `## [1.6.0] - 2026-10-25`, and regenerated the report
+  (408 models, matched 144/408, priced 144 — the pool moved 416 → 408 and eight
+  leaders moved, `default`/`smol`/`slow`/`vision`/`commit`/`tiny`/`task`/
+  `designer`, because the daily caches moved, not the code;
+  `docs/dev/current-state.md` refreshed to the same measurement). The release
+  carries two specs, merged to `main` before the cut: spec #109 (the explorer
+  settings editor and decision preview) and spec #103 (the opt-in cheapest-model
+  selection).
+- **1.6.0 install routes smoke-tested** (2026-10-25, omp 18.12.6, throwaway
+  `HOME`s, cwd outside the real home tree): npm
+  (`omp plugin install omp-llm-role`), git
+  (`omp plugin install github:Gott50/omp-llm-role`) and marketplace
+  (`omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins`) each installed 1.6.0
+  (`omp plugin doctor`: 4 ok / 0 warnings / 0 errors for npm and git; the
+  marketplace install's one warning is the expected
+  `package_manifest: Not created yet`). Each post-install session run
+  (`omp -p "say ok"` with `OPENROUTER_API_KEY` from `omp token openrouter`) wrote
+  `modelRoles` (9 roles), `retry.fallbackChains` (3 keys) and
+  `task.disabledAgents: [designer]` into that HOME's `config.yml`, landed
+  `llm-role-state.json` + `llm-role-history.jsonl` + `llm-role-usage.jsonl`, and
+  answered `ok`. The three runs' picks differ (`default` →
+  `deepseek-v4.1-flash` in the git run, `deepseek-v4.1-flash-1017` in the npm and
+  marketplace runs) because the live keyed-catalog fetch returned 40 vs 41
+  blocked models — live-data variance, not a route defect.
 - **1.5.0 published by CD 2026-10-20** (run 39380792274, tag push): the guard
   and the npm floor passed, `npm publish` completed over OIDC trusted publishing
   with a provenance attestation, and the GitHub Release was created with the
@@ -297,7 +333,7 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
 - **Stray registry placeholder.** The registry also carries a `0.0.0-stage`
   version ("Temporary package placeholder for staged publishing", 334 B,
   published 2026-10-03). It is not from this tree and does not affect installs
-  (`latest` is `1.5.0`).
-- **Next release: none owed.** `## [Unreleased]` is empty — the 1.5.0 cut moved
-  its entries under `## [1.5.0] - 2026-10-20`; the number comes from the
+  (`latest` is `1.6.0`).
+- **Next release: none owed.** `## [Unreleased]` is empty — the 1.6.0 cut moved
+  its entries under `## [1.6.0] - 2026-10-25`; the number comes from the
   Unreleased scope, not from the open issues.

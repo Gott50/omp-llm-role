@@ -6,16 +6,51 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
-ranking numbers below are the 2026-10-20 measurement (regenerated at the 1.5.0
-cut). The pool moved 408 → 416 models and six leaders moved (`default`, `smol`,
-`vision`, `commit`, `tiny`, `task`; `slow`, `plan` and `advisor` held) because
-the daily caches moved, not the code: the ranking CLI
+ranking numbers below are the 2026-10-25 measurement (regenerated at the 1.6.0
+cut). The pool moved 416 → 408 models and eight leaders moved (`default`,
+`smol`, `slow`, `vision`, `commit`, `tiny`, `task`, `designer`; `plan` and
+`advisor` held) because the daily caches moved, not the code: the ranking CLI
 is unchanged since the 2026-10-19 measurement, which was itself byte-identical
 to the 2026-10-18 one apart from the report's date line — the input-price blend
 basis #21, the #17/#18/#19/#20 wave, the #34–#40 focus-axis/capability-flag
-work, and spec #81's explorer surfaces. The provider-pin numbers are the
+work, spec #81's explorer surfaces, and spec #103's opt-in selection rule (the
+ranking CLI does not apply `selection`). The provider-pin numbers are the
 2026-10-11 measurement (spec #71; see the top bullet). Neither is re-derived on
 read.
+
+- Release 1.6.0 (2026-10-25, cut `82b2a29`, tag `v1.6.0`): the spec #109 explorer
+  settings editor and decision preview, and the spec #103 opt-in cheapest-model
+  selection, ship. The report was regenerated at the cut and moved with the daily
+  caches — 416 → 408 models, matched 151/416 → 144/408, priced 149 → 144,
+  eligible 142 → 137 (vision 76 → 71, designer 89 → 84) — and eight leaders moved
+  (`default`, `smol`, `slow`, `vision`, `commit`, `tiny`, `task`, `designer`;
+  `plan` and `advisor` held), so the numbers below are the 2026-10-25
+  measurement. Published by CD (run 40197223623, tag push): the guard and the npm
+  floor passed, `npm publish` completed over OIDC trusted publishing with a
+  provenance attestation (transparency log
+  `https://search.sigstore.dev/?logIndex=3461736889`), and the GitHub Release was
+  created with the 1.6.0 CHANGELOG section as its body
+  (`https://github.com/Gott50/omp-llm-role/releases/tag/v1.6.0`). Verified:
+  `dist-tags.latest` = `1.6.0`, npm's `gitHead` = `82b2a29` (the tag's commit),
+  and the publish step's log carries the direct-publish signature (`Publishing to
+  https://registry.npmjs.org/ with tag latest and default access`, `Signed
+  provenance statement`, `+ omp-llm-role@1.6.0`, 61 files / 399.6 kB). All three
+  install routes smoke-tested (omp 18.12.6, throwaway `HOME`s, cwd outside the
+  real home tree): npm (`omp plugin install omp-llm-role`), git
+  (`omp plugin install github:Gott50/omp-llm-role`) and marketplace
+  (`omp plugin marketplace add Gott50/omp-llm-role` +
+  `omp plugin install omp-llm-role@gott50-plugins`) each installed 1.6.0
+  (`omp plugin doctor`: 4 ok / 0 warnings / 0 errors for npm and git; the
+  marketplace install's one warning is the expected
+  `package_manifest: Not created yet`), and each post-install session run
+  (`omp -p "say ok"` with `OPENROUTER_API_KEY` from `omp token openrouter`) wrote
+  `modelRoles` (9 roles), `retry.fallbackChains` (3 keys) and
+  `task.disabledAgents: [designer]` into that HOME's `config.yml`, landed
+  `llm-role-state.json` + `llm-role-history.jsonl` + `llm-role-usage.jsonl`, and
+  answered `ok`. The three runs' picks differ (`default` →
+  `deepseek-v4.1-flash` in the git run, `deepseek-v4.1-flash-1017` in the npm and
+  marketplace runs) because the live keyed-catalog fetch returned 40 vs 41
+  blocked models — the documented live-data variance, not a route defect.
 
 - Explorer settings editor and decision preview (2026-10-25, spec #109): the
   explorer becomes a full settings editor with a live "what the updater would
@@ -37,9 +72,10 @@ read.
   delete-then-write semantics as the role half (`GLOBAL_SETTING_KEYS`), and
   `writeRoleSettings` validates both halves before any write. Export writes the
   global settings and the role defs in one validated, backed-up, atomic write.
-  The ranking numbers are unchanged — the preview is read-only and the settings
-  editor writes the lock file, not the ranking — so `docs/llm-role-rankings.md`
-  is not regenerated and the dated numbers below stand as written; the suite grew
+  The ranking numbers are unchanged by this spec — the preview is read-only and
+  the settings editor writes the lock file, not the ranking — but the report was
+  regenerated at the 1.6.0 cut like every cut, and the dated numbers below moved
+  because the daily caches moved, not the code; the suite grew
   738 → 792 (a two-axis review pass on this spec added five fixtures: the
   depth-0 agreement case, the user-scope agent pins, the agent-dir split, the
   nested global parent, and the absent-settings preview).
@@ -854,18 +890,18 @@ read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 416 llm-stats models; OpenRouter matched 151/416 (throughput), 149 priced (the
-  2026-10-19 snapshot read 149/408 — the daily cache moved, not the code; the
+- 408 llm-stats models; OpenRouter matched 144/408 (throughput), 144 priced (the
+  2026-10-20 snapshot read 151/416 — the daily cache moved, not the code; the
   #34–#40 axes and flags leave every ranking byte-identical until a flag is
   turned on).
-- Eligible per role: 142 (vision 76, designer 89, image-input filter).
+- Eligible per role: 137 (vision 71, designer 84, image-input filter).
 - Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
   leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash-1017 (0.804), `smol` Muse Spark 1.1 (0.760),
-  `slow` Gemini 4 Argon (0.835), `vision` DeepSeek-V4.1-Flash-1017 (0.736),
-  `plan` Muse Spark 1.3 (0.782), `commit` Muse Spark 1.1 (0.801), `tiny`
-  Muse Spark 1.1 (0.872), `task` DeepSeek-V4.1-Flash-1017 (0.745), `advisor`
-  Muse Spark 1.3 (0.773), `designer` DeepSeek-V4.1-Flash-1017 (0.776).
+  `default` DeepSeek-V4.1-Flash (0.811), `smol` Muse Spark 1.3 (0.767),
+  `slow` Muse Spark 1.3 (0.842), `vision` Kimi K3 (0.731), `plan` Muse Spark 1.3
+  (0.809), `commit` Muse Spark 1.3 (0.811), `tiny` Muse Spark 1.3 (0.853),
+  `task` DeepSeek-V4.1-Flash (0.757), `advisor` Muse Spark 1.3 (0.834),
+  `designer` Muse Spark 1.3 (0.810).
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
