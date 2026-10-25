@@ -103,6 +103,41 @@ removed rather than left stale. `mergeRemove` needs no change: its existing
 `roles.<name>.` prefix already covers the new keys, so `/remove-agent` deletes
 them.
 
+**The global half (spec #109).** The explorer's Settings panel edits the global
+(non-`roles.`) settings, so the one write path gained a global half.
+`mergeSettings(existing, { roles, settings })` (`src/role-settings.ts`) is the
+merge both halves go through; `mergeExport(existing, dirty)` is now a thin
+wrapper over `mergeSettings(existing, { roles: dirty })`. The `settings` half
+writes the global keys as flat dotted keys with the same "make this match"
+semantics as the role half:
+
+- `GLOBAL_SETTING_KEYS` is every global (non-`roles.`) key of the plugin's
+  settings schema, derived from `deriveSettingsSchema()`, so a new global setting
+  is covered automatically. It is the delete-then-write key set: every entry is
+  deleted from the plugin object first, then the edited keys are assigned, so a
+  cleared setting falls back to the shipped default rather than leaving a stale
+  value. The nested parents of the dotted keys (`tokenProfile`, `features`) are
+  deleted too, so a hand-written nested object is normalized away with the flat
+  keys and a cleared setting cannot survive as a nested value.
+- The keys written are `switchMargin`, `priceSwitchFraction`,
+  `writeFallbackChains`, `fallbackChainDepth`, `fallbackQualityFloor`,
+  `selection`, `qualityFloor`, `activateDefaultOnEmptySession`,
+  `errorReporting`, `tokenProfile.inputTokens`, `tokenProfile.outputTokens` and
+  `features.<id>`. `plugins`, the `config` escape hatch and every sibling
+  settings key are preserved, exactly as the role half does.
+- An absent `settings` leaves the global half of the lock file untouched (the
+  pre-#109 behaviour), so `src/cli/create-role.ts` and `/create-agent` keep
+  working unchanged.
+
+**Validation before write.** `writeRoleSettings(lockPath, dirty, { dryRun,
+settings })` validates first and never writes on an error. With `opts.settings`
+present it runs `resolveSettings({ ...settings, roles: dirty }).errors` — the
+same resolver as the role half — so an out-of-range global setting aborts with
+the offending key (`switchMargin: must be a number in [0, 1], got 1.5`) and no
+write. Without it, it validates the dirty roles only. The explorer's Export
+posts both halves in one call, so a half-applied settings change is impossible;
+the preview endpoint is read-only and never reaches this path.
+
 **Validation aborts** (notify, no write), in the existing one-error-string-per-
 violation style (`resolveSettings` in `src/settings.ts`):
 
@@ -303,8 +338,9 @@ byte-identical to before.
 
 ## The selection decision (spec #103)
 
-The per-role selection step (`src/updater.ts`) names the model the selector
-writes. Two settings choose the rule: `selection` (`"value"` default, or
+The per-role selection step (`decide` in `src/selection.ts`, called by
+`src/updater.ts`) names the model the selector writes. Two settings choose the
+rule: `selection` (`"value"` default, or
 `"cheapest"`) and `qualityFloor` (a number in `[0, 1]`, default `0.9`, inert in
 `"value"` mode); a role's own `roles.<role>.selection` / `roles.<role>.qualityFloor`
 overrides the global. The rule and its math are in scoring.md, *Selection rule —
@@ -466,7 +502,7 @@ fires). The gate is **per scope**: a project run loads the project's own
 
 ## `task.disabledAgents` sync (pin-derived, not day-gated)
 
-`agentDisablePatch` (`src/updater.ts`) + `discoverAgentPins`
+`agentDisablePatch` (`src/selection.ts`) + `discoverAgentPins`
 (`src/agent-pins.ts`) keep each discovered agent in `task.disabledAgents`
 exactly while the role its `model:` frontmatter chain pins is disabled:
 
