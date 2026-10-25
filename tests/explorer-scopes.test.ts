@@ -11,7 +11,7 @@ import { isRecord } from "../src/guards.ts";
 import { PROJECT_REGISTRY_FILE } from "../src/project-registry.ts";
 import { DEFAULT_ROLES } from "../src/settings.ts";
 import { USAGE_LEDGER_FILE } from "../src/usage-ledger.ts";
-import { makeCatalog, makeModel } from "./helpers.ts";
+import { makeCatalog, makeModel, runInTempDir } from "./helpers.ts";
 
 const MODELS = [makeModel("premium", 90, 20, 50), makeModel("budget", 60, 0.5, 200)];
 const RANK: RankData = { models: MODELS, fetchedAt: "2026-10-06T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
@@ -632,4 +632,57 @@ test("a project scope's raw settings are the project lock merged over the user-l
   assert.equal(settings.authored.switchMargin, 0.1);
   assert.equal(settings.authored["features.costCap"], true);
   assert.equal(settings.resolved.switchMargin, 0.1);
+});
+
+// ---------------------------------------------------------------------------
+// Spec #109 / ticket #113: the preview's scope-side inputs. A project scope
+// must read its OWN config.yml, state and agents dir — never the user-level
+// ones — or the preview would decide against another scope's incumbent.
+// ---------------------------------------------------------------------------
+
+test("a project scope's preview reads the project's state, config.yml and agents dir", async () => {
+  const root = tempDir("explorer-scope-preview-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLock(userLock, { userrole: USER_ROLE });
+  const project = join(root, "proj");
+  writeProjectLock(project, { projrole: PROJECT_ROLE });
+  // The project's own state: `gone` was managed by a previous run and is no
+  // longer a role, so the preview must report it as a removal.
+  mkdirSync(join(project, ".omp"), { recursive: true });
+  writeFileSync(join(project, ".omp", "llm-role-state.json"), JSON.stringify({ managedRoles: ["projrole", "gone"] }, null, 2));
+  // The user-level state must NOT be read for a project scope.
+  writeFileSync(join(root, "llm-role-state.json"), JSON.stringify({ managedRoles: ["userrole"] }, null, 2));
+  // The project's own config.yml carries the hysteresis incumbent.
+  writeFileSync(join(project, ".omp", "config.yml"), "modelRoles:\n  projrole: openrouter/org/premium\n");
+  // A project agent pinning an enabled role: only the project agents dir has it.
+  mkdirSync(join(project, ".omp", "agents"), { recursive: true });
+  writeFileSync(join(project, ".omp", "agents", "helper.md"), '---\nname: helper\ndescription: "h"\nmodel: "@projrole"\n---\n\nbody\n');
+
+  // Hermetic: `discoverAgentPins`'s userDir default is the live agent dir, so
+  // point it at the temp root for the duration of the boot.
+  await runInTempDir(root, async () => {
+    const handle = await boot({ userLock, cwd: project, registryDir: root }, { catalog: makeCatalog(["premium", "budget"]) });
+    try {
+      const res = await fetch(`${handle.url}/api/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: {}, roles: { projrole: PROJECT_ROLE, userrole: USER_ROLE } }),
+      });
+      const body: unknown = await res.json();
+      assert.ok(isRecord(body));
+      const preview = body.preview;
+      assert.ok(isRecord(preview));
+      // The project's state, not the user-level one.
+      assert.deepEqual(preview.roleRemovals, ["gone"]);
+      // The project's config.yml supplied the incumbent.
+      const decisions = preview.decisions as Array<Record<string, unknown>>;
+      const decision = decisions.find((d) => d.role === "projrole");
+      assert.ok(decision, "the preview must decide the project role");
+      assert.equal(decision.from, "openrouter/org/premium");
+      // The project agents dir was scanned: `helper` pins an enabled role.
+      assert.ok((preview.agentDisableRemoves as string[]).includes("helper"));
+    } finally {
+      await handle.close();
+    }
+  });
 });
