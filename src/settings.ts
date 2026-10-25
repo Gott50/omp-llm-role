@@ -286,6 +286,45 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   tokenProfile: null,
 };
 
+/**
+ * The global (non-`roles.`) projection of `ResolvedSettings`: the settings the
+ * explorer's Settings panel edits and the preview consumes. `roles` is the only
+ * field left out; `tokenProfile` stays an object here, while the lock file
+ * carries it as the two flat keys `tokenProfile.inputTokens` /
+ * `tokenProfile.outputTokens`.
+ */
+export type GlobalSettings = {
+  switchMargin: number;
+  priceSwitchFraction: number;
+  writeFallbackChains: boolean;
+  fallbackChainDepth: number;
+  fallbackQualityFloor: number;
+  selection: SelectionMode;
+  qualityFloor: number;
+  activateDefaultOnEmptySession: boolean;
+  errorReporting: "off" | "ask" | "auto";
+  tokenProfile: TokenProfile | null;
+  features: Record<string, boolean>;
+};
+
+/** Project the resolved settings onto their global half. The two maps are
+ *  copied, so a caller cannot mutate the resolved settings through the result. */
+export function globalSettingsOf(settings: ResolvedSettings): GlobalSettings {
+  return {
+    switchMargin: settings.switchMargin,
+    priceSwitchFraction: settings.priceSwitchFraction,
+    writeFallbackChains: settings.writeFallbackChains,
+    fallbackChainDepth: settings.fallbackChainDepth,
+    fallbackQualityFloor: settings.fallbackQualityFloor,
+    selection: settings.selection,
+    qualityFloor: settings.qualityFloor,
+    activateDefaultOnEmptySession: settings.activateDefaultOnEmptySession,
+    errorReporting: settings.errorReporting,
+    tokenProfile: settings.tokenProfile === null ? null : { ...settings.tokenProfile },
+    features: { ...settings.features },
+  };
+}
+
 /** One row of the plugin's settings schema (omp's `PluginSettingSchema`): the
  *  flat, dotted key set omp's `/settings` Plugins tab renders and writes. */
 export type PluginSettingSchema = {
