@@ -70,6 +70,19 @@ things that only bite someone changing or debugging the code.
   1/p², making the traffic-weighted blend $0.138 / 55 tok/s vs the shipped
   $0.133 / 46. Revisit if live cost/throughput diverges from the ranking.
 
+## Selection and the probe walk
+
+- **In value mode, `fallbackChainDepth: 0` freezes a role on its incumbent.** The
+  probe walk probes the incumbent first and stops as soon as
+  `1 + fallbackChainDepth` clean candidates exist, so at depth `0` the window is
+  the incumbent alone: the challenger IS the incumbent, the ladder reads
+  `kept-eligible`, and a value leader that beats it by the margin is never
+  adopted. The window is the walk's, not the whole usable set — the explorer's
+  preview computes the same window (`probeWindow` in `src/selection.ts`), so the
+  two agree. Cheapest mode is unaffected: its pick is the cheapest bar-clearing
+  candidate, probed on demand, and its incumbent is looked up in the usable set.
+  Raise `fallbackChainDepth` to let the walk see past the incumbent.
+
 ## Caches
 
 - **Freshness is the UTC day, not a TTL.** Every cache is fresh while its
@@ -94,6 +107,14 @@ things that only bite someone changing or debugging the code.
   merge applies to `thinking`: a role whose shipped default (or lock file) sets
   a level cannot be returned to bare by omitting the key, so the editor disables
   `— (bare)` for those roles.
+- **A hand-written nested global object is deleted with the flat keys.** The lock
+  file's convention is flat dotted keys (`tokenProfile.inputTokens`,
+  `features.costCap`), but a hand edit can nest them (`tokenProfile: {…}`,
+  `features: {…}`). `resolveSettings` reads both, so a nested object is live
+  until a write: the global half's delete-then-write (`applyGlobalSettings` in
+  `src/role-settings.ts`) removes the nested parent along with the flat keys, and
+  the explorer's preview calls the same helper, so the preview never resolves a
+  global Export would delete.
 
 ## Benchmark sources
 

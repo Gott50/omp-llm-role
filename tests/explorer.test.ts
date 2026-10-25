@@ -388,7 +388,9 @@ test("startExplorer serves lock-file roles and releases its port on close", asyn
     webDir: join(process.cwd(), "web"),
     lockPath,
     registryDir: dir,
-    // Hermetic: a booted explorer must never read the developer's real ledger.
+    // Hermetic: a booted explorer must never read the developer's real state,
+    // config.yml or ledger.
+    agentDir: dir,
     usageDir: dir,
     rank,
     catalog: [],
@@ -470,7 +472,9 @@ test("a bootstrap after Export reflects the new lock state", async () => {
     webDir: join(process.cwd(), "web"),
     lockPath,
     registryDir: dir,
-    // Hermetic: a booted explorer must never read the developer's real ledger.
+    // Hermetic: a booted explorer must never read the developer's real state,
+    // config.yml or ledger.
+    agentDir: dir,
     usageDir: dir,
     rank,
     catalog: [],
@@ -525,7 +529,9 @@ test("startExplorer falls back to an ephemeral port when the preferred one is bu
     webDir: join(process.cwd(), "web"),
     lockPath,
     registryDir: dir,
-    // Hermetic: a booted explorer must never read the developer's real ledger.
+    // Hermetic: a booted explorer must never read the developer's real state,
+    // config.yml or ledger.
+    agentDir: dir,
     usageDir: dir,
     rank,
     catalog: [],
@@ -1817,6 +1823,80 @@ test("POST /api/preview drops the scope's flat roles.* keys, so a cleared pin ca
   }
 });
 
+test("POST /api/preview deletes a hand-written nested global parent, exactly as Export does", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-preview-nested-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  // A hand-written NESTED global object (the lock file's convention is the flat
+  // `features.<id>` / `tokenProfile.inputTokens` keys, but a hand edit can nest
+  // them). Export deletes the nested parent along with the flat keys, so the
+  // preview must too: otherwise it would expand the role with `endpointCeilings`
+  // (dropping every route-less model) and resolve a `tokenProfile` Export would
+  // never write — a preview of a config that cannot exist.
+  const handle = await bootServer(
+    previewOpts(lockPath, {
+      getState: () => ({
+        rank: PREVIEW_RANK,
+        roles: { previewrole: PREVIEW_ROLE },
+        universe: {},
+        defaults: DEFAULT_ROLES,
+        availability: NO_AVAILABILITY,
+        features: {},
+        selection: NO_SELECTION,
+        settings: PREVIEW_SETTINGS,
+        raw: { roles: { previewrole: PREVIEW_ROLE }, features: { endpointCeilings: true }, tokenProfile: { inputTokens: -1, outputTokens: -1 } },
+      }),
+    }),
+  );
+  try {
+    const { body } = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: PREVIEW_ROLE } });
+    // The nested `features` parent is gone, so the def is not expanded: the role
+    // is decided, not skipped as "no eligible candidate".
+    const decision = decisionOf(body, "previewrole");
+    assert.equal(decision.to, "openrouter/org/model-a");
+    assert.deepEqual(decision.endpointBlocked, []);
+    // The nested `tokenProfile` parent is gone too, so it cannot fail validation.
+    assert.deepEqual(body.errors, []);
+  } finally {
+    await handle.close();
+  }
+});
+
+test("POST /api/preview with no settings resolves the scope's committed globals", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-preview-absent-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  // The scope's committed globals: a 0.5 margin with the cost escape off, so the
+  // incumbent is kept. An absent `settings` must resolve THESE (docs/dev/explorer.md:
+  // "Absent = the scope's committed values"), not the shipped defaults — the same
+  // contract `/api/rank`, `/api/explain` and `/api/export` honour.
+  const handle = await bootServer(
+    previewOpts(lockPath, {
+      getState: () => ({
+        rank: PREVIEW_RANK,
+        roles: { previewrole: PREVIEW_ROLE },
+        universe: {},
+        defaults: DEFAULT_ROLES,
+        availability: NO_AVAILABILITY,
+        features: {},
+        selection: NO_SELECTION,
+        settings: PREVIEW_SETTINGS,
+        raw: { roles: { previewrole: PREVIEW_ROLE }, switchMargin: 0.5, priceSwitchFraction: 0 },
+      }),
+    }),
+  );
+  try {
+    const absent = await postJson(handle.url, "/api/preview", { roles: { previewrole: PREVIEW_ROLE } });
+    assert.equal(decisionOf(absent.body, "previewrole").reason, "kept-margin");
+    assert.equal(decisionOf(absent.body, "previewrole").to, "openrouter/org/model-b");
+    // An explicit empty edit clears them, so the shipped default margin applies.
+    const cleared = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: PREVIEW_ROLE } });
+    assert.equal(decisionOf(cleared.body, "previewrole").reason, "switched");
+  } finally {
+    await handle.close();
+  }
+});
+
 test("POST /api/export writes a global key and a role key in one lock file", async () => {
   const dir = mkdtempSync(join(tmpdir(), "explorer-export-both-"));
   const lockPath = join(dir, "omp-plugins.lock.json");
@@ -1929,7 +2009,9 @@ test("startExplorer serves the preview from the scope's lock file and config.yml
     lockPath,
     cwd: dir,
     registryDir: dir,
-    // Hermetic: the state dir and the ledger follow the scope dir.
+    // Hermetic: the agent dir (the user scope's config.yml and state) and the
+    // ledger both follow the scope dir.
+    agentDir: dir,
     usageDir: dir,
     rank: PREVIEW_RANK,
     catalog: makeCatalog(PREVIEW_MODELS.map((m) => m.id)),

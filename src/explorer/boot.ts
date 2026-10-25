@@ -71,9 +71,16 @@ export type ExplorerBootOpts = {
   /** The user-set token profile the per-task price falls back to (the
    *  `tokenProfile` setting); absent = unset. */
   tokenProfile?: TokenProfile | null;
+  /**
+   * The user-level agent dir holding the user scope's `config.yml`, state and
+   * history (default: `agentDir()`). A project scope reads its own `<root>/.omp`
+   * instead. Distinct from `usageDir`: the two coincide only because both
+   * default to `agentDir()`.
+   */
+  agentDir?: string;
   /** Dir holding the user-level usage ledger the per-task price resolves its
-   *  profile from (default: `agentDir()`, beside the plugin's other state). A
-   *  project scope reads its own `<root>/.omp` ledger instead. */
+   * profile from (default: `agentDir()`, beside the plugin's other state). A
+   * project scope reads its own `<root>/.omp` ledger instead. */
   usageDir?: string;
   port?: number;
   /** Open the URL in the default browser (macOS only). */
@@ -124,6 +131,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   // facts. `null` = no pruning.
   let allowed = opts.allowedProviders ?? null;
   const tier = opts.tier ?? "billed";
+  const userAgentDir = opts.agentDir ?? agentDir();
   const usageDir = opts.usageDir ?? agentDir();
   enrichThinkingLevels(rank.models, opts.catalog);
 
@@ -150,17 +158,19 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     // roles and the chain keys the plugin owns), and the agent pins the
     // `task.disabledAgents` sync reads. A project scope reads its own
     // `<root>/.omp` state and its own `.omp/agents`; the user scope reads the
-    // user-level agent dir and no project agents dir.
+    // user-level agent dir and the SESSION cwd's project agents dir — the same
+    // pins the run's `discoverAgentPins()` (no args) harvests, so the preview's
+    // agent-disable sync cannot differ from the run's.
     getPreviewInputs: (scope) => {
-      const state = loadState(scopeDir(scope, usageDir));
+      const state = loadState(scopeDir(scope, userAgentDir));
       return {
-        currentSelectors: readScopeConfig(scope, usageDir).modelRoles,
+        currentSelectors: readScopeConfig(scope, userAgentDir).modelRoles,
         pluginState: {
           managedRoles: state.managedRoles,
           pluginWrittenChainKeys: state.pluginWrittenChainKeys,
           managedDisabledAgents: state.managedDisabledAgents,
         },
-        agentPins: discoverAgentPins({ projectDir: scope.kind === "project" && scope.root !== undefined ? projectAgentsDir(scope.root) : null }),
+        agentPins: discoverAgentPins({ projectDir: scope.kind === "project" && scope.root !== undefined ? projectAgentsDir(scope.root) : projectAgentsDir(cwd) }),
       };
     },
     refresh: async () => {

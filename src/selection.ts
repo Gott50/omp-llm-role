@@ -11,7 +11,7 @@
  * against each other on a probe-clean fixture.
  */
 
-import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef } from "./engine.ts";
+import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef, type SelectionMode } from "./engine.ts";
 import { currentRankingId, resolveVariant, splitThinkingSuffix, type CatalogEntry, type KeyAvailability, type Tier } from "./availability.ts";
 import { roleUniverse, type ResolvedSettings } from "./settings.ts";
 import type { AgentPin } from "./agent-pins.ts";
@@ -47,7 +47,17 @@ export type Decision = {
   availabilitySource: "keyed-catalog" | "probe";
   /** Candidates pruned as key-blocked (present in the public catalog, absent from the keyed one). */
   keyBlockedCount: number;
+  /** The bare chain key this decision's chain is filed under: the selector minus
+   *  its trailing `:level` (chain keys are level-free). Carried on the decision
+   *  so a consumer (the explorer's SPA) reads it instead of re-deriving it from
+   *  the selector and the role's resolved thinking level. */
+  chainKey: string;
 };
+
+/** Per-role cap on allowlist probe requests (budget against pathological
+ * all-blocked pools). Shared with the updater's walk so the preview's window
+ * cannot drift from the run's. */
+export const PROBE_BUDGET = 12;
 
 /** A ranked model resolved to a concrete catalog id. */
 export type Candidate = { ranked: Ranked; catalogId: string };
@@ -114,6 +124,157 @@ export function decide<C extends { ranked: Ranked }>(input: {
   if (input.switched(input.currentEntry)) return { chosen: input.challenger, reason: "switched" };
   if (input.costEscape(input.currentEntry)) return { chosen: input.challenger, reason: "switched-cost" };
   return { chosen: input.currentEntry, reason: "kept-margin" };
+}
+
+/**
+ * The cheapest mode's bar-clearing candidates in `pickOrder` order — the list
+ * the pick is drawn from. Empty only for an empty pool. The caller resolves the
+ * pick from this list: the run probe-verifies it on demand (falling through a
+ * blocked candidate), the preview takes the first.
+ */
+export function cheapestOrder(usable: readonly Candidate[], floor: number): Candidate[] {
+  const bar = barSelection(usable.map((c) => c.ranked), floor);
+  if (bar === null) return [];
+  const goodIds = new Set(bar.good.map((r) => r.model.id));
+  return usable.filter((c) => goodIds.has(c.ranked.model.id)).sort((a, b) => pickOrder(a.ranked, b.ranked));
+}
+
+/**
+ * The per-mode inputs to the shared ladder: the challenger, the incumbent
+ * (looked up in the mode's own pool) and the two switch predicates. `null` when
+ * the cheapest mode has no pick (every bar-clearing candidate was probe-blocked,
+ * or the probe budget ran out).
+ *
+ * `pick` is the cheapest mode's bar-clearing pick — the run probe-verifies it,
+ * the preview takes the cheapest. `ordered` is that mode's bar-clearing list
+ * (its ids are the bar's `good` set). `clean` reports the probe verdict for the
+ * incumbent lookup; the preview is probe-optimistic, so it passes `() => true`.
+ */
+export function ladderInputs(input: {
+  mode: SelectionMode;
+  settings: ResolvedSettings;
+  /** The role's usable candidate set (the keyed prune applied). */
+  usable: readonly Candidate[];
+  /** The walk window: value mode's challenger and incumbent lookup. */
+  pool: readonly Candidate[];
+  currentId: string | null;
+  /** Cheapest mode: the bar-clearing candidates in `pickOrder` order. */
+  ordered: readonly Candidate[];
+  /** Cheapest mode: the pick from `ordered`. */
+  pick: Candidate | null;
+  /** Cheapest mode: whether a candidate is probe-clean. */
+  clean: (c: Candidate) => boolean;
+}): { challenger: Candidate; currentEntry: Candidate | null; switched: (cur: Candidate) => boolean; costEscape: (cur: Candidate) => boolean } | null {
+  if (input.mode === "cheapest") {
+    const pick = input.pick;
+    if (pick === null) return null;
+    const goodIds = new Set(input.ordered.map((c) => c.ranked.model.id));
+    return {
+      challenger: pick,
+      // The incumbent is looked up in `usable` (not the walk window: an
+      // incumbent outside it is still a valid incumbent to compare against),
+      // but only when the probe accepts it — a probe-blocked incumbent is not
+      // in the pool at all, and cheapest mode must not keep a model the account
+      // cannot run.
+      currentEntry: input.currentId === null ? null : input.usable.find((c) => c.ranked.model.id === input.currentId && input.clean(c)) ?? null,
+      // The incumbent fell below the bar: dropped with no margin.
+      switched: (cur) => !goodIds.has(cur.ranked.model.id),
+      // The same guards as value mode's `cheaperInsideMargin`: a non-positive
+      // fraction disables the cost-side switch, and a non-positive incumbent
+      // price has no fraction to undercut.
+      costEscape: (cur) =>
+        input.settings.priceSwitchFraction > 0 &&
+        cur.ranked.priceEff > 0 &&
+        pick.ranked.priceEff <= cur.ranked.priceEff * (1 - input.settings.priceSwitchFraction),
+    };
+  }
+  const best = input.pool[0];
+  return {
+    challenger: best,
+    currentEntry: input.currentId === null ? null : input.pool.find((c) => c.ranked.model.id === input.currentId) ?? null,
+    switched: (cur) => best.ranked.value - cur.ranked.value >= input.settings.switchMargin,
+    costEscape: (cur) => cheaperInsideMargin(best.ranked, cur.ranked, input.settings),
+  };
+}
+
+/** The selector a decision writes, and the parts the chain plan needs. */
+export type SelectorParts = {
+  /** `openrouter/<catalogId>[@<slug>][:<level>]`. */
+  selector: string;
+  /** The bare chain key: the selector minus its trailing `:level` (chain keys
+   *  are level-free). */
+  key: string;
+  /** The `@<slug>` suffix ("" when unpinned). */
+  pin: string;
+  /** The role's thinking level, when the model's catalog entry advertises it. */
+  suffix: string | undefined;
+  /** The route the auto-pin wrote — undefined for a manual pin, a dropped pin
+   *  and with the capability off. */
+  pinnedSlug: string | undefined;
+  /** Whether the auto-pin applies and the model has gate-passing routes. */
+  autoPin: boolean;
+};
+
+/**
+ * Assemble the selector a decision writes: the catalog id, the pin suffix (a
+ * manual `providerPin` always wins; else the route the auto-pin accepted), and
+ * the thinking level — appended only when the model's catalog `thinking[]`
+ * actually supports it, because omp clamps an unsupported level, so an
+ * unsupported pin would run at a different effort than the role intends (and
+ * than the ranking priced).
+ */
+export function selectorFor(input: {
+  chosen: Candidate;
+  def: RoleDef;
+  rowById: Map<string, CatalogEntry>;
+  /** Whether the auto-pin applies and the model has gate-passing routes. */
+  autoPin: boolean;
+  /** The route the auto-pin accepted (the run's route probe; the preview's
+   *  route leader) — undefined for a manual pin, a dropped pin and with the
+   *  capability off. */
+  autoSlug: string | undefined;
+}): SelectorParts {
+  const suffix = input.def.thinking;
+  const pinSlug = input.def.providerPin ?? input.autoSlug;
+  const pin = pinSlug !== undefined ? `@${pinSlug}` : "";
+  const chosenRow = input.rowById.get(input.chosen.catalogId);
+  const appendSuffix = suffix !== undefined && chosenRow !== undefined && (META_LEVELS[suffix] === true || chosenRow.thinking.includes(suffix));
+  const selector = `openrouter/${input.chosen.catalogId}${pin}${appendSuffix ? `:${suffix}` : ""}`;
+  // A chain key is the selector minus a trailing `:level` (chain keys are
+  // level-free), so a level the model does not support leaves the key bare.
+  const key = suffix !== undefined && selector.endsWith(`:${suffix}`) ? selector.slice(0, -(suffix.length + 1)) : selector;
+  return {
+    selector,
+    key,
+    pin,
+    suffix,
+    pinnedSlug: input.autoSlug,
+    autoPin: input.autoPin,
+  };
+}
+
+/**
+ * The chain plan for a decided role: the bare chain key (the selector minus its
+ * trailing `:level` — chain keys are level-free), the candidates the chain's
+ * fallback models are drawn from, and the chosen model's index in that list.
+ *
+ * `keep` is the caller's extra candidate filter: the run drops probe-blocked
+ * candidates (the chain's deeper entries are no longer required to be
+ * probe-verified, but a candidate the account cannot run must not be chained),
+ * the preview is probe-optimistic. The chosen model passed every predicate, so
+ * it is always in the list and `chosenIdx` is never -1.
+ */
+export function chainPlanFor(input: {
+  role: string;
+  chosen: Candidate;
+  candidates: readonly Candidate[];
+  selector: SelectorParts;
+  def: RoleDef;
+  keep: (c: Candidate) => boolean;
+}): { role: string; plan: ChainPlan } {
+  const { key, pin, suffix, pinnedSlug, autoPin } = input.selector;
+  const candidates = input.candidates.filter(input.keep);
+  return { role: input.role, plan: { key, suffix, pin, pinnedSlug, candidates, chosenIdx: candidates.indexOf(input.chosen), def: input.def, autoPin } };
 }
 
 /**
@@ -253,14 +414,47 @@ export function agentDisablePatch(
 }
 
 /**
+ * The probe walk's window, probe-optimistically: the walk probes the incumbent
+ * first, then rank order, and stops when `1 + fallbackChainDepth` clean
+ * candidates exist AND — when the incumbent is clean — `fallbackChainDepth`
+ * clean candidates lie beyond it. Every candidate is clean here, so the window
+ * is a prefix of the walk order, capped at `PROBE_BUDGET`, returned in rank
+ * order (the walk sorts its pool by index). `currentIdx` is the incumbent's
+ * index in `candidates`, or -1 when there is none (or it is key-blocked, so it
+ * is not in `candidates` at all).
+ *
+ * At `fallbackChainDepth: 0` the window is the incumbent alone, so a kept role
+ * stays kept — the run's own behaviour, which the agreement test pins.
+ */
+export function probeWindow<C extends { ranked: Ranked }>(candidates: readonly C[], currentIdx: number, fallbackChainDepth: number): C[] {
+  const order: number[] = [];
+  if (currentIdx >= 0) order.push(currentIdx);
+  for (let i = 0; i < candidates.length; i++) if (i !== currentIdx) order.push(i);
+  const target = 1 + fallbackChainDepth;
+  const currentClean = currentIdx >= 0;
+  const window: number[] = [];
+  let cleanCount = 0;
+  let cleanAfterCurrent = 0;
+  for (const idx of order) {
+    if (window.length >= PROBE_BUDGET) break;
+    window.push(idx);
+    cleanCount++;
+    if (currentClean && idx > currentIdx) cleanAfterCurrent++;
+    if (cleanCount >= target && (!currentClean || cleanAfterCurrent >= fallbackChainDepth)) break;
+  }
+  return window.sort((a, b) => a - b).map((idx) => candidates[idx]);
+}
+
+/**
  * What the updater would write for a scope, computed from the same decision
  * core without a request and without a write.
  *
  * **Probe-optimistic**: every candidate in the pre-walk set is treated as clean,
- * so the walk's window is the whole usable set, no candidate is ever
- * probe-blocked, and the auto-pin takes the route leader. The written pin can
- * therefore differ (a later route, or none) and a probe-blocked candidate can
- * leave the pool — both are labelled, not simulated.
+ * so the walk's window is the prefix of the walk order the stop condition
+ * admits (`probeWindow`), no candidate is ever probe-blocked, and the auto-pin
+ * takes the route leader. The written pin can therefore differ (a later route,
+ * or none) and a probe-blocked candidate can leave the pool — both are labelled,
+ * not simulated.
  *
  * The candidate set is the updater's pre-walk set: `computeRankings` →
  * `resolveVariant` (the catalog/tier gate), minus the key-blocked
@@ -336,77 +530,45 @@ export function previewSelection(input: {
     const keyBlocked = (c: Candidate) => availability.active && availability.blocked.has(c.ranked.model.id);
     const keyBlockedCount = candidates.filter(keyBlocked).length;
     // Probe-optimistic: every candidate in the pre-walk set is clean, so the
-    // walk's window is the whole usable set.
+    // walk's window is the prefix of the walk order its stop condition admits
+    // (`probeWindow`) — NOT the whole usable set. At `fallbackChainDepth: 0`
+    // that is the incumbent alone, so a kept role stays kept, exactly as the run
+    // reports it (user story 27).
     const usable = candidates.filter((c) => !keyBlocked(c));
     if (usable.length === 0) {
       skipped.push({ role, reason: `no usable candidate (key-blocked: ${keyBlockedCount})` });
       continue;
     }
-    const pool = usable;
+    const currentIdx = currentId === null ? -1 : usable.findIndex((c) => c.ranked.model.id === currentId);
+    const pool = probeWindow(usable, currentIdx, settings.fallbackChainDepth);
     const best = pool[0];
     const mode = def.selection ?? settings.selection;
-    let challenger: Candidate;
-    let currentEntry: Candidate | null;
-    let switchedPredicate: (cur: Candidate) => boolean;
-    let costEscapePredicate: (cur: Candidate) => boolean;
-    if (mode === "cheapest") {
-      // The rule's pool is the role's usable candidate set (see `runUpdater`):
-      // the catalog/tier gate and the allowed-providers prune are baked into
-      // `rank.models`, and the keyed-catalog prune is `keyBlocked`.
-      const bar = barSelection(usable.map((c) => c.ranked), def.qualityFloor ?? settings.qualityFloor);
-      if (bar === null) {
-        skipped.push({ role, reason: `no usable candidate (key-blocked: ${keyBlockedCount})` });
-        continue;
-      }
-      const goodIds = new Set(bar.good.map((r) => r.model.id));
-      const ordered = usable.filter((c) => goodIds.has(c.ranked.model.id)).sort((a, b) => pickOrder(a.ranked, b.ranked));
-      const pick = ordered[0];
-      if (pick === undefined) {
-        skipped.push({ role, reason: "no candidate at or above the bar" });
-        continue;
-      }
-      currentEntry = currentId === null ? null : usable.find((c) => c.ranked.model.id === currentId) ?? null;
-      challenger = pick;
-      // The incumbent fell below the bar: dropped with no margin.
-      switchedPredicate = (cur) => !goodIds.has(cur.ranked.model.id);
-      costEscapePredicate = (cur) =>
-        // The same guards as value mode's `cheaperInsideMargin`: a non-positive
-        // fraction disables the cost-side switch, and a non-positive incumbent
-        // price has no fraction to undercut.
-        settings.priceSwitchFraction > 0 &&
-        cur.ranked.priceEff > 0 &&
-        pick.ranked.priceEff <= cur.ranked.priceEff * (1 - settings.priceSwitchFraction);
-    } else {
-      currentEntry = currentId === null ? null : pool.find((p) => p.ranked.model.id === currentId) ?? null;
-      challenger = best;
-      switchedPredicate = (cur) => best.ranked.value - cur.ranked.value >= settings.switchMargin;
-      costEscapePredicate = (cur) => cheaperInsideMargin(best.ranked, cur.ranked, settings);
+    // The cheapest mode's bar-clearing list: the rule's pool is the role's
+    // usable candidate set (see `runUpdater`) — the catalog/tier gate and the
+    // allowed-providers prune are baked into `rank.models`, and the keyed-catalog
+    // prune is `keyBlocked`. Probe-optimistically the pick is the cheapest
+    // bar-clearing candidate.
+    const ordered = mode === "cheapest" ? cheapestOrder(usable, def.qualityFloor ?? settings.qualityFloor) : [];
+    const inputs = ladderInputs({ mode, settings, usable, pool, currentId, ordered, pick: ordered[0] ?? null, clean: () => true });
+    if (inputs === null) {
+      skipped.push({ role, reason: "no candidate at or above the bar" });
+      continue;
     }
-    const { chosen, reason } = decide({ currentSelector, currentEntry, challenger, switched: switchedPredicate, costEscape: costEscapePredicate });
+    const { chosen, reason } = decide({ currentSelector, currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
 
-    const suffix = def.thinking;
-    const manualPin = def.providerPin;
     const autoRoutes = autoPinApplies(def) ? rankedRoutes(chosen.ranked.model, def) : [];
     const hasAutoRoutes = autoRoutes.length > 0;
     // Probe-optimistic: the first gate-passing route is accepted, so the pin is
     // the route leader and no route is ever blocked.
-    const autoSlug = hasAutoRoutes ? autoRoutes[0].providerSlug : undefined;
-    const pinSlug = manualPin ?? autoSlug;
-    const pin = pinSlug !== undefined ? `@${pinSlug}` : "";
-    const chosenRow = rowById.get(chosen.catalogId);
-    // Append only a level the model's catalog thinking[] actually supports —
-    // omp clamps unsupported levels, so an unsupported pin would run at a
-    // different effort than the role intends (and than the ranking priced).
-    const appendSuffix = suffix !== undefined && chosenRow !== undefined && (META_LEVELS[suffix] === true || chosenRow.thinking.includes(suffix));
-    const finalSelector = `openrouter/${chosen.catalogId}${pin}${appendSuffix ? `:${suffix}` : ""}`;
+    const parts = selectorFor({ chosen, def, rowById, autoPin: hasAutoRoutes, autoSlug: hasAutoRoutes ? autoRoutes[0].providerSlug : undefined });
     decisions.push({
       role,
       from: currentSelector,
-      to: finalSelector,
+      to: parts.selector,
       reason,
       value: chosen.ranked.value,
       bestValue: best.ranked.value,
-      currentValue: currentEntry?.ranked.value ?? null,
+      currentValue: inputs.currentEntry?.ranked.value ?? null,
       blocked: [],
       endpointBlocked: endpointFilterDrops(def, rank.models),
       pinBlocked: providerPinDrops(def, rank.models),
@@ -414,14 +576,13 @@ export function previewSelection(input: {
       pinDropped: false,
       availabilitySource: availability.active ? "keyed-catalog" : "probe",
       keyBlockedCount,
+      chainKey: parts.key,
     });
 
     if (settings.writeFallbackChains) {
-      const key = suffix !== undefined && finalSelector.endsWith(`:${suffix}`) ? finalSelector.slice(0, -(suffix.length + 1)) : finalSelector;
       // The chain's fallback models come from the role's whole ranked candidate
       // list; probe-optimistically only the key-blocked are dropped.
-      const chainCandidates = candidates.filter((c) => !keyBlocked(c));
-      plans.push({ role, plan: { key, suffix, pin, pinnedSlug: autoSlug, candidates: chainCandidates, chosenIdx: chainCandidates.indexOf(chosen), def, autoPin: hasAutoRoutes } });
+      plans.push(chainPlanFor({ role, chosen, candidates, selector: parts, def, keep: (c) => !keyBlocked(c) }));
     }
   }
 

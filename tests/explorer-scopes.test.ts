@@ -65,8 +65,10 @@ async function boot(
     rank: RANK,
     catalog: [],
     availability: NO_AVAILABILITY,
-    // Hermetic: the ledger dir defaults to `agentDir()`, so a booted explorer
-    // would otherwise read the developer's real ledger.
+    // Hermetic: the agent dir and the ledger dir both default to `agentDir()`,
+    // so a booted explorer would otherwise read the developer's real state,
+    // config.yml and ledger. Point both at the temp dir.
+    agentDir: opts.registryDir,
     usageDir: opts.registryDir,
     reload: async () => RANK,
     port: 0,
@@ -639,6 +641,79 @@ test("a project scope's raw settings are the project lock merged over the user-l
 // must read its OWN config.yml, state and agents dir — never the user-level
 // ones — or the preview would decide against another scope's incumbent.
 // ---------------------------------------------------------------------------
+
+test("the user scope's preview harvests the session project's agent pins", async () => {
+  const root = tempDir("explorer-scope-user-pins-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLock(userLock, { userrole: USER_ROLE });
+  // The session cwd has a project agents dir but no project role config, so the
+  // active scope stays user-level — while the run's `discoverAgentPins()` (no
+  // args) still scans `<cwd>/.omp/agents`. The preview must harvest the same
+  // pins, or its `task.disabledAgents` sync would differ from the run's.
+  const cwd = join(root, "session");
+  mkdirSync(join(cwd, ".omp", "agents"), { recursive: true });
+  writeFileSync(join(cwd, ".omp", "agents", "helper.md"), '---\nname: helper\ndescription: "h"\nmodel: "@designer"\n---\n\nbody\n');
+
+  await runInTempDir(root, async () => {
+    const handle = await boot({ userLock, cwd, registryDir: root });
+    try {
+      const res = await fetch(`${handle.url}/api/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: {}, roles: {} }),
+      });
+      const body: unknown = await res.json();
+      assert.ok(isRecord(body));
+      const preview = body.preview;
+      assert.ok(isRecord(preview));
+      // `designer` ships disabled, so the agent pinning it must be disabled too.
+      assert.ok((preview.agentDisableAdds as string[]).includes("helper"));
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
+test("the user scope's config and state come from the agent dir, not the ledger dir", async () => {
+  const root = tempDir("explorer-scope-agentdir-");
+  const userLock = join(root, "user", "omp-plugins.lock.json");
+  writeLock(userLock, { userrole: USER_ROLE });
+  // Two distinct dirs: the agent dir holds the user scope's config.yml and state,
+  // the ledger dir holds only usage. They coincide by default, so a boot that
+  // conflates them would read the wrong one.
+  const agentDir = join(root, "agent");
+  const ledgerDir = join(root, "ledger");
+  mkdirSync(agentDir, { recursive: true });
+  mkdirSync(ledgerDir, { recursive: true });
+  writeFileSync(join(agentDir, "llm-role-state.json"), JSON.stringify({ managedRoles: ["userrole", "gone"] }, null, 2));
+  writeFileSync(join(ledgerDir, "llm-role-state.json"), JSON.stringify({ managedRoles: ["ledgerrole"] }, null, 2));
+  writeFileSync(join(agentDir, "config.yml"), "modelRoles:\n  userrole: openrouter/org/premium\n");
+  writeFileSync(join(ledgerDir, "config.yml"), "modelRoles:\n  userrole: openrouter/org/budget\n");
+
+  await runInTempDir(root, async () => {
+    const handle = await boot({ userLock, cwd: join(root, "elsewhere"), registryDir: root }, { agentDir, usageDir: ledgerDir, catalog: makeCatalog(["premium", "budget"]) });
+    try {
+      const res = await fetch(`${handle.url}/api/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: {}, roles: { userrole: USER_ROLE } }),
+      });
+      const body: unknown = await res.json();
+      assert.ok(isRecord(body));
+      const preview = body.preview;
+      assert.ok(isRecord(preview));
+      // The agent dir's state, not the ledger dir's.
+      assert.deepEqual(preview.roleRemovals, ["gone"]);
+      // The agent dir's config.yml supplied the incumbent.
+      const decisions = preview.decisions as Array<Record<string, unknown>>;
+      const decision = decisions.find((d) => d.role === "userrole");
+      assert.ok(decision, "the preview must decide the user role");
+      assert.equal(decision.from, "openrouter/org/premium");
+    } finally {
+      await handle.close();
+    }
+  });
+});
 
 test("a project scope's preview reads the project's state, config.yml and agents dir", async () => {
   const root = tempDir("explorer-scope-preview-");

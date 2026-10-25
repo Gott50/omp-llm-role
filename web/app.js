@@ -665,19 +665,6 @@ async function runPreview() {
   renderPreview();
 }
 
-/** The chain key a decision's selector belongs to: the selector without its
- * thinking suffix (the updater's own `key` derivation). The suffix is the role's
- * RESOLVED thinking level — the authored value, else the shipped default —
- * because the preview computes it from the resolved def, so a role inheriting a
- * shipped default level still gets a suffixed selector. */
-function chainKeyFor(decision) {
-  const def = state.defs[decision.role];
-  const shipped = state.defaults[decision.role];
-  const suffix = def && def.thinking !== undefined ? def.thinking : shipped ? shipped.thinking : undefined;
-  if (suffix && decision.to.endsWith(":" + suffix)) return decision.to.slice(0, -(suffix.length + 1));
-  return decision.to;
-}
-
 /** Why a candidate left the pool, as one compact line. */
 function decisionFlags(d) {
   const parts = [];
@@ -729,7 +716,9 @@ function renderPreview() {
     );
     const body = el("tbody");
     for (const d of p.decisions) {
-      const key = chainKeyFor(d);
+      // The server carries the chain key on the decision, so the SPA does not
+      // re-derive it from the selector and the role's resolved thinking level.
+      const key = d.chainKey;
       const chain = p.chains ? p.chains[key] : undefined;
       body.append(
         el("tr", {}, [
