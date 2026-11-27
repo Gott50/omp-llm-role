@@ -321,15 +321,15 @@ in `rankRole`, the selection in `src/selection.ts`.
   bonus is **never** added to `value`, `q` or `parts`. The displayed value
   ranking and the explorer's rank table are therefore not skewed by the
   preference; a much better model elsewhere can still win.
-- **Value mode — the effective-value ladder.** The selection compares
-  `effectiveValue = value + providerBonus` (the incumbent's own bonus included)
-  under the existing `switchMargin`, so a provider change is a **normal switch**
-  subject to the margin and the plugin does not churn on a small bonus. The
-  challenger is the plain **value leader** (`rankRole` sorts by `value` only and
-  the ladder takes `pool[0]`); the bonus shifts only the
-  `switched`/`cheaperInsideMargin` margin comparison — a preferred value leader
-  clears the margin sooner, a preferred incumbent resists — so it cannot promote
-  a lower-value preferred model.
+- **Value mode — the effective-value ladder.** The challenger is the
+  **effective-value leader** of the probed window: `effectiveValue = value +
+  providerBonus`, so a preferred provider's model can be promoted over the
+  honest value leader. The incumbent's effective value includes its own bonus,
+  and the existing `switchMargin` applies to the effective values, so a provider
+  change on the same model is a **normal switch** subject to the margin and the
+  plugin does not churn on a small bonus. The honest `value` ranking is
+  unchanged — the bonus is never in `value`, `q` or `parts` — and with a zero
+  bonus the ladder reduces to the pre-#116 value leader (`pool[0]`).
 - **Cheapest mode — the price discount.** The value bonus is inert (the pick is
   the cheapest bar-clearing candidate). The preference is a price-fraction
   discount on the preferred provider's candidates for the bar-clearing order:
