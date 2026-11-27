@@ -18,8 +18,9 @@
  * whether a provider's entry carries a `discovery` block, so the run can note
  * the snippet the user must add once.
  *
- * Dual-runtime rule: only `node:` builtins + the `yaml` dependency; relative
- * imports with explicit `.ts` extensions (runs under Node type-stripping).
+ * Dual-runtime rule: only `node:` builtins (the plugin has no runtime
+ * dependencies, so marketplace installs never resolve one); relative imports
+ * with explicit `.ts` extensions (runs under Node type-stripping).
  */
 
 import { execFile } from "node:child_process";
@@ -27,7 +28,6 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { parse as parseYaml } from "yaml";
 import { catalogFromOmpModelsJson, type CatalogEntry } from "./availability.ts";
 import { isRecord } from "./guards.ts";
 import { agentDir } from "./state.ts";
@@ -140,18 +140,45 @@ function sortedStringify(value: object): string {
   );
 }
 
+/** `key: value` -> { indent, key (unquoted) }; null for comments, blanks, list items. */
+function mapLine(line: string): { indent: number; key: string } | null {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || trimmed.startsWith("#") || trimmed.startsWith("- ")) return null;
+  const indent = line.length - line.trimStart().length;
+  const colon = line.indexOf(":", indent);
+  if (colon === -1) return null;
+  const key = line.slice(indent, colon).trim().replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
+  return { indent, key };
+}
+
 /** Whether the provider's `models.yml` entry carries a `discovery` block. Never throws:
- * an absent/unparseable file or an unlisted provider is `"unknown"`. */
+ * an absent/unreadable file or an unlisted provider is `"unknown"`.
+ *
+ * Line-oriented text scan (the `src/config-edit.ts` precedent): the plugin has no
+ * runtime YAML dependency, so marketplace installs never resolve one. The provider
+ * may sit under a top-level `providers:` map or as a top-level key; its block runs
+ * to the next non-blank line at an indent <= its own. */
 export function providerDiscovery(provider: string, modelsYmlPath?: string): ProviderDiscovery {
-  let parsed: unknown;
+  let text: string;
   try {
-    parsed = parseYaml(readFileSync(modelsYmlPath ?? join(agentDir(), "models.yml"), "utf8"));
+    text = readFileSync(modelsYmlPath ?? join(agentDir(), "models.yml"), "utf8");
   } catch {
     return "unknown";
   }
-  if (!isRecord(parsed)) return "unknown";
-  const providers = isRecord(parsed.providers) ? parsed.providers : parsed;
-  const entry = providers[provider];
-  if (!isRecord(entry)) return "unknown";
-  return "discovery" in entry ? "discovery" : "static";
+  const lines = text.split("\n");
+  const top = lines.map(mapLine);
+  const providersLine = top.findIndex((l) => l !== null && l.indent === 0 && l.key === "providers");
+  const underProviders = providersLine !== -1;
+  const start = top.findIndex(
+    (l) => l !== null && l.key === provider && (underProviders ? l.indent > 0 : l.indent === 0),
+  );
+  if (start === -1) return "unknown";
+  const indent = top[start]!.indent;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = top[i];
+    if (line === null) continue;
+    if (line.indent <= indent) break;
+    if (line.key === "discovery") return "discovery";
+  }
+  return "static";
 }

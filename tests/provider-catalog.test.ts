@@ -177,6 +177,36 @@ test("providerDiscovery reports static for a provider entry without a discovery 
   assert.equal(providerDiscovery("flocta", path), "static");
 });
 
+test("providerDiscovery finds a nested discovery block inside the provider's block", () => {
+  const path = join(tempDir(), "models.yml");
+  writeFileSync(
+    path,
+    [
+      "providers:",
+      "  flocta:",
+      "    baseUrl: https://example.test/v1",
+      "    apiKey: !echo $FLOCTA_KEY",
+      "    discovery:",
+      "      type: openai-models-list",
+      "  other:",
+      "    baseUrl: https://other.test/v1",
+      "",
+    ].join("\n"),
+  );
+  assert.equal(providerDiscovery("flocta", path), "discovery");
+  assert.equal(providerDiscovery("other", path), "static");
+});
+
+test("providerDiscovery does not read a sibling provider's discovery block", () => {
+  const path = join(tempDir(), "models.yml");
+  writeFileSync(
+    path,
+    ["providers:", "  flocta:", "    baseUrl: https://example.test/v1", "  other:", "    discovery:", "      type: openai-models-list", ""].join("\n"),
+  );
+  assert.equal(providerDiscovery("flocta", path), "static");
+  assert.equal(providerDiscovery("other", path), "discovery");
+});
+
 test("providerDiscovery accepts a top-level provider key", () => {
   const path = join(tempDir(), "models.yml");
   writeFileSync(path, ["flocta:", "  discovery:", "    type: openai-models-list", ""].join("\n"));
