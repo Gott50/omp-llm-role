@@ -187,7 +187,16 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
         }
       }
     },
-    getPoolInputs: (): PoolInputs => ({ catalog: opts.catalog, tier, allowed, availability }),
+    // The scope's global provider priority (spec #116) rides with the pool
+    // inputs, so the as-written pool keeps a provider-only model and the keyed
+    // prune stays OpenRouter-only. Re-read per call, like the whitelist.
+    getPoolInputs: (scope): PoolInputs => ({
+      catalog: opts.catalog,
+      tier,
+      allowed,
+      availability,
+      providerPriority: readScopeRoles(scope, userLockPath).settings.resolved.providerPriority,
+    }),
     // The ledger follows the plugin's state location: a project scope keeps its
     // usage in its own `<root>/.omp`, so its per-task column never mixes with
     // the user-level profile.
