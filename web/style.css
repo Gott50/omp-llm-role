@@ -161,6 +161,9 @@ table { border-collapse: collapse; width: 100%; }
 #table td.num, #table th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 #table td.model { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
 #table td.org { color: var(--muted); }
+/* Effective provider + price-source marker (spec #116): muted mono, so the
+   ·ref / ·proxy marker reads as an annotation, not a second model name. */
+#table td.provider { color: var(--muted); font-family: var(--mono); }
 #table td.key { text-align: center; }
 /* Key-usability badge: three states, reusing the :root hues (up/down/muted). */
 .badge { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); font-family: var(--mono); font-size: 11px; line-height: 16px; }
@@ -266,6 +269,8 @@ button.x { padding: 1px 7px; color: var(--down); }
 .feature-knobs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
 .knob { display: flex; gap: 5px; align-items: center; font-family: var(--mono); font-size: 11px; }
 .knob-input { width: 84px; }
+/* A comma-separated provider list needs more room than a single knob value. */
+.knob-input.provider-input { width: 220px; }
 .knob-name { color: var(--muted); }
 .knob.derived .knob-input { border-style: dashed; border-color: var(--accent); }
 .knob-badge { padding: 0 5px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; line-height: 15px; }
@@ -287,6 +292,8 @@ button.x { padding: 1px 7px; color: var(--down); }
 .setting.dirty .setting-name { color: var(--fg); }
 .setting-input { flex: 0 0 auto; width: 110px; }
 .setting-input[type="checkbox"] { width: auto; }
+/* The provider priority is a comma-separated list, not a single number. */
+.setting-input[type="text"] { width: 220px; }
 .setting-default { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
 .setting-noimpact { font-size: 11px; font-style: italic; white-space: nowrap; }
 .setting-badge { padding: 0 5px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; line-height: 15px; }

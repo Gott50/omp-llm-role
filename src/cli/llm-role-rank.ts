@@ -27,13 +27,14 @@
 
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { catalogFromOmpModelsJson, enrichThinkingLevels, resolveVariant, type CatalogEntry } from "../availability.ts";
 import { cachedSourceInfo, loadDeclaredSources } from "../benchmark-sources.ts";
-import { computeRankings, loadRankData, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "../engine.ts";
+import { computeRankings, loadRankData, META_LEVELS, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "../engine.ts";
 import { focusMetricsOf } from "../explorer/explain.ts";
-import { DEFAULT_ROLES as ROLES } from "../settings.ts";
+import { DEFAULT_ROLES as ROLES, readPluginSettingsMap, resolveSettings } from "../settings.ts";
 
 const execFileP = promisify(execFile);
 
@@ -236,24 +237,44 @@ function formatRankings(
 /**
  * Suggested settings.modelRoles: each role's #1 ranked model resolved through the
  * same catalog/variant resolution the plugin uses (tier "billed"), emitted as
- * `openrouter/<catalogId>`. Roles whose best model has no catalog match get a
- * comment placeholder instead of a selector.
+ * the effective provider's selector (issue #116): `openrouter/<catalogId>` for
+ * the gateway, `<provider>/<catalogId>` for a prioritized non-OpenRouter
+ * provider. The thinking suffix follows the same provider-scoped rule as the
+ * plugin's `selectorFor` — the effective provider's own catalog row must
+ * advertise the level (a meta level always applies). Roles whose best model has
+ * no catalog match get a comment placeholder instead of a selector.
  */
-function formatModelRolesYaml(rankings: Record<string, Ranked[]>, roles: Record<string, RoleDef>, catalog: CatalogEntry[]): string {
+export function formatModelRolesYaml(rankings: Record<string, Ranked[]>, roles: Record<string, RoleDef>, catalog: CatalogEntry[]): string {
   const lines: string[] = [
     "# Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).",
-    "# Selectors are openrouter/<id>; the omp-llm-role plugin writes this block daily.",
+    "# Selectors are <provider>/<id> (openrouter unless a provider priority is set); the omp-llm-role plugin writes this block daily.",
     "modelRoles:",
   ];
   for (const role of Object.keys(roles)) {
     const best = rankings[role]?.[0];
     if (!best) continue;
+    const provider = best.provider ?? "openrouter";
+    const suffix = roles[role].thinking;
+    if (provider !== "openrouter") {
+      // A non-OpenRouter provider IS the route: `<provider>/<catalog-id>[:<level>]`,
+      // no `@<slug>`. The level comes from that provider's own offer list.
+      const offer = best.model.providerOffers?.[provider];
+      if (offer === undefined) {
+        lines.push(`  ${role}: # no catalog match for ${best.model.id}`);
+        continue;
+      }
+      const appendSuffix = suffix !== undefined && (META_LEVELS[suffix] === true || offer.thinking.includes(suffix));
+      lines.push(`  ${role}: "${provider}/${offer.catalogId}${appendSuffix ? `:${suffix}` : ""}"`);
+      continue;
+    }
     const catalogId = resolveVariant(best.model.id, catalog, "billed");
     if (catalogId === null) {
       lines.push(`  ${role}: # no catalog match for ${best.model.id}`);
       continue;
     }
-    lines.push(`  ${role}: "openrouter/${catalogId}"`);
+    const row = catalog.find((c) => c.provider === "openrouter" && c.id === catalogId);
+    const appendSuffix = suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix));
+    lines.push(`  ${role}: "openrouter/${catalogId}${appendSuffix ? `:${suffix}` : ""}"`);
   }
   return lines.join("\n");
 }
@@ -285,13 +306,21 @@ async function main(): Promise<void> {
 
   // Shipped defaults rank the omp built-in roles only; `--all` adds opt-in roles
   // (designer) — which also pulls in their exclusive sources (Design Arena).
-  const roles = all ? ROLES : Object.fromEntries(Object.entries(ROLES).filter(([, d]) => d.enabled !== false));
+  // The plugin settings (the lock file's `omp-llm-role` map) supply the role
+  // overrides and the global provider priority, so the report matches the
+  // plugin's run. No lock entry (or invalid settings) keeps today's behavior
+  // exactly: the shipped defaults and an empty priority list.
+  const raw = readPluginSettingsMap();
+  const resolved = Object.keys(raw).length > 0 ? resolveSettings(raw) : null;
+  const settings = resolved?.settings;
+  const baseRoles = settings?.roles ?? ROLES;
+  const roles = all ? baseRoles : Object.fromEntries(Object.entries(baseRoles).filter(([, d]) => d.enabled !== false));
   const { models, fetchedAt, source, orMatched, orPriced } = await loadRankData({ refresh, url, roles });
   // The omp catalog gates the thinking price factor per model (a model whose
   // thinking[] excludes the role's level is priced bare, matching the plugin's
-  // suffix gate) and resolves each role's #1 into a concrete openrouter/<id>
-  // selector. Unavailable omp (or a failed call) falls back to the OR
-  // supports_reasoning flag and only skips the suggested block.
+  // suffix gate), attaches each model's per-provider offers, and resolves each
+  // role's #1 into a concrete selector. Unavailable omp (or a failed call) falls
+  // back to the OR supports_reasoning flag and only skips the suggested block.
   let catalog: CatalogEntry[] = [];
   try {
     const res = await execFileP("omp", ["models", "ls", "--json"], { maxBuffer: 16 * 1024 * 1024 });
@@ -350,7 +379,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error(`error: ${err instanceof Error ? err.message : err}`);
-  process.exit(1);
-});
+// Run only when this file is the process entry point (`node src/cli/llm-role-rank.ts`).
+// Importing the module — the tests import `formatModelRolesYaml` — must not run a
+// live ranking fetch or spawn `omp models ls`.
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error(`error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  });
+}
