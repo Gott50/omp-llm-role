@@ -26,6 +26,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyBenchmarkScores, loadBenchmarkScores, loadDeclaredSources, normalizeDesignId, parseWritingEvidence, sourceForMetric } from "./benchmark-sources.ts";
+import type { PriceSource, ProviderOffer } from "./provider-priority.ts";
 
 const DEFAULT_URL = "https://llm-stats.com/leaderboards/llm-leaderboard";
 // Caches resolve against the repo root (this module lives in <repo>/src), never
@@ -157,6 +158,11 @@ export type Model = {
    * per-endpoint capability ceilings; set by `applyOpenRouterData`. Undefined when
    * the model has no OpenRouter page data. The role endpoint filters gate on this. */
   routes?: OpenRouterEndpointRecord[];
+  /** Per-provider offers of this model (provider id -> offer), attached by the
+   * same enrichment step that sets `thinkingLevels` (issue #116). OpenRouter is
+   * never a key — the model's own price/throughput are the OpenRouter blend.
+   * Undefined when no prioritized provider offers the model. */
+  providerOffers?: Record<string, ProviderOffer>;
 };
 
 export type RoleDef = {
@@ -220,12 +226,32 @@ export type RoleDef = {
    * sources are fetched) but never rewrites its `modelRoles` selector or fallback
    * chain, and never removes it. Enable/disable still applies. */
   locked?: boolean;
+  /** Ordered omp provider ids this role prefers (issue #116); overrides the
+   * global `providerPriority` (authored-wins). Empty/absent = OpenRouter only. */
+  providerPriority?: string[];
+  /** Soft provider preference (0–1) for this role; overrides the global
+   * `providerBonus`. Applied in the selection comparison, never in `value`. */
+  providerBonus?: number;
 };
 
 /** One role's ranking: `q` is the price-free quality composite (parts sum to it),
  * `value = q − λ·priceEff` is the sort key — `priceEff` is the billed blend scaled
  * by the role's thinking factor when the model supports thinking. */
-export type Ranked = { model: Model; value: number; q: number; priceEff: number; parts: Record<string, number> };
+export type Ranked = {
+  model: Model;
+  value: number;
+  q: number;
+  priceEff: number;
+  parts: Record<string, number>;
+  /** Effective provider of the model (issue #116): the first listed provider
+   * that offers it, else `openrouter`. */
+  provider: string;
+  /** Provider preference term for the selection comparison (never in `value`). */
+  providerBonus: number;
+  /** Where `priceEff` came from: the gateway blend, a provider reference price,
+   * or the OpenRouter blend used as a proxy. */
+  priceSource: PriceSource;
+};
 
 export type RankData = {
   models: Model[];
