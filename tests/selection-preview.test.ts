@@ -113,6 +113,7 @@ function preview(raw: Record<string, unknown>, opts: PreviewOpts = {}): Selectio
     settings: resolved(raw),
     rank: { models, fetchedAt: "2026-09-22T00:00:00.000Z", source: "test", orMatched: models.length, orPriced: models.length },
     eligible: filterCatalog(catalog, opts.tier ?? "billed"),
+    catalog,
     availability: opts.availability ?? NO_FILTER_AVAILABILITY,
     currentSelectors: opts.currentSelectors ?? {},
     state: opts.state ?? { managedRoles: [], pluginWrittenChainKeys: [], managedDisabledAgents: [] },
@@ -397,4 +398,49 @@ test("agreement: the preview matches a real dry run on a shared chain key", asyn
   assert.deepEqual(preview.decisions.map((d) => d.reason), ["kept-eligible", "kept-eligible"]);
   assert.deepEqual(Object.keys(preview.chains), ["openrouter/org/model-a"]);
   assert.deepEqual(preview.chains["openrouter/org/model-a"], ["openrouter/org/model-b", "openrouter/org/model-c"]);
+});
+
+// ---------------------------------------------------------------------------
+// Spec #116: the preview resolves a candidate on its effective provider. The
+// full catalog is passed so the provider-scoped resolution can see the
+// non-OpenRouter rows (`eligible` is OpenRouter-only).
+// ---------------------------------------------------------------------------
+
+/** Catalog rows for a non-OpenRouter provider. */
+function providerCatalog(provider: string, ids: string[], thinking: string[] = []): CatalogEntry[] {
+  return ids.map((id) => ({
+    provider,
+    id: `org/${id}`,
+    selector: `${provider}/org/${id}`,
+    name: id,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: true,
+    thinking,
+    input: ["text"],
+    cost: null,
+  }));
+}
+
+test("a provider priority resolves the candidate on its effective provider", () => {
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const catalog = [...makeCatalog(["model-a", "model-b"]), ...providerCatalog("flocta", ["model-a"])];
+  enrichThinkingLevels(models, catalog);
+  const p = preview(onlyDefault({ providerPriority: "flocta" }), { models, catalog });
+  assert.equal(p.decisions[0].to, "flocta/org/model-a:auto");
+  assert.equal(p.decisions[0].chainKey, "flocta/org/model-a");
+  // The chain's primary cross-provider entry is the OpenRouter wildcard (the
+  // OpenRouter catalog id equals the chosen provider's), then the fallback.
+  assert.deepEqual(p.chains["flocta/org/model-a"], ["openrouter/*:auto", "openrouter/org/model-b:auto"]);
+});
+
+test("a none tier resolves no candidate even with a full catalog", () => {
+  // The key has no usable budget: `eligible` is empty, and the full catalog
+  // passed for provider resolution must not resurrect a candidate.
+  const models = [makeModel("model-a", 90, 1, 100)];
+  const catalog = [...makeCatalog(["model-a"]), ...providerCatalog("flocta", ["model-a"])];
+  enrichThinkingLevels(models, catalog);
+  const p = preview(onlyDefault({ providerPriority: "flocta" }), { models, catalog, tier: "none" });
+  assert.deepEqual(p.decisions, []);
+  assert.deepEqual(p.skipped, [{ role: "default", reason: "no eligible candidate" }]);
 });

@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import { parseConfig } from "../src/config-edit.ts";
+import type { Ranked } from "../src/engine.ts";
+import { buildChains, type Candidate, type ChainPlan } from "../src/selection.ts";
+import { DEFAULT_ROLES, DEFAULT_SETTINGS } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
-import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
+import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
 const MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
 
@@ -159,4 +162,75 @@ test("fallback chain prefers candidates priced at or below the chosen model", as
     retry: { fallbackChains: Record<string, string[]> };
   };
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-c", "openrouter/org/model-b"]);
+});
+// ---------------------------------------------------------------------------
+// Spec #116: the cross-provider chain entries. `openrouter/*` is a chain VALUE,
+// not a key, so the prune's key ownership is unchanged. Driven through the
+// exported `buildChains` with a hand-built plan, so the assertion is the chain
+// the builder writes.
+// ---------------------------------------------------------------------------
+
+/** A ranked candidate on `provider` with an offer map. */
+function chainCandidate(id: string, provider: string, offers: Record<string, { catalogId: string; price: number | null; thinking: string[] }>): Candidate {
+  const model = makeModel(id, 0, 1, 100);
+  model.providerOffers = offers;
+  const ranked: Ranked = {
+    model,
+    value: 1,
+    q: 1,
+    priceEff: 1,
+    parts: {},
+    provider,
+    providerBonus: provider === "openrouter" ? 0 : 0.05,
+    priceSource: provider === "openrouter" ? "openrouter" : "reference",
+  };
+  return { ranked, catalogId: offers[provider]?.catalogId ?? `org/${id}` };
+}
+
+function planOf(key: string, candidates: Candidate[], def: Record<string, unknown>, suffix?: string): ChainPlan {
+  return { key, suffix, pin: "", pinnedSlug: undefined, candidates, chosenIdx: 0, def: { ...DEFAULT_ROLES.default, ...def }, autoPin: false };
+}
+
+test("openrouter/* is a chain value, not a key: the prune set is unchanged", () => {
+  const chosen = chainCandidate("model-a", "flocta", { flocta: { catalogId: "org/model-a", price: 1, thinking: [] } });
+  const plan = planOf("flocta/org/model-a", [chosen], { providerPriority: ["flocta"] });
+  const rowById = new Map(makeCatalog(["model-a"]).map((c) => [c.id, c]));
+  const { chainUpserts, chainPrunes } = buildChains({
+    plans: [{ role: "default", plan }],
+    settings: DEFAULT_SETTINGS,
+    rowById,
+    keepKeys: [],
+    writtenKeys: ["flocta/org/model-a", "openrouter/org/stale"],
+    tier: "billed",
+  });
+  // The wildcard keeps the model id: the OpenRouter catalog id equals the
+  // chosen provider's, so the chain stays short.
+  assert.deepEqual(chainUpserts["flocta/org/model-a"], ["openrouter/*"]);
+  // The wildcard is a value, not a key: only the stale key is pruned.
+  assert.deepEqual(chainPrunes, ["openrouter/org/stale"]);
+});
+
+test("a differing OpenRouter id is enumerated, not wildcarded", () => {
+  const chosen = chainCandidate("model-a", "flocta", { flocta: { catalogId: "org/model-a-1017", price: 1, thinking: [] } });
+  const plan = planOf("flocta/org/model-a-1017", [chosen], { providerPriority: ["flocta"] });
+  const rowById = new Map(makeCatalog(["model-a"]).map((c) => [c.id, c]));
+  const { chainUpserts } = buildChains({ plans: [{ role: "default", plan }], settings: DEFAULT_SETTINGS, rowById, keepKeys: [], writtenKeys: [], tier: "billed" });
+  assert.deepEqual(chainUpserts["flocta/org/model-a-1017"], ["openrouter/org/model-a"]);
+});
+
+test("the chosen model's other offering providers lead the chain", () => {
+  const chosen = chainCandidate("model-a", "openrouter", { flocta: { catalogId: "org/model-a", price: 1, thinking: [] } });
+  const plan = planOf("openrouter/org/model-a", [chosen], { providerPriority: ["flocta"] });
+  const rowById = new Map(makeCatalog(["model-a"]).map((c) => [c.id, c]));
+  const { chainUpserts } = buildChains({ plans: [{ role: "default", plan }], settings: DEFAULT_SETTINGS, rowById, keepKeys: [], writtenKeys: [], tier: "billed" });
+  assert.deepEqual(chainUpserts["openrouter/org/model-a"], ["flocta/org/model-a"]);
+});
+
+test("a fallback candidate is chained on its effective provider with its own thinking level", () => {
+  const chosen = chainCandidate("model-a", "openrouter", {});
+  const fallback = chainCandidate("model-b", "flocta", { flocta: { catalogId: "org/model-b", price: 2, thinking: ["high"] } });
+  const plan = planOf("openrouter/org/model-a", [chosen, fallback], { providerPriority: ["flocta"], thinking: "high" }, "high");
+  const rowById = new Map(makeCatalog(["model-a", "model-b"], ["high"]).map((c) => [c.id, c]));
+  const { chainUpserts } = buildChains({ plans: [{ role: "default", plan }], settings: DEFAULT_SETTINGS, rowById, keepKeys: [], writtenKeys: [], tier: "billed" });
+  assert.deepEqual(chainUpserts["openrouter/org/model-a"], ["flocta/org/model-b:high"]);
 });
