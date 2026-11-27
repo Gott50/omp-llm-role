@@ -833,6 +833,38 @@ test("a provider with no catalog rows is noted and not used", async () => {
   assert.ok(notified.some((l) => l.includes("@flocta: no catalog rows — the provider is not used")));
 });
 
+test("a provider pre-seed does not mark another role's OpenRouter candidate clean", async () => {
+  // The flocta row and the OpenRouter row share the catalog id `org/model-a`.
+  // The default role's flocta candidate is catalog-verified (never probed); the
+  // smol role's OpenRouter candidate is a different candidate and must still be
+  // probed — a bare verdict key would let the pre-seed mark it clean.
+  const dir = setupAgentDir("other: 1\n");
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const flocta = providerRow("flocta", "org/model-a");
+  const probed: string[] = [];
+  const deps = fakeDeps(models, {
+    roles: {
+      default: { providerPriority: ["flocta"] },
+      smol: { providerPriority: [] },
+    },
+  }, {
+    getCatalog: async () => [...makeCatalog(models.map((m) => m.id)), flocta],
+    getProviderCatalog: async () => [flocta],
+    refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+    probeModel: async (_token, id) => {
+      probed.push(id);
+      return id === "org/model-a" ? "blocked" : "ok";
+    },
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.decisions.find((d) => d.role === "default")?.to, "flocta/org/model-a:auto");
+  assert.ok(probed.includes("org/model-a"), `smol's OpenRouter candidate was not probed: ${probed.join(", ")}`);
+  const smol = result.decisions.find((d) => d.role === "smol");
+  assert.ok(smol);
+  assert.ok(smol.to.startsWith("openrouter/org/model-b"), smol.to);
+});
+
 test("an empty provider priority list never refreshes or writes the cache", async () => {
   const dir = setupAgentDir("other: 1\n");
   const cachePath = join(dir, "provider-catalog-cache.json");

@@ -125,6 +125,19 @@ function mtimeOf(path: string): number {
   }
 }
 
+/**
+ * The probe-verdict cache key. A non-OpenRouter candidate is keyed by
+ * `<provider>/<catalog-id>`: its catalog id is often the same string as the
+ * OpenRouter catalog id of the same model (`org/model-a`), so a bare key would
+ * let one role's provider pre-seed mark — or overwrite a real "blocked" verdict
+ * for — another role's OpenRouter candidate. OpenRouter keeps the bare catalog
+ * id (the probe's own identity).
+ */
+function verdictKey(c: Candidate): string {
+  const provider = c.ranked.provider ?? "openrouter";
+  return provider === "openrouter" ? c.catalogId : `${provider}/${c.catalogId}`;
+}
+
 function decisionLine(d: Decision): string {
   const from = d.from ?? "(unset)";
   const scores = `value ${d.value.toFixed(3)}, best ${d.bestValue.toFixed(3)}${d.currentValue == null ? "" : `, was ${d.currentValue.toFixed(3)}`}`;
@@ -405,7 +418,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // route probe are OpenRouter-only. Pre-seeding "ok" keeps it out of the
       // probe request path while the walk still sees it as clean.
       for (const c of candidates) {
-        if ((c.ranked.provider ?? "openrouter") !== "openrouter") probeVerdicts.set(c.catalogId, "ok");
+        if ((c.ranked.provider ?? "openrouter") !== "openrouter") probeVerdicts.set(verdictKey(c), "ok");
       }
       if (candidates.length === 0) {
         // A pin that matches no route must never silently unpin: leave the role
@@ -436,7 +449,10 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const keyBlocked = (c: Candidate) => (c.ranked.provider ?? "openrouter") === "openrouter" && availability.active && availability.blocked.has(c.ranked.model.id);
       if (availability.active) {
         for (const c of candidates) {
-          if (availability.allowed.has(c.ranked.model.id)) probeVerdicts.set(c.catalogId, "ok");
+          // `availability.allowed` is the OpenRouter keyed set: a non-OpenRouter
+          // candidate is not classified by it (and its bare catalog id could
+          // collide with an OpenRouter candidate's).
+          if ((c.ranked.provider ?? "openrouter") === "openrouter" && availability.allowed.has(c.ranked.model.id)) probeVerdicts.set(verdictKey(c), "ok");
         }
       }
       const keyBlockedCount = candidates.filter(keyBlocked).length;
@@ -463,11 +479,13 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       let cleanAfterCurrent = 0;
       for (const idx of order) {
         if (probed.length >= PROBE_BUDGET) break;
-        const id = candidates[idx].catalogId;
-        let verdict = probeVerdicts.get(id);
+        const candidate = candidates[idx];
+        const id = candidate.catalogId;
+        const key = verdictKey(candidate);
+        let verdict = probeVerdicts.get(key);
         if (verdict === undefined) {
           verdict = await probe(token, id);
-          probeVerdicts.set(id, verdict);
+          probeVerdicts.set(key, verdict);
         }
         probed.push(idx);
         if (verdict === "blocked") {
@@ -476,11 +494,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           cleanCount++;
           if (currentWalkIdx >= 0 && idx > currentWalkIdx) cleanAfterCurrent++;
         }
-        const currentClean = currentWalkIdx >= 0 && probeVerdicts.get(candidates[currentWalkIdx].catalogId) !== "blocked";
+        const currentClean = currentWalkIdx >= 0 && probeVerdicts.get(verdictKey(candidates[currentWalkIdx])) !== "blocked";
         if (cleanCount >= target && (!currentClean || cleanAfterCurrent >= settings.fallbackChainDepth)) break;
       }
       const pool = probed
-        .filter((idx) => probeVerdicts.get(candidates[idx].catalogId) !== "blocked")
+        .filter((idx) => probeVerdicts.get(verdictKey(candidates[idx])) !== "blocked")
         .sort((a, b) => a - b)
         .map((idx) => candidates[idx]);
       if (pool.length === 0) {
@@ -515,11 +533,12 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         // count.
         let probesSpent = 0;
         for (const c of ordered) {
-          let verdict = probeVerdicts.get(c.catalogId);
+          const key = verdictKey(c);
+          let verdict = probeVerdicts.get(key);
           if (verdict === undefined) {
             if (probesSpent >= PROBE_BUDGET) break;
             verdict = await probe(token, c.catalogId);
-            probeVerdicts.set(c.catalogId, verdict);
+            probeVerdicts.set(key, verdict);
             probesSpent++;
           }
           if (verdict !== "blocked") {
@@ -534,7 +553,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // — a probe-blocked incumbent is not in the pool at all, and cheapest mode
       // must not keep a model the account cannot run. The walk probes the
       // incumbent first, so a non-key-blocked incumbent's verdict is known here.
-      const inputs = ladderInputs({ mode, settings: hysteresis, usable, pool, currentId, ordered, pick, clean: (c) => probeVerdicts.get(c.catalogId) !== "blocked" });
+      const inputs = ladderInputs({ mode, settings: hysteresis, usable, pool, currentId, ordered, pick, clean: (c) => probeVerdicts.get(verdictKey(c)) !== "blocked" });
       if (inputs === null) {
         notes.push(`@${role}: no probe-clean candidate at or above the bar (key-blocked: ${keyBlockedCount}) — role untouched`);
         continue;
@@ -620,7 +639,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // catalog but not for this key). An unprobed candidate stays: the chain's
       // deeper entries are no longer required to be probe-verified.
       if (settings.writeFallbackChains) {
-        chainPlanByRole[role] = chainPlanFor({ role, chosen, candidates, selector: parts, def, keep: (c) => !keyBlocked(c) && probeVerdicts.get(c.catalogId) !== "blocked" }).plan;
+        chainPlanByRole[role] = chainPlanFor({ role, chosen, candidates, selector: parts, def, keep: (c) => !keyBlocked(c) && probeVerdicts.get(verdictKey(c)) !== "blocked" }).plan;
       }
     }
 
