@@ -42,6 +42,8 @@ test("create-role writes a validated role, preserves plugins, and backs up", () 
     weights: { general: 0.5, price: 0.5 },
     required: ["general", "price"],
     thinking: "high",
+    providerPriority: [],
+    providerBonus: 0.05,
   });
 });
 
