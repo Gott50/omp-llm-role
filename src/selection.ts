@@ -12,7 +12,8 @@
  */
 
 import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef, type SelectionMode } from "./engine.ts";
-import { currentRankingId, resolveVariant, splitThinkingSuffix, type CatalogEntry, type KeyAvailability, type Tier } from "./availability.ts";
+import { currentRankingId, resolveProviderVariant, resolveVariant, splitThinkingSuffix, type CatalogEntry, type KeyAvailability, type Tier } from "./availability.ts";
+import { chainProviderOrder, providerOrder } from "./provider-priority.ts";
 import { roleUniverse, type ResolvedSettings } from "./settings.ts";
 import type { AgentPin } from "./agent-pins.ts";
 
@@ -102,7 +103,11 @@ export type SelectionPreview = {
  */
 export function cheaperInsideMargin(best: Ranked, current: Ranked, settings: ResolvedSettings): boolean {
   if (settings.priceSwitchFraction <= 0 || current.priceEff <= 0) return false;
-  if (best.value < current.value - settings.switchMargin) return false;
+  // The margin guard reads the effective values (issue #116): the provider bonus
+  // is a selection preference, so a challenger that only wins on the bonus is
+  // still inside the margin. The price-fraction test stays on the honest
+  // `priceEff` — the bonus is not a price claim.
+  if (best.value + (best.providerBonus ?? 0) < current.value + (current.providerBonus ?? 0) - settings.switchMargin) return false;
   return best.priceEff <= current.priceEff * (1 - settings.priceSwitchFraction);
 }
 
@@ -120,7 +125,15 @@ export function decide<C extends { ranked: Ranked }>(input: {
 }): { chosen: C; reason: DecisionReason } {
   if (input.currentSelector === null) return { chosen: input.challenger, reason: "no-current" };
   if (input.currentEntry === null) return { chosen: input.challenger, reason: "adopted" };
-  if (input.currentEntry.ranked.model.id === input.challenger.ranked.model.id) return { chosen: input.currentEntry, reason: "kept-eligible" };
+  // `kept-eligible` means the incumbent is already the challenger: the same
+  // model on the same provider. A provider change on the same model (issue #116)
+  // is a normal switch, so it falls through to the margin arms.
+  if (
+    input.currentEntry.ranked.model.id === input.challenger.ranked.model.id &&
+    (input.currentEntry.ranked.provider ?? "openrouter") === (input.challenger.ranked.provider ?? "openrouter")
+  ) {
+    return { chosen: input.currentEntry, reason: "kept-eligible" };
+  }
   if (input.switched(input.currentEntry)) return { chosen: input.challenger, reason: "switched" };
   if (input.costEscape(input.currentEntry)) return { chosen: input.challenger, reason: "switched-cost" };
   return { chosen: input.currentEntry, reason: "kept-margin" };
@@ -177,8 +190,12 @@ export function ladderInputs(input: {
       // in the pool at all, and cheapest mode must not keep a model the account
       // cannot run.
       currentEntry: input.currentId === null ? null : input.usable.find((c) => c.ranked.model.id === input.currentId && input.clean(c)) ?? null,
-      // The incumbent fell below the bar: dropped with no margin.
-      switched: (cur) => !goodIds.has(cur.ranked.model.id),
+      // The incumbent fell below the bar: dropped with no margin. A same-model
+      // provider change (issue #116) is also adopted: the model is still
+      // bar-clearing, but the pick routes it through a different provider.
+      switched: (cur) =>
+        !goodIds.has(cur.ranked.model.id) ||
+        (cur.ranked.model.id === pick.ranked.model.id && (cur.ranked.provider ?? "openrouter") !== (pick.ranked.provider ?? "openrouter")),
       // The same guards as value mode's `cheaperInsideMargin`: a non-positive
       // fraction disables the cost-side switch, and a non-positive incumbent
       // price has no fraction to undercut.
@@ -192,7 +209,10 @@ export function ladderInputs(input: {
   return {
     challenger: best,
     currentEntry: input.currentId === null ? null : input.pool.find((c) => c.ranked.model.id === input.currentId) ?? null,
-    switched: (cur) => best.ranked.value - cur.ranked.value >= input.settings.switchMargin,
+    // The ladder compares effective values (issue #116): `value + providerBonus`,
+    // the incumbent's own bonus included, under the existing `switchMargin`.
+    switched: (cur) =>
+      best.ranked.value + (best.ranked.providerBonus ?? 0) - (cur.ranked.value + (cur.ranked.providerBonus ?? 0)) >= input.settings.switchMargin,
     costEscape: (cur) => cheaperInsideMargin(best.ranked, cur.ranked, input.settings),
   };
 }
@@ -235,6 +255,18 @@ export function selectorFor(input: {
   autoSlug: string | undefined;
 }): SelectorParts {
   const suffix = input.def.thinking;
+  const provider = input.chosen.ranked.provider ?? "openrouter";
+  if (provider !== "openrouter") {
+    // A non-OpenRouter provider IS the route: `<provider>/<catalog-id>[:<level>]`,
+    // no `@<slug>` and no auto-pin. The level comes from that provider's own
+    // catalog row (`providerOffers[provider].thinking`), never another
+    // provider's list; a meta level always applies.
+    const offer = input.chosen.ranked.model.providerOffers?.[provider];
+    const appendSuffix = suffix !== undefined && (META_LEVELS[suffix] === true || (offer?.thinking.includes(suffix) ?? false));
+    const selector = `${provider}/${input.chosen.catalogId}${appendSuffix ? `:${suffix}` : ""}`;
+    const key = suffix !== undefined && selector.endsWith(`:${suffix}`) ? selector.slice(0, -(suffix.length + 1)) : selector;
+    return { selector, key, pin: "", suffix, pinnedSlug: undefined, autoPin: false };
+  }
   const pinSlug = input.def.providerPin ?? input.autoSlug;
   const pin = pinSlug !== undefined ? `@${pinSlug}` : "";
   const chosenRow = input.rowById.get(input.chosen.catalogId);
@@ -299,6 +331,9 @@ export function buildChains(input: {
   rowById: Map<string, CatalogEntry>;
   keepKeys: readonly string[];
   writtenKeys: readonly string[];
+  /** The key's tier — the OpenRouter variant resolution for a cross-provider
+   *  primary entry needs it (a `:free` row is only valid on the free tier). */
+  tier: "billed" | "free";
 }): { chainUpserts: Record<string, string[]>; chainPrunes: string[] } {
   const chainUpserts: Record<string, string[]> = {};
   const referenced = new Set<string>();
@@ -317,6 +352,8 @@ export function buildChains(input: {
       // starve the chain.
       const after = plan.candidates.slice(plan.chosenIdx + 1);
       const chosen = plan.candidates[plan.chosenIdx];
+      const chosenProvider = chosen.ranked.provider ?? "openrouter";
+      const order = providerOrder(plan.def.providerPriority ?? []);
       const cheaper = after.filter((p) => p.ranked.priceEff <= chosen.ranked.priceEff && p.ranked.q >= chosen.ranked.q * input.settings.fallbackQualityFloor);
       const pricier = after.filter((p) => p.ranked.priceEff > chosen.ranked.priceEff);
       const chainPool = [...cheaper, ...pricier].slice(0, input.settings.fallbackChainDepth);
@@ -326,8 +363,30 @@ export function buildChains(input: {
         const row = input.rowById.get(catalogId);
         return suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix)) ? `:${suffix}` : "";
       };
+      // A non-OpenRouter target's level comes from that provider's own catalog
+      // row (`providerOffers[provider].thinking`), never another provider's.
+      const levelForOffer = (thinking: readonly string[]): string =>
+        suffix !== undefined && (META_LEVELS[suffix] === true || thinking.includes(suffix)) ? `:${suffix}` : "";
       const values: string[] = [];
-      if (plan.autoPin) {
+      // Primary cross-provider entries (issue #116): the chosen model on its
+      // other offering providers, in priority order, excluding the chosen
+      // provider. `openrouter/*` keeps the model id when the OpenRouter catalog
+      // id is the same as the chosen provider's — the wildcard is a chain VALUE,
+      // not a key, so the prune's key ownership is untouched; a differing
+      // OpenRouter id is enumerated. A non-OpenRouter entry is
+      // `<provider>/<catalog-id>` with that provider's own thinking level.
+      for (const provider of chainProviderOrder(chosen.ranked.model, order, chosenProvider)) {
+        if (provider === "openrouter") {
+          const orId = resolveVariant(chosen.ranked.model.id, [...input.rowById.values()], input.tier);
+          if (orId === null) continue;
+          values.push(orId === chosen.catalogId ? `openrouter/*${levelFor(orId)}` : `openrouter/${orId}${levelFor(orId)}`);
+        } else {
+          const offer = chosen.ranked.model.providerOffers?.[provider];
+          if (offer === undefined) continue;
+          values.push(`${provider}/${offer.catalogId}${levelForOffer(offer.thinking)}`);
+        }
+      }
+      if (chosenProvider === "openrouter" && plan.autoPin) {
         // Auto-pin chain (spec #58, expanded by #69): every gate-passing route
         // of the primary model except the pinned route, then every
         // gate-passing route of each fallback model, in the role's
@@ -356,8 +415,18 @@ export function buildChains(input: {
           }
         }
       } else {
-        // Manual pin (every value carries it) or no pin (bare values).
-        for (const p of chainPool) values.push(`openrouter/${p.catalogId}${plan.pin}${levelFor(p.catalogId)}`);
+        // Manual pin (every value carries it) or no pin (bare values), each
+        // fallback on its effective provider: OpenRouter keeps today's form, a
+        // non-OpenRouter candidate is `<provider>/<catalog-id>` with its own
+        // offer's thinking level.
+        for (const p of chainPool) {
+          const prov = p.ranked.provider ?? "openrouter";
+          if (prov === "openrouter") values.push(`openrouter/${p.catalogId}${plan.pin}${levelFor(p.catalogId)}`);
+          else {
+            const offer = p.ranked.model.providerOffers?.[prov];
+            values.push(`${prov}/${p.catalogId}${offer === undefined ? "" : levelForOffer(offer.thinking)}`);
+          }
+        }
       }
       chainUpserts[plan.key] = [...new Set(values)].filter((v) => v !== plan.key);
       referenced.add(plan.key);
@@ -472,6 +541,10 @@ export function previewSelection(input: {
   rank: RankData;
   /** `filterCatalog(catalog, tier)`. */
   eligible: CatalogEntry[];
+  /** The full catalog (every provider), for the provider-scoped candidate
+   *  resolution. Optional: defaults to `eligible`, which is OpenRouter-only, so
+   *  a caller that wants non-OpenRouter candidates must pass it. */
+  catalog?: CatalogEntry[];
   availability: KeyAvailability;
   /** The scope's `config.yml` modelRoles (the hysteresis incumbent). */
   currentSelectors: Record<string, string>;
@@ -490,6 +563,13 @@ export function previewSelection(input: {
   // tier-filtered catalog, the tier is recovered from it.
   const tier: "billed" | "free" = input.tier === "free" || (input.tier === undefined && eligible.length > 0 && eligible.every((c) => c.id.endsWith(":free"))) ? "free" : "billed";
   const rowById = new Map(eligible.map((c) => [c.id, c]));
+  // The provider-scoped candidate resolution needs the full catalog: `eligible`
+  // is OpenRouter-only (`filterCatalog`), so a non-OpenRouter provider's rows
+  // are only reachable through `catalog`. A `none` tier (no usable key budget)
+  // resolves no candidate at all — `eligible` is empty, and the full catalog
+  // must not resurrect provider candidates; the same holds when the caller
+  // passes an empty `eligible` without a tier.
+  const providerCatalog = input.tier === "none" || (input.tier === undefined && eligible.length === 0) ? [] : (input.catalog ?? eligible);
   // Locked roles are ranked but excluded from every mutation: no selector write,
   // no chain upsert, no probe budget, no removal.
   const lockedRoles = new Set(
@@ -510,7 +590,7 @@ export function previewSelection(input: {
     const rankings = computeRankings(rank.models, { [role]: def });
     const candidates: Candidate[] = [];
     for (const ranked of rankings[role] ?? []) {
-      const catalogId = resolveVariant(ranked.model.id, eligible, tier);
+      const catalogId = resolveProviderVariant(ranked.model.id, ranked.provider ?? "openrouter", providerCatalog, tier);
       if (catalogId !== null) candidates.push({ ranked, catalogId });
     }
     if (candidates.length === 0) {
@@ -526,8 +606,13 @@ export function previewSelection(input: {
       continue;
     }
     const currentSelector = currentSelectors[role] ?? null;
-    const currentId = currentSelector === null ? null : currentRankingId(currentSelector);
-    const keyBlocked = (c: Candidate) => availability.active && availability.blocked.has(c.ranked.model.id);
+    const currentId = currentSelector === null ? null : currentRankingId(currentSelector, new Set(eligible.map((c) => c.provider)));
+    // The keyed-catalog prune is OpenRouter-only: `availability.blocked` is the
+    // OpenRouter keyed set, so a model offered by a non-OpenRouter provider must
+    // not be pruned by it (the run gates the same predicate on the effective
+    // provider).
+    const keyBlocked = (c: Candidate) =>
+      (c.ranked.provider ?? "openrouter") === "openrouter" && availability.active && availability.blocked.has(c.ranked.model.id);
     const keyBlockedCount = candidates.filter(keyBlocked).length;
     // Probe-optimistic: every candidate in the pre-walk set is clean, so the
     // walk's window is the prefix of the walk order its stop condition admits
@@ -556,7 +641,7 @@ export function previewSelection(input: {
     }
     const { chosen, reason } = decide({ currentSelector, currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
 
-    const autoRoutes = autoPinApplies(def) ? rankedRoutes(chosen.ranked.model, def) : [];
+    const autoRoutes = (chosen.ranked.provider ?? "openrouter") === "openrouter" && autoPinApplies(def) ? rankedRoutes(chosen.ranked.model, def) : [];
     const hasAutoRoutes = autoRoutes.length > 0;
     // Probe-optimistic: the first gate-passing route is accepted, so the pin is
     // the route leader and no route is ever blocked.
@@ -594,7 +679,7 @@ export function previewSelection(input: {
     if (sel === undefined) continue;
     keepKeys.push(splitThinkingSuffix(sel).base);
   }
-  const { chainUpserts, chainPrunes } = buildChains({ plans, settings, rowById, keepKeys, writtenKeys: state.pluginWrittenChainKeys });
+  const { chainUpserts, chainPrunes } = buildChains({ plans, settings, rowById, keepKeys, writtenKeys: state.pluginWrittenChainKeys, tier });
   const { agentDisableAdds, agentDisableRemoves } = agentDisablePatch(raw, settings, state.managedDisabledAgents, agentPins);
   // Roles the plugin managed on a previous run but no longer does (disabled via
   // `enabled: false` / `weights: null`, or removed from settings): delete their
