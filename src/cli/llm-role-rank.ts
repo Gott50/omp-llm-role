@@ -27,6 +27,7 @@
 
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { catalogFromOmpModelsJson, enrichThinkingLevels, resolveVariant, type CatalogEntry } from "../availability.ts";
@@ -378,7 +379,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error(`error: ${err instanceof Error ? err.message : err}`);
-  process.exit(1);
-});
+// Run only when this file is the process entry point (`node src/cli/llm-role-rank.ts`).
+// Importing the module — the tests import `formatModelRolesYaml` — must not run a
+// live ranking fetch or spawn `omp models ls`.
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error(`error: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  });
+}
