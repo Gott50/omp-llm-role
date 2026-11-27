@@ -407,6 +407,37 @@ passing.
     implementation. The preview's
     HTTP surface (the spec's second seam) is covered in the Explorer seam (23).
 
+39. **Provider priority** (`provider-priority.test.ts`, `provider-catalog.test.ts`,
+    `provider-enrichment.test.ts`, `cli-report.test.ts`, `explorer-spa.test.ts`,
+    spec #116) — the pure provider module with fixtures: an empty list is
+    byte-identical to today; a single provider, a multi-provider list, a model
+    offered by several providers (its highest-priority provider's bonus), a model
+    offered by none (stays in the OpenRouter pool); a provider with a known price
+    (`reference`), an unknown price (the `openrouter-proxy`), and no routable row;
+    the positional bonus decay; the dated-id match; the `auto` exclusion; and the
+    provider-scoped thinking join (a provider's level never leaks into another
+    provider's selector). The catalog seams (`provider-catalog.test.ts`):
+    `refreshProviderCatalog`/`getProviderCatalog` with an injected exec (a
+    non-zero exit / unparseable payload → `null`, an empty array is a valid "no
+    rows"), the daily cache (`readProviderCatalogCache` fresh only on the same
+    UTC day, `writeProviderCatalogCache` sorted keys), `providerCatalogCachePath`,
+    and `providerDiscovery` (a `discovery` block → `"discovery"`, a static entry →
+    `"static"`, an absent file/provider → `"unknown"`). The enrichment
+    (`provider-enrichment.test.ts`): `enrichThinkingLevels` attaches
+    `providerOffers` and scopes `thinkingLevels` to the effective provider's row.
+    The CLI report (`cli-report.test.ts`): the suggested YAML uses the effective
+    provider's selector (`<provider>/<catalog-id>` for a non-OpenRouter provider,
+    `openrouter/<catalog-id>` for the gateway) and the module's entry guard
+    (`main()` only when run directly). The SPA (`explorer-spa.test.ts`): the
+    provider column with its price-source marker, the explain provider lines, and
+    the settings/role-editor inputs. The updater's daily refresh (once per day,
+    best-effort, the fresh-catalog use, the session-catalog fallback, the
+    static-provider and no-rows notes) is covered by the updater seam (item 31's
+    fake-deps harness). **The provider-priority agreement fixture** in
+    `selection-preview.test.ts` extends the preview-vs-run agreement (item 38) to
+    a provider-priority case, so the preview and the run cannot drift on the
+    effective provider, the selector or the chain.
+
 ## Live checks
 
 - **E2E refresh** — `omp plugin link .` → new omp session → observe the day-gated

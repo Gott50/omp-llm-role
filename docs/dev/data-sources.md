@@ -459,6 +459,55 @@ updater can re-fetch it from the metric key alone.
 | Generic llm-stats benchmark | direct | `entries[].model_id` is the bare llm-stats id |
 | Declared source | `join` | `direct`, `slug-suffix` (`org/model` → `model`) or `normalized` |
 
+## omp catalog — provider availability
+
+The omp catalog (`omp models ls --json`, parsed by `catalogFromOmpModelsJson` in
+`src/availability.ts`) is the availability source for **every** provider, not
+only OpenRouter. A model is offered by a non-OpenRouter provider when the
+catalog has a row for that provider whose ranking id matches the model's id
+through the same variant chain as OpenRouter (exact → newest dated → bare →
+alias), provider-scoped; the row's model id is the provider's catalog id (the
+selector's model part). The provider's `auto` pseudo-model and any id that
+already carries the provider prefix are excluded from the join. The join and the
+offer map live in `src/provider-priority.ts` (scoring.md, *Provider priority*).
+
+**The daily refresh.** For each prioritized non-OpenRouter provider (the global
+`providerPriority` plus every role's override), the updater's daily run
+(`providerMergedCatalog` in `src/updater.ts`) runs a best-effort
+`omp models refresh <provider>` (`refreshProviderCatalog`) and then reads the
+fresh list back with `omp models ls --json`, filtered to that provider
+(`getProviderCatalog`). The fresh rows **replace** the session catalog's rows
+for that provider in the run's catalog; every other provider's session rows
+stay. A failed refresh or read degrades to the session catalog with a note
+(`@<provider>: catalog refresh failed (…) — using the session catalog`), and a
+provider with no rows is noted (`@<provider>: no catalog rows — the provider is
+not used`). The refresh is best-effort and never aborts the run.
+
+**The cache.** The fresh rows are cached in
+`cache/provider-catalog-fetched-data.json` (`{ fetchedAt, providers }`, each
+provider's rows), fresh while `fetchedAt` is the current UTC day, so a later
+`/refresh-roles` the same day does not re-run the subprocess. The cache is
+gitignored and not shipped, like the other daily caches. The seams
+(`refreshProviderCatalog`, `getProviderCatalog`, `providerCatalogCachePath`) are
+in `src/provider-catalog.ts`; the updater's `Deps` injects them so tests supply
+fakes.
+
+**The static-provider note.** The plugin never writes `models.yml`. When a
+prioritized provider's entry carries no `discovery` block (`providerDiscovery`,
+a line-oriented `models.yml` scan — no runtime YAML dependency), the run notes
+the exact snippet to add once:
+`@<provider>: catalog is static — add discovery: { type: openai-models-list } to
+its models.yml entry`. After the user adds it, the daily refresh keeps the list
+current.
+
+**The price caveat.** The catalog cost is omp's **reference hydration** of the
+model's list price, not the provider's own rate. With
+`discovery: { type: openai-models-list }` the cost is zero/unknown, so the
+OpenRouter blend is the labelled proxy (`openrouter-proxy`). A user who wants
+the provider's exact rate adds `modelOverrides` with `cost` to the provider's
+`models.yml` entry; the ranking then prices on it as a `reference` price (the
+`provider` label is reserved for that exact-rate case and is not emitted today).
+
 ## Daily UTC caches
 
 All caches resolve against the repo's **`cache/` dir** (`CACHE_DIR` in
@@ -479,9 +528,14 @@ fresh checkout needs no setup.
 | `cache/bench-<id>-fetched-data.json` | `{ fetchedAt, source, scores, total, meta }` | non-fatal (the external metric is unfilled) |
 | `cache/benchmark-catalog-fetched-data.json` | `{ fetchedAt, source, entries }` (each entry carries `isCommunity`, `modality`, the maintenance fields `updatedAt`/`versionCount`/`latestVersionRowCount`/`starCount` and the provenance fields `datasetId`/`datasetOrgId`/`datasetSlug`) | non-fatal (discovery skipped) |
 | `cache/<declared-id>-fetched-data.json` | `{ fetchedAt, source, scores, total, meta }` | non-fatal (the external metric is unfilled) |
+| `cache/provider-catalog-fetched-data.json` | `{ fetchedAt, providers }` (each provider's catalog rows) | non-fatal (the session catalog is used) |
 
 The last two are the registry's generic scores cache (`loadBenchmarkScores`),
-shared by the generic llm-stats benchmark and every declared source.
+shared by the generic llm-stats benchmark and every declared source. The
+provider-catalog cache is the one exception to the fetch chain above: it is
+fresh → **subprocess refresh** (`omp models refresh <provider>` + `omp models ls
+--json`) → session catalog, not a live HTTP fetch (see *omp catalog — provider
+availability*).
 
 `cache/` is gitignored (`.gitignore`). `--refresh` bypasses the fresh-cache
 check; the explorer's `POST /api/refresh` does the same.

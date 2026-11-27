@@ -277,6 +277,73 @@ filter, not a re-pricing: the role-independent `1/price²` blend (`m.price`/
 `m.throughput`) is left as the account-agnostic expected value, and a model with
 no allowed route keeps that blend (the soft basis never drops a model).
 
+## Provider priority
+
+An opt-in soft preference for a set of omp providers (spec #116). Two settings:
+`providerPriority` (an ordered list of omp provider ids, global with a per-role
+override; default `[]`) and `providerBonus` (a number in `[0, 1]`, default
+`0.05`). The vocabulary lives in `src/provider-priority.ts`; the ranking reads it
+in `rankRole`, the selection in `src/selection.ts`.
+
+- **The order.** `providerOrder(priority)` dedupes the list, preserves order and
+  appends `openrouter` last when absent (the implicit last resort). A provider id
+  is the first path segment of a selector — `flocta`, `openrouter` — not an
+  OpenRouter route slug (that is `providerPin`'s `@<slug>`; the two are
+  distinct).
+- **The offer.** A model is offered by a non-OpenRouter provider when the omp
+  catalog has a row for that provider whose ranking id matches the model's id
+  through the same variant chain as OpenRouter (exact → newest dated → bare →
+  alias), provider-scoped; the provider's `auto` pseudo-model and any
+  already-prefixed id are excluded. `providerOffersFor` attaches
+  `providerOffers[provider] = { catalogId, price, thinking }`, where `price` is
+  the 3:1 in:out blend of the row's catalog cost when non-zero, else `null`
+  (available, no own price). OpenRouter is never in the map — the model's own
+  price and throughput are the OpenRouter blend.
+- **The effective provider.** `effectiveProvider` is the first provider in the
+  order that offers the model, else `openrouter`. A model offered by no listed
+  provider stays in the OpenRouter pool and is selectable as today.
+- **The bonus.** `providerBonusFor(provider, order, bonus)` is
+  `bonus / (index + 1)` for the provider at its index; `0` for `openrouter` or an
+  unlisted provider. A model offered by several listed providers gets its
+  **highest-priority** provider's bonus (the caller passes the effective
+  provider), so the list order is meaningful and the decay is positional.
+- **The price basis.** `priceBasisFor` prices the model on the effective
+  provider's offer price when non-null, else the OpenRouter blend. The ranked
+  row's `priceSource` labels it: `reference` (the provider's catalog cost —
+  omp's **reference hydration** of the model's list price, not the provider's
+  own rate), `openrouter-proxy` (the provider has no own price, so the
+  OpenRouter blend is a labelled proxy), or `openrouter` (the gateway). The
+  fourth label, `provider`, is reserved for an exact provider rate (a
+  `modelOverrides` cost in the provider's `models.yml`) and is not emitted today.
+  The throughput basis is always the model's OpenRouter throughput (the catalog
+  has no throughput — a labelled proxy).
+- **The value stays honest.** `value = q − λ·priceEff` is unchanged, and the
+  bonus is **never** added to `value`, `q` or `parts`. The displayed value
+  ranking and the explorer's rank table are therefore not skewed by the
+  preference; a much better model elsewhere can still win.
+- **Value mode — the effective-value ladder.** The selection compares
+  `effectiveValue = value + providerBonus` (the incumbent's own bonus included)
+  under the existing `switchMargin`, so a provider change is a **normal switch**
+  subject to the margin and the plugin does not churn on a small bonus. The
+  challenger is the effective-value leader.
+- **Cheapest mode — the price discount.** The value bonus is inert (the pick is
+  the cheapest bar-clearing candidate). The preference is a price-fraction
+  discount on the preferred provider's candidates for the bar-clearing order:
+  `pickOrder` compares `priceEff × (1 − providerBonus)`, applied **once**. The
+  bar anchor stays the pool's highest-`q` model, so the discount moves the pick,
+  not the bar. `providerBonus: 0` leaves the cheapest mode byte-identical.
+- **The chain order.** The fallback chain's primary entries are the chosen model
+  on its **other** offering providers, in priority order, excluding the chosen
+  provider: `openrouter/*` (omp's "keep the model id, try it through this
+  provider" wildcard) when the OpenRouter catalog id equals the chosen
+  provider's, else the enumerated `openrouter/<catalog-id>[@<slug>]`; a
+  non-OpenRouter entry is `<provider>/<catalog-id>`. The next-best candidates
+  then follow on their **effective** providers (writes-and-state.md, *Provider
+  priority: selectors, chains and settings*).
+- **The empty-list identity.** An empty priority list and a zero bonus leave
+  every model's effective provider `openrouter`, the bonus `0`, the price source
+  `openrouter`, and every selector, chain and ranking byte-identical to today.
+
 ## Price levers (the explorer's readouts)
 
 Two readouts make the price posture visible (spec #81). Both are pure
