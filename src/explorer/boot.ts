@@ -16,7 +16,7 @@ import type { Server } from "node:http";
 import { join } from "node:path";
 import { projectAgentsDir } from "../agent-file.ts";
 import { discoverAgentPins } from "../agent-pins.ts";
-import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
+import { enrichCatalogData, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
 import { providerCatalogCachePath, readProviderCatalogCache } from "../provider-catalog.ts";
 import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH } from "../settings.ts";
@@ -170,7 +170,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     return [...opts.catalog.filter((c) => !fresh.has(c.provider)), ...[...fresh].flatMap((provider) => cached[provider])];
   };
   let catalog = mergedCatalog();
-  enrichThinkingLevels(rank.models, catalog);
+  enrichCatalogData(rank.models, catalog);
 
   const server = createExplorerServer({
     webDir: opts.webDir,
@@ -204,7 +204,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     refresh: async () => {
       rank = await opts.reload(true);
       catalog = mergedCatalog();
-      enrichThinkingLevels(rank.models, catalog);
+      enrichCatalogData(rank.models, catalog);
       if (opts.reloadAvailability) availability = await opts.reloadAvailability();
       // Best-effort: the whitelist is account state, so a failed re-harvest must
       // leave the explorer usable (routes unpruned) rather than fail the refresh.

@@ -368,7 +368,7 @@ launcher `/explore-roles` uses.
   the `website`/`writing` fetches even when no role weights them. The union is
   what keeps a scope switch free (one fetch) and is asserted as a pure call over
   temp lock files, not through the injected `rank` fixture.
-- `enrichThinkingLevels(rank.models, opts.catalog)` gates the thinking price
+- `enrichCatalogData(rank.models, opts.catalog)` gates the thinking price
   factor on the omp catalog; `refresh()` re-runs `opts.reload(true)`,
   re-enriches, and — when `opts.reloadAvailability` is supplied — re-derives the
   availability overlay.

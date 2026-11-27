@@ -30,7 +30,7 @@ import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
-import { catalogFromOmpModelsJson, enrichThinkingLevels, resolveVariant, type CatalogEntry } from "../availability.ts";
+import { catalogFromOmpModelsJson, enrichCatalogData, resolveVariant, type CatalogEntry } from "../availability.ts";
 import { cachedSourceInfo, loadDeclaredSources } from "../benchmark-sources.ts";
 import { computeRankings, loadRankData, META_LEVELS, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "../engine.ts";
 import { focusMetricsOf } from "../explorer/explain.ts";
@@ -335,7 +335,7 @@ async function main(): Promise<void> {
   } catch {
     catalog = [];
   }
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
 
   const rankings = computeRankings(models, roles);
 

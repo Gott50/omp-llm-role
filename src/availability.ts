@@ -437,7 +437,7 @@ export function resolveProviderVariant(
  * `providerOffers`. The map is role-independent (all catalog providers, not a
  * role's priority list), so one enrichment serves every role. Undefined when no
  * non-OpenRouter provider offers the model. */
-export function enrichThinkingLevels(models: Model[], catalog: CatalogEntry[]): void {
+export function enrichCatalogData(models: Model[], catalog: CatalogEntry[]): void {
   const byRankingId = new Map<string, string[]>();
   for (const c of catalog) {
     if (c.provider !== "openrouter") continue;

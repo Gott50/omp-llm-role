@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability, type ProbeVerdict } from "../src/availability.ts";
+import { enrichCatalogData, type CatalogEntry, type KeyAvailability, type ProbeVerdict } from "../src/availability.ts";
 import { writeProviderCatalogCache } from "../src/provider-catalog.ts";
 import { cardinalMetric, rankedRoutes, rankRole, SUFFIX_LEVELS, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData, type RoleDef } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
@@ -2068,7 +2068,7 @@ const PROVIDER_ROLE: RoleDef = { description: "", weights: { general: 0.5, price
 test("rankRows: rows carry the effective provider, price source and bonus", () => {
   const models = [makeModel("alpha", 80, 1, 100)];
   const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 3 })];
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
   const rows = rankRows(def, models, []);
   assert.equal(rows[0].provider, "flocta");
@@ -2081,7 +2081,7 @@ test("rankRows: rows carry the effective provider, price source and bonus", () =
 test("rankRows: a provider with no own price labels the OpenRouter blend as a proxy", () => {
   const models = [makeModel("alpha", 80, 1, 100)];
   const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"])];
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
   const rows = rankRows(def, models, []);
   assert.equal(rows[0].provider, "flocta");
@@ -2094,7 +2094,7 @@ test("explainModel: the eligible branch prices on the provider basis and carries
   // report the provider's price, not the OpenRouter blend.
   const models = [makeModel("alpha", 80, 5, 100)];
   const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 5 })];
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
   const ex = explainModel(def, models, "alpha");
   if (!ex.eligible) throw new Error(`unexpected ineligible: ${ex.reasons.join(", ")}`);
@@ -2114,7 +2114,7 @@ test("explainModel: a model with no OpenRouter price but a provider price is eli
   model.price = null;
   model.metrics.price = null;
   const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 5 })];
-  enrichThinkingLevels([model], catalog);
+  enrichCatalogData([model], catalog);
   const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
   const ex = explainModel(def, [model], "alpha");
   if (!ex.eligible) throw new Error(`unexpected ineligible: ${ex.reasons.join(", ")}`);
@@ -2126,7 +2126,7 @@ test("explainModel: a model with no OpenRouter price but a provider price is eli
 
 test("rankRows and explainModel: an empty priority list reads openrouter with no bonus", () => {
   const models = [makeModel("alpha", 80, 1, 100)];
-  enrichThinkingLevels(models, makeCatalog(["alpha"]));
+  enrichCatalogData(models, makeCatalog(["alpha"]));
   const rows = rankRows(PROVIDER_ROLE, models, []);
   assert.equal(rows[0].provider, "openrouter");
   assert.equal(rows[0].priceSource, "openrouter");
@@ -2143,7 +2143,7 @@ test("POST /api/preview routes a provider-priority pick to the provider's select
   writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
   const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
   const catalog = [...makeCatalog(["model-a", "model-b"]), ...providerCatalog("flocta", ["model-a"])];
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   const rank: RankData = { models, fetchedAt: "2026-10-08T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
   const handle = await bootServer(
     previewOpts(lockPath, {
