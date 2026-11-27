@@ -7,6 +7,7 @@ import {
   effectiveProvider,
   priceBasisFor,
   providerBonusFor,
+  providerCatalogIdFor,
   providerOf,
   providerOffersFor,
   providerOrder,
@@ -164,6 +165,30 @@ test("the thinking join is provider-scoped", () => {
   const offers = providerOffersFor(m, catalog, providerOrder(["flocta"]));
   assert.deepEqual(offers.flocta.thinking, ["high"]);
   assert.equal("openrouter" in offers, false);
+});
+
+// ---------------------------------------------------------------------------
+// providerCatalogIdFor
+// ---------------------------------------------------------------------------
+
+test("providerCatalogIdFor returns the exact provider row id", () => {
+  const catalog = [entry("flocta", "deepseek/deepseek-v4.1-flash")];
+  assert.equal(providerCatalogIdFor("deepseek-v4.1-flash", "flocta", catalog), "deepseek/deepseek-v4.1-flash");
+});
+
+test("providerCatalogIdFor matches a dated model id to an undated row", () => {
+  const catalog = [entry("flocta", "deepseek/deepseek-v4.1-flash")];
+  assert.equal(providerCatalogIdFor("deepseek-v4.1-flash-1017", "flocta", catalog), "deepseek/deepseek-v4.1-flash");
+});
+
+test("providerCatalogIdFor returns null when the provider has no row", () => {
+  const catalog = [entry("other", "deepseek/deepseek-v4.1-flash")];
+  assert.equal(providerCatalogIdFor("deepseek-v4.1-flash", "flocta", catalog), null);
+});
+
+test("providerCatalogIdFor excludes the auto pseudo-model", () => {
+  const catalog = [entry("flocta", "flocta/auto")];
+  assert.equal(providerCatalogIdFor("auto", "flocta", catalog), null);
 });
 
 // ---------------------------------------------------------------------------
