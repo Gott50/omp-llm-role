@@ -150,7 +150,7 @@ test("the chain reaches a cheaper candidate the walk never probes", async () => 
 test("a non-OpenRouter pick is not probe-verified", async () => {
   const dir = setupAgentDir("other: 1\n");
   const probed: string[] = [];
-  // Fresh models: `enrichThinkingLevels` mutates the ranking rows in place.
+  // Fresh models: `enrichCatalogData` mutates the ranking rows in place.
   const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
   // A dated flocta variant of model-a: its catalog id differs from the
   // OpenRouter id, so a probe of an OpenRouter candidate cannot be mistaken for

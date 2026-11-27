@@ -720,7 +720,7 @@ function providerRow(provider: string, id: string, cost: { input: number; output
   };
 }
 
-/** Fresh models per test: `enrichThinkingLevels` mutates the ranking rows in
+/** Fresh models per test: `enrichCatalogData` mutates the ranking rows in
  * place (it attaches `providerOffers`), so a shared fixture would leak one
  * test's provider offers into the next. */
 function providerModels(): Model[] {

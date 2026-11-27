@@ -16,7 +16,7 @@ import type { Server } from "node:http";
 import { join } from "node:path";
 import { projectAgentsDir } from "../agent-file.ts";
 import { discoverAgentPins } from "../agent-pins.ts";
-import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
+import { enrichCatalogData, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
 import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH } from "../settings.ts";
 import { agentDir, loadState } from "../state.ts";
@@ -133,7 +133,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   const tier = opts.tier ?? "billed";
   const userAgentDir = opts.agentDir ?? agentDir();
   const usageDir = opts.usageDir ?? agentDir();
-  enrichThinkingLevels(rank.models, opts.catalog);
+  enrichCatalogData(rank.models, opts.catalog);
 
   // Scope resolution is boot's job: the user-level scope, the registry's
   // projects, and the session's project. Re-resolved on every request so a
@@ -175,7 +175,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     },
     refresh: async () => {
       rank = await opts.reload(true);
-      enrichThinkingLevels(rank.models, opts.catalog);
+      enrichCatalogData(rank.models, opts.catalog);
       if (opts.reloadAvailability) availability = await opts.reloadAvailability();
       // Best-effort: the whitelist is account state, so a failed re-harvest must
       // leave the explorer usable (routes unpruned) rather than fail the refresh.

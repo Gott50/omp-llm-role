@@ -423,7 +423,7 @@ passing.
     UTC day, `writeProviderCatalogCache` sorted keys), `providerCatalogCachePath`,
     and `providerDiscovery` (a `discovery` block → `"discovery"`, a static entry →
     `"static"`, an absent file/provider → `"unknown"`). The enrichment
-    (`provider-enrichment.test.ts`): `enrichThinkingLevels` keeps
+    (`provider-enrichment.test.ts`): `enrichCatalogData` keeps
     `thinkingLevels` OpenRouter-only and attaches `providerOffers` for every
     non-OpenRouter catalog provider; `rankRole` picks the effective provider's
     list.
