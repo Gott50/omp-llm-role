@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { KeyAvailability } from "../src/availability.ts";
+import { currentRankingId, type KeyAvailability } from "../src/availability.ts";
 import { runUpdater, type Deps } from "../src/updater.ts";
 import { fakeDeps, makeModel, NO_FILTER_AVAILABILITY, runInTempDir, setupAgentDir } from "./helpers.ts";
 
@@ -149,4 +149,32 @@ test("a rejecting getKeyAvailability never throws out of the run", async () => {
   assert.deepEqual(result.decisions, []);
   // A throw escaping the run is a defect, not an enumerated environment abort.
   assert.equal(result.defect, "boom");
+});
+
+// ---------------------------------------------------------------------------
+// currentRankingId — provider-aware selector identity
+// ---------------------------------------------------------------------------
+
+test("currentRankingId strips a known provider prefix", () => {
+  const known = new Set(["flocta"]);
+  assert.equal(currentRankingId("flocta/deepseek-v4.1-flash:high", known), "deepseek-v4.1-flash");
+  assert.equal(currentRankingId("flocta/deepseek/deepseek-v4.1-flash", known), "deepseek-v4.1-flash");
+});
+
+test("currentRankingId keeps an unknown prefix (today's openrouter-only rule)", () => {
+  const known = new Set(["flocta"]);
+  assert.equal(currentRankingId("foo/bar/baz", known), "baz");
+  assert.equal(currentRankingId("foo/bar/baz"), "baz");
+});
+
+test("currentRankingId strips openrouter/ and a trailing @slug with a known-provider set", () => {
+  const known = new Set(["flocta"]);
+  assert.equal(currentRankingId("openrouter/z-ai/glm-4.7@cerebras:high", known), "glm-4.7");
+  assert.equal(currentRankingId("openrouter/z-ai/glm-4.7@deepinfra/fp8", known), "glm-4.7");
+});
+
+test("currentRankingId leaves a bare selector alone", () => {
+  const known = new Set(["flocta"]);
+  assert.equal(currentRankingId("deepseek-v4.1-flash", known), "deepseek-v4.1-flash");
+  assert.equal(currentRankingId("deepseek-v4.1-flash:high", known), "deepseek-v4.1-flash");
 });
