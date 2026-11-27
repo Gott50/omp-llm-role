@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildOpenRouterEnrichment, type OpenRouterEndpointRecord } from "../src/engine.ts";
+import { buildOpenRouterEnrichment, rankRole, type OpenRouterEndpointRecord, type RoleDef } from "../src/engine.ts";
+import { makeModel } from "./helpers.ts";
 
 // The find payload carries one traffic-getting route per model; the pages carry
 // every provider route. Fixtures below exercise the price-based load balancing
@@ -167,4 +168,16 @@ test("a find-only route carries its input price into the blend", () => {
   assert.ok(enrichment.m);
   assert.ok(Math.abs(enrichment.m.tput - 16) < 1e-9);
   assert.ok(Math.abs(enrichment.m.price - 2) < 1e-9);
+});
+
+// --- provider priority: the OpenRouter path is unchanged on an empty list (#116) ---
+
+test("rankRole: an empty priority list ignores provider offers and keeps the OpenRouter blend", () => {
+  const m = { ...makeModel("m", 40, 5, 100), providerOffers: { flocta: { catalogId: "m", price: 2, thinking: [] } } };
+  const def: RoleDef = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+  const [r] = rankRole(def, [m]);
+  assert.equal(r.provider, "openrouter");
+  assert.equal(r.priceSource, "openrouter");
+  assert.equal(r.providerBonus, 0);
+  assert.equal(r.priceEff, 5); // the OpenRouter blend, not the flocta offer
 });
