@@ -13,7 +13,7 @@
 
 import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, rankRole, type Model, type Ranked, type RankData, type RoleDef, type SelectionMode } from "./engine.ts";
 import { currentRankingId, resolveProviderVariant, resolveVariant, splitThinkingSuffix, type CatalogEntry, type KeyAvailability, type Tier } from "./availability.ts";
-import { chainProviderOrder, providerOf, providerOrder } from "./provider-priority.ts";
+import { chainProviderOrder, providerBonusFor, providerOf, providerOrder } from "./provider-priority.ts";
 import { roleUniverse, type ResolvedSettings } from "./settings.ts";
 import type { AgentPin } from "./agent-pins.ts";
 
@@ -168,7 +168,12 @@ export function incumbentOnProvider(model: Model, def: RoleDef, provider: string
   const ranked = rankRole({ ...def, providerPriority: [provider] }, [model])[0];
   if (ranked === undefined) return null;
   const catalogId = resolveProviderVariant(model.id, provider, catalog, tier);
-  return catalogId === null ? null : { ranked, catalogId };
+  if (catalogId === null) return null;
+  // The forced re-rank prices the model on `provider`, but its bonus must be the
+  // one the run applies to that provider in the role's real order (index-decayed,
+  // 0 for an unlisted provider) — not the index-0 bonus the override implies.
+  const providerBonus = providerBonusFor(provider, providerOrder(def.providerPriority ?? []), def.providerBonus ?? 0);
+  return { ranked: { ...ranked, providerBonus }, catalogId };
 }
 
 /**

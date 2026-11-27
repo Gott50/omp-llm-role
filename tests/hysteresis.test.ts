@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import { rankRole, type Ranked } from "../src/engine.ts";
-import { decide, ladderInputs } from "../src/selection.ts";
+import type { CatalogEntry } from "../src/availability.ts";
+import { decide, incumbentOnProvider, ladderInputs } from "../src/selection.ts";
 import { DEFAULT_ROLES, DEFAULT_SETTINGS } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
@@ -504,4 +505,29 @@ test("an empty provider priority and a zero bonus are byte-identical to no provi
   assert.equal(explicit.text, plain.text);
   assert.deepEqual(explicit.chains, plain.chains);
   assert.equal(explicit.result.decisions[0].reason, plain.result.decisions[0].reason);
+});
+
+/** A non-OpenRouter catalog row: `provider`'s offer of `id`. */
+function providerRow(provider: string, id: string): CatalogEntry {
+  return { provider, id: `org/${id}`, selector: `${provider}/org/${id}`, name: id, contextWindow: 200000, maxTokens: 8192, reasoning: true, thinking: [], input: ["text"], cost: null };
+}
+
+test("incumbentOnProvider applies the role's real index bonus, not the forced index-0 bonus", () => {
+  const model = makeModel("model-a", 90, 1, 100);
+  model.providerOffers = {
+    flocta: { catalogId: "org/model-a", price: 1, thinking: [] },
+    other: { catalogId: "org/model-a", price: 1, thinking: [] },
+    third: { catalogId: "org/model-a", price: 1, thinking: [] },
+  };
+  const catalog = [...makeCatalog(["model-a"]), providerRow("flocta", "model-a"), providerRow("other", "model-a"), providerRow("third", "model-a")];
+  const def = { ...DEFAULT_ROLES.default, providerPriority: ["flocta", "other"], providerBonus: 0.1 };
+  // `other` is index 1 in the role's order -> bonus/2, not the forced index-0 bonus.
+  const second = incumbentOnProvider(model, def, "other", catalog, "billed");
+  assert.ok(second);
+  assert.equal(second.ranked.provider, "other");
+  assert.equal(second.ranked.providerBonus, 0.05);
+  // A provider absent from the role's list gets no bonus.
+  const unlisted = incumbentOnProvider(model, def, "third", catalog, "billed");
+  assert.ok(unlisted);
+  assert.equal(unlisted.ranked.providerBonus, 0);
 });
