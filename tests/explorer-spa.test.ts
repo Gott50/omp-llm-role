@@ -28,7 +28,9 @@ test("the rank table's provider cell renders the preference term when non-zero",
   // bonus adds nothing, so the empty-priority table is unchanged.
   assert.match(app, /function providerCellText\(row\)/);
   assert.match(app, /const mark = PRICE_SOURCE_MARK\[row\.priceSource\] \|\| ""/);
-  assert.match(app, /const bonus = row\.providerBonus > 0 \? " \+" \+ row\.providerBonus : ""/);
+  // A decayed bonus (0.05/3) is trimmed to 3 decimals, not a 17-digit float.
+  assert.match(app, /function fmtBonus\(value\) \{\s*\n\s*return Number\(value\.toFixed\(3\)\);/);
+  assert.match(app, /const bonus = row\.providerBonus > 0 \? " \+" \+ fmtBonus\(row\.providerBonus\) : ""/);
   assert.match(app, /return row\.provider \+ mark \+ bonus/);
 });
 

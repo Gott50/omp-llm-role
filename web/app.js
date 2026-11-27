@@ -856,12 +856,19 @@ function keyBadge(key) {
  * price and the OpenRouter proxy do, because they are not the provider's rate. */
 const PRICE_SOURCE_MARK = { openrouter: "", provider: "", reference: "·ref", "openrouter-proxy": "·proxy" };
 
+/** The provider-preference term, trimmed to 3 decimals: a decayed bonus
+ * (`providerBonus / (index + 1)`, e.g. 0.05/3) would otherwise print a 17-digit
+ * float in a compact cell. */
+function fmtBonus(value) {
+  return Number(value.toFixed(3));
+}
+
 /** The provider cell's text: the effective provider, the price-source marker,
  * and the soft preference term when non-zero (spec #116). A zero bonus renders
  * exactly as before. */
 function providerCellText(row) {
   const mark = PRICE_SOURCE_MARK[row.priceSource] || "";
-  const bonus = row.providerBonus > 0 ? " +" + row.providerBonus : "";
+  const bonus = row.providerBonus > 0 ? " +" + fmtBonus(row.providerBonus) : "";
   return row.provider + mark + bonus;
 }
 
@@ -881,7 +888,7 @@ function providerTip(row) {
     const term = mode === "cheapest"
       ? "the provider preference is a price-fraction discount on the bar-clearing order"
       : "the provider preference is a value-unit nudge applied in the selection comparison only (never in the honest value)";
-    text += " · +" + row.providerBonus + " — " + term;
+    text += " · +" + fmtBonus(row.providerBonus) + " — " + term;
   }
   return text;
 }
