@@ -87,6 +87,11 @@ function mergeRolesInto(plugin: Record<string, unknown>, dirty: Record<string, R
     if (def.preferOwnProvider !== undefined) plugin[`${prefix}.preferOwnProvider`] = def.preferOwnProvider;
     if (def.cacheHitRate !== undefined) plugin[`${prefix}.cacheHitRate`] = def.cacheHitRate;
     if (def.lambda !== undefined) plugin[`${prefix}.lambda`] = def.lambda;
+    // The flat lock-file form is a comma-separated string (the `required`
+    // precedent); the reader accepts an array too. An authored empty list is
+    // written as "" so it overrides a global priority with "no priority".
+    if (def.providerPriority !== undefined) plugin[`${prefix}.providerPriority`] = def.providerPriority.join(", ");
+    if (def.providerBonus !== undefined) plugin[`${prefix}.providerBonus`] = def.providerBonus;
     if (def.filters?.image !== undefined) plugin[`${prefix}.filters.image`] = def.filters.image;
     if (def.filters?.tools !== undefined) plugin[`${prefix}.filters.tools`] = def.filters.tools;
     if (def.filters?.minContextTokens !== undefined) plugin[`${prefix}.filters.minContextTokens`] = def.filters.minContextTokens;
