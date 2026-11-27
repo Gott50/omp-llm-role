@@ -18,6 +18,7 @@ import { projectAgentsDir } from "../agent-file.ts";
 import { discoverAgentPins } from "../agent-pins.ts";
 import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
+import { providerCatalogCachePath, readProviderCatalogCache } from "../provider-catalog.ts";
 import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH } from "../settings.ts";
 import { agentDir, loadState } from "../state.ts";
 import { readUsageRows, type TokenProfile } from "../usage-ledger.ts";
@@ -71,6 +72,14 @@ export type ExplorerBootOpts = {
   /** The user-set token profile the per-task price falls back to (the
    *  `tokenProfile` setting); absent = unset. */
   tokenProfile?: TokenProfile | null;
+  /**
+   * The daily provider-catalog cache the run wrote (default:
+   * `providerCatalogCachePath()`). The explorer merges its fresh rows for the
+   * prioritized providers into the session catalog, so a model the run's daily
+   * refresh discovered is visible in the preview without a new session. A
+   * missing/stale cache leaves the session catalog untouched.
+   */
+  providerCatalogCachePath?: string;
   /**
    * The user-level agent dir holding the user scope's `config.yml`, state and
    * history (default: `agentDir()`). A project scope reads its own `<root>/.omp`
@@ -133,7 +142,6 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   const tier = opts.tier ?? "billed";
   const userAgentDir = opts.agentDir ?? agentDir();
   const usageDir = opts.usageDir ?? agentDir();
-  enrichThinkingLevels(rank.models, opts.catalog);
 
   // Scope resolution is boot's job: the user-level scope, the registry's
   // projects, and the session's project. Re-resolved on every request so a
@@ -143,6 +151,26 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
   // truth). A project scope merges the project lock over the user-level lock —
   // the exact read the updater performs.
   const listScopes = (): Scope[] => resolveScopes(scopeInputs);
+
+  /** The catalog the explorer enriches and gates with: the session catalog plus
+   * the daily provider cache for every prioritized provider (the run's own
+   * merge, minus the subprocess). The prioritized set is the union across
+   * scopes, so a project's priority is covered too. A missing/stale cache
+   * leaves the session catalog untouched. */
+  const mergedCatalog = (): CatalogEntry[] => {
+    const today = new Date().toISOString().slice(0, 10);
+    const cached = readProviderCatalogCache(today, opts.providerCatalogCachePath ?? providerCatalogCachePath()) ?? {};
+    const prioritized = new Set<string>();
+    for (const scope of listScopes()) {
+      const { settings, roles } = readScopeRoles(scope, userLockPath);
+      for (const provider of poolProviderPriority(settings.resolved.providerPriority, roles)) prioritized.add(provider);
+    }
+    const fresh = new Set([...prioritized].filter((provider) => provider in cached));
+    if (fresh.size === 0) return opts.catalog;
+    return [...opts.catalog.filter((c) => !fresh.has(c.provider)), ...[...fresh].flatMap((provider) => cached[provider])];
+  };
+  let catalog = mergedCatalog();
+  enrichThinkingLevels(rank.models, catalog);
 
   const server = createExplorerServer({
     webDir: opts.webDir,
@@ -175,7 +203,8 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     },
     refresh: async () => {
       rank = await opts.reload(true);
-      enrichThinkingLevels(rank.models, opts.catalog);
+      catalog = mergedCatalog();
+      enrichThinkingLevels(rank.models, catalog);
       if (opts.reloadAvailability) availability = await opts.reloadAvailability();
       // Best-effort: the whitelist is account state, so a failed re-harvest must
       // leave the explorer usable (routes unpruned) rather than fail the refresh.
@@ -195,7 +224,7 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
     getPoolInputs: (scope): PoolInputs => {
       const { settings, roles } = readScopeRoles(scope, userLockPath);
       return {
-        catalog: opts.catalog,
+        catalog,
         tier,
         allowed,
         availability,

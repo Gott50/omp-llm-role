@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import { enrichThinkingLevels, type CatalogEntry, type KeyAvailability, type ProbeVerdict } from "../src/availability.ts";
+import { writeProviderCatalogCache } from "../src/provider-catalog.ts";
 import { cardinalMetric, rankedRoutes, rankRole, SUFFIX_LEVELS, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData, type RoleDef } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, METRIC_META, perTaskPrice, rankRows } from "../src/explorer/explain.ts";
@@ -2197,6 +2198,102 @@ test("the bootstrap settings payload carries the provider priority and bonus", a
     const defaults = boot.settings.defaults as Record<string, unknown>;
     assert.deepEqual(defaults.providerPriority, []);
     assert.equal(defaults.providerBonus, 0.05);
+  } finally {
+    await handle.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Provider catalog cache (spec #116): the explorer merges the run's daily
+// provider cache into the session catalog, so a model the refresh discovered is
+// visible in the preview without a new session.
+// ---------------------------------------------------------------------------
+
+/** A flocta catalog row for `id` (id `org/<id>`, so the provider join matches). */
+function floctaRow(id: string, cost: { input: number; output: number } | null = { input: 1, output: 5 }): CatalogEntry {
+  return {
+    provider: "flocta",
+    id: `org/${id}`,
+    selector: `flocta/org/${id}`,
+    name: id,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: true,
+    thinking: [],
+    input: ["text"],
+    cost,
+  };
+}
+
+/** Boot the explorer over a temp lock with a provider cache at `cachePath`. */
+async function bootWithProviderCache(dir: string, cachePath: string, rank: RankData): Promise<{ url: string; close: () => Promise<void> }> {
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { providerPriority: "flocta", roles: { previewrole: PREVIEW_ROLE } } } }, null, 2),
+  );
+  return startExplorer({
+    webDir: join(process.cwd(), "web"),
+    lockPath,
+    cwd: dir,
+    registryDir: dir,
+    agentDir: dir,
+    usageDir: dir,
+    rank,
+    // The session catalog has no flocta row: only the cache supplies it.
+    catalog: makeCatalog(["model-a", "model-b"]),
+    availability: NO_AVAILABILITY,
+    reload: async () => rank,
+    providerCatalogCachePath: cachePath,
+    port: 0,
+    open: false,
+    onLog: () => {},
+  });
+}
+
+test("the explorer merges the daily provider cache into the session catalog", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-provider-cache-"));
+  const cachePath = join(dir, "provider-catalog-fetched-data.json");
+  writeProviderCatalogCache(new Date().toISOString().slice(0, 10), { flocta: [floctaRow("model-a")] }, cachePath);
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const rank: RankData = { models, fetchedAt: "2026-10-08T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await bootWithProviderCache(dir, cachePath, rank);
+  try {
+    const def: RoleDef = { ...PREVIEW_ROLE, providerPriority: ["flocta"] };
+    const rankBody = await postJson(handle.url, "/api/rank", { role: "previewrole", def });
+    const row = rowOf(rankBody.body, "model-a");
+    assert.equal(row.provider, "flocta");
+    assert.equal(row.priceSource, "reference");
+    assert.equal(row.priceEff, 2);
+
+    const explainBody = await postJson(handle.url, "/api/explain", { role: "previewrole", def, modelId: "model-a" });
+    assert.equal(explainBody.body.eligible, true);
+    assert.equal(explainBody.body.provider, "flocta");
+    assert.equal(explainBody.body.priceEff, 2);
+
+    // No `settings` edit: the preview resolves the scope's committed globals
+    // (providerPriority "flocta"), exactly as the run does.
+    const previewBody = await postJson(handle.url, "/api/preview", { roles: { previewrole: PREVIEW_ROLE } });
+    assert.equal(decisionOf(previewBody.body, "previewrole").to, "flocta/org/model-a");
+  } finally {
+    await handle.close();
+  }
+});
+
+test("a stale provider cache leaves the session catalog untouched", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-provider-cache-stale-"));
+  const cachePath = join(dir, "provider-catalog-fetched-data.json");
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  writeProviderCatalogCache(yesterday, { flocta: [floctaRow("model-a")] }, cachePath);
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const rank: RankData = { models, fetchedAt: "2026-10-08T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await bootWithProviderCache(dir, cachePath, rank);
+  try {
+    const def: RoleDef = { ...PREVIEW_ROLE, providerPriority: ["flocta"] };
+    const rankBody = await postJson(handle.url, "/api/rank", { role: "previewrole", def });
+    const row = rowOf(rankBody.body, "model-a");
+    assert.equal(row.provider, "openrouter");
+    assert.equal(row.priceSource, "openrouter");
   } finally {
     await handle.close();
   }
