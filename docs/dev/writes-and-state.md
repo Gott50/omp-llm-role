@@ -361,13 +361,13 @@ its trailing `:level`, as today.
 on its other offering providers, in priority order, excluding the chosen
 provider:
 
-- `openrouter/*` — omp's "keep the current model id and try it through this
-  provider" wildcard — when the model's OpenRouter catalog id equals the chosen
-  provider's catalog id;
-- the enumerated `openrouter/<catalog-id>[@<slug>]` when the OpenRouter id
-  differs;
-- `<provider>/<catalog-id>` for a non-OpenRouter provider, with that provider's
-  own thinking level.
+- `openrouter/*[:<level>]` — omp's "keep the current model id and try it through
+  this provider" wildcard — when the model's OpenRouter catalog id equals the
+  chosen provider's catalog id;
+- the enumerated `openrouter/<catalog-id>[:<level>]` when the OpenRouter id
+  differs (no `@<slug>` — the cross-provider entry is not pinned);
+- `<provider>/<catalog-id>[:<level>]` for a non-OpenRouter provider, with that
+  provider's own thinking level.
 
 The next-best candidates then follow on their **effective** providers (the
 OpenRouter auto-pin expansion is unchanged for an OpenRouter primary). The

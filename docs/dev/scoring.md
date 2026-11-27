@@ -338,12 +338,10 @@ in `rankRole`, the selection in `src/selection.ts`.
   not the bar. `providerBonus: 0` leaves the cheapest mode byte-identical.
 - **The chain order.** The fallback chain's primary entries are the chosen model
   on its **other** offering providers, in priority order, excluding the chosen
-  provider: `openrouter/*` (omp's "keep the model id, try it through this
-  provider" wildcard) when the OpenRouter catalog id equals the chosen
-  provider's, else the enumerated `openrouter/<catalog-id>[@<slug>]`; a
-  non-OpenRouter entry is `<provider>/<catalog-id>`. The next-best candidates
-  then follow on their **effective** providers (writes-and-state.md, *Provider
-  priority: selectors, chains and settings*).
+  provider, then the next-best candidates on their **effective** providers. The
+  exact value forms (`openrouter/*[:<level>]`, `openrouter/<catalog-id>[:<level>]`,
+  `<provider>/<catalog-id>[:<level>]`) are in writes-and-state.md, *Provider
+  priority: selectors, chains and settings*.
 - **The empty-list identity.** An empty priority list and a zero bonus leave
   every model's effective provider `openrouter`, the bonus `0`, the price source
   `openrouter`, and every selector, chain and ranking byte-identical to today.
