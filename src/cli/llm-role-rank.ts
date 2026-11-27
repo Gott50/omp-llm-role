@@ -34,7 +34,7 @@ import { catalogFromOmpModelsJson, enrichCatalogData, resolveVariant, type Catal
 import { cachedSourceInfo, loadDeclaredSources } from "../benchmark-sources.ts";
 import { computeRankings, loadRankData, META_LEVELS, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "../engine.ts";
 import { focusMetricsOf } from "../explorer/explain.ts";
-import { DEFAULT_ROLES as ROLES, readPluginSettingsMap, resolveSettings } from "../settings.ts";
+import { DEFAULT_ROLES as ROLES, DEFAULT_SETTINGS, readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "../settings.ts";
 
 const execFileP = promisify(execFile);
 
@@ -279,6 +279,36 @@ export function formatModelRolesYaml(rankings: Record<string, Ranked[]>, roles: 
   return lines.join("\n");
 }
 
+/**
+ * The roles the report ranks: the shipped defaults (the `--all` filter keeps
+ * every role, otherwise the enabled ones), with ONLY the provider keys overlaid
+ * from the resolved plugin settings. The role set and every other knob stay the
+ * shipped defaults — the committed report is a shipped artifact, so a machine's
+ * tuned defs (`cacheHitRate`, price caps, endpoint filters) must never leak into
+ * it. `settings.roles[name]` is the resolved def, so its provider keys are the
+ * authored value or the global fill; a role absent from it (e.g. `designer`
+ * when the lock does not enable it) takes the global.
+ */
+export function reportRoles(settings: ResolvedSettings | undefined, all: boolean): Record<string, RoleDef> {
+  const globalPriority = settings?.providerPriority ?? [];
+  const globalBonus = settings?.providerBonus ?? DEFAULT_SETTINGS.providerBonus;
+  return Object.fromEntries(
+    Object.entries(ROLES)
+      .filter(([, d]) => all || d.enabled !== false)
+      .map(([name, def]) => {
+        const authored = settings?.roles?.[name];
+        return [
+          name,
+          {
+            ...def,
+            providerPriority: authored?.providerPriority ?? globalPriority,
+            providerBonus: authored?.providerBonus ?? globalBonus,
+          },
+        ];
+      }),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -306,10 +336,13 @@ async function main(): Promise<void> {
 
   // Shipped defaults rank the omp built-in roles only; `--all` adds opt-in roles
   // (designer) — which also pulls in their exclusive sources (Design Arena).
-  // The plugin settings (the lock file's `omp-llm-role` map) supply the role
-  // overrides and the global provider priority, so the report matches the
-  // plugin's run. No lock entry keeps today's behavior exactly: the shipped
-  // defaults and an empty priority list.
+  // The plugin settings (the lock file's `omp-llm-role` map) supply ONLY the
+  // provider priority/bonus, so the report's suggested selectors match the
+  // plugin's run. The role set and every other knob stay the shipped defaults:
+  // the committed report is a shipped artifact, so a machine's tuned defs
+  // (cacheHitRate, price caps, endpoint filters) must never leak into it. No
+  // lock entry keeps today's behavior exactly: the shipped defaults and an
+  // empty priority list.
   const raw = readPluginSettingsMap();
   const resolved = Object.keys(raw).length > 0 ? resolveSettings(raw) : null;
   // Invalid settings abort the report, as they abort the plugin's run: a report
@@ -319,9 +352,7 @@ async function main(): Promise<void> {
     for (const e of resolved.errors) console.error(`  ${e}`);
     process.exit(1);
   }
-  const settings = resolved?.settings;
-  const baseRoles = settings?.roles ?? ROLES;
-  const roles = all ? baseRoles : Object.fromEntries(Object.entries(baseRoles).filter(([, d]) => d.enabled !== false));
+  const roles = reportRoles(resolved?.settings, all);
   const { models, fetchedAt, source, orMatched, orPriced } = await loadRankData({ refresh, url, roles });
   // The omp catalog gates the thinking price factor per model (a model whose
   // thinking[] excludes the role's level is priced bare, matching the plugin's
