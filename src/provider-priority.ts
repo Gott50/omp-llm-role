@@ -175,6 +175,13 @@ function providerRowFor(modelId: string, provider: string, catalog: readonly Cat
   return best?.row ?? null;
 }
 
+/** The provider's catalog id for a ranking model id, or null when the provider
+ * does not offer it. The provider-scoped variant chain (exact -> newest dated ->
+ * bare -> alias), `auto`/prefixed rows excluded. */
+export function providerCatalogIdFor(modelId: string, provider: string, catalog: readonly CatalogEntry[]): string | null {
+  return providerRowFor(modelId, provider, catalog)?.id ?? null;
+}
+
 /**
  * Each listed non-OpenRouter provider's offer of the model, keyed by provider
  * id. OpenRouter is never in the map (the model's own price and throughput are
