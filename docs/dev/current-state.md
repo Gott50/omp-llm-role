@@ -7,16 +7,15 @@ regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rank
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
 ranking numbers below are the 2026-11-27 measurement (regenerated for spec #116).
-The pool moved 416 → 408 models and eight leaders moved (`default`,
-`smol`, `slow`, `vision`, `commit`, `tiny`, `task`, `designer`; `plan` and
-`advisor` held) because the daily caches moved, not the code: the ranking CLI
-is unchanged since the 2026-10-19 measurement, which was itself byte-identical
-to the 2026-10-18 one apart from the report's date line — the input-price blend
-basis #21, the #17/#18/#19/#20 wave, the #34–#40 focus-axis/capability-flag
-work, spec #81's explorer surfaces, and spec #103's opt-in selection rule (the
-ranking CLI does not apply `selection`). The provider-pin numbers are the
-2026-10-11 measurement (spec #71; see the top bullet). Neither is re-derived on
-read.
+The pool moved 408 → 456 models because the daily caches moved, not the code.
+Spec #116 leaves the **ranking table** byte-identical for an empty priority list
+(the honest value ranking is unchanged); the **suggested `modelRoles` block**
+changed: it now uses the effective provider's selector, appends the role's
+thinking level (`:level`) when the effective provider's catalog row advertises
+it, and picks the first catalog-resolvable model per role (matching the plugin's
+candidate building) — so the leaders below are the suggested selectors, not
+necessarily the raw #1. The provider-pin numbers are the 2026-10-11 measurement
+(spec #71; see the top bullet). Neither is re-derived on read.
 
 - Provider priority (2026-11-27, spec #116): an opt-in soft preference for any
   omp provider. Two settings — `providerPriority` (an ordered list of omp
@@ -924,9 +923,10 @@ read.
   2026-11-27 snapshot; the daily cache moved, not the code — the #34–#40 axes
   and flags leave every ranking byte-identical until a flag is turned on).
 - Eligible per role: 144 (vision 83, designer 100, image-input filter).
-- Value-ranking leaders (this report's suggested `modelRoles`, thinking-adjusted
-  prices; the *ranking* leaders, before the account's provider whitelist drops
-  the blocked ones): `default` `openrouter/moonshotai/kimi-k3.1-pro:auto`,
+- Value-ranking leaders (this report's suggested `modelRoles`: the first
+  catalog-resolvable model per role at thinking-adjusted prices; the raw ranking
+  leader may differ when it has no OpenRouter catalog row): `default`
+  `openrouter/moonshotai/kimi-k3.1-pro:auto`,
   `smol` `openrouter/reflection/beam-1.0-501b-a23b:off`, `slow`
   `openrouter/moonshotai/kimi-k3.1-pro:high`, `vision`
   `openrouter/moonshotai/kimi-k3.1-pro:auto`, `plan`
