@@ -126,8 +126,8 @@ path, plus `marketplace update` + `upgrade` to a bumped catalog version), and
   (the tag's commit), and the npm tarball's `omp.settings` carries the two new
   keys (`providerPriority`, `providerBonus`). The cut (`2405ac4`, tagged
   `v1.7.0`) bumped the four lockstep fields, renamed `## [Unreleased]` to
-  `## [1.7.0] - 2026-11-27`, and regenerated the report (456 models, matched
-  152/456, priced 151 — identical to the pre-cut report). The release carries
+  `## [1.7.0] - 2026-11-27`, and regenerated the report from the daily caches
+  (456 models, matched 152/456, priced 151). The release carries
   spec #116 (provider priority), merged to `main` immediately before the cut
   (`3a13248`, a separate push from the cut's own `3a13248..2405ac4`).
 - **CI/CD landed 2026-10-08** (`fa7e546`, docs follow-ups `4f78ce2`, `1d20ef9`,

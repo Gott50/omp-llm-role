@@ -927,14 +927,14 @@ necessarily the raw #1. The provider-pin numbers are the 2026-10-11 measurement
   catalog-resolvable model per role at thinking-adjusted prices; the raw ranking
   leader may differ when it has no OpenRouter catalog row): `default`
   `openrouter/moonshotai/kimi-k3.1-pro:auto`,
-  `smol` `openrouter/reflection/beam-1.0-501b-a23b:off`, `slow`
+  `smol` `openrouter/deepseek/deepseek-v4.1-flash-1017:off`, `slow`
   `openrouter/moonshotai/kimi-k3.1-pro:high`, `vision`
   `openrouter/moonshotai/kimi-k3.1-pro:auto`, `plan`
-  `openrouter/reflection/beam-1.0-501b-a23b:auto`, `commit`
-  `openrouter/reflection/beam-1.0-501b-a23b:off`, `tiny`
+  `openrouter/deepseek/deepseek-v4.1-flash-1017:auto`, `commit`
+  `openrouter/deepseek/deepseek-v4.1-flash-1017:off`, `tiny`
   `openrouter/reflection/beam-1.0-501b-a23b:off`, `task`
   `openrouter/deepseek/deepseek-v4.1-flash-1017:auto`, `advisor`
-  `openrouter/reflection/beam-1.0-501b-a23b:auto`, `designer`
+  `openrouter/deepseek/deepseek-v4.1-flash-1017:auto`, `designer`
   `openrouter/deepseek/deepseek-v4.1-flash-1017:auto`.
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
