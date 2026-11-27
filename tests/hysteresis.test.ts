@@ -396,7 +396,8 @@ function rankedRow(id: string, value: number, priceEff: number, provider: string
  * incumbent. */
 function valueLadder(pool: Ranked[], currentId: string, settings = DEFAULT_SETTINGS) {
   const candidates = pool.map((r) => ({ ranked: r, catalogId: `org/${r.model.id}` }));
-  const inputs = ladderInputs({ mode: "value", settings, usable: candidates, pool: candidates, currentId, ordered: [], pick: null, clean: () => true });
+  const currentEntry = candidates.find((c) => c.ranked.model.id === currentId) ?? null;
+  const inputs = ladderInputs({ mode: "value", settings, pool: candidates, currentEntry, ordered: [], pick: null });
   if (inputs === null) throw new Error("no ladder inputs");
   return inputs;
 }

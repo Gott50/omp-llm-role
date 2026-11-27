@@ -883,3 +883,43 @@ test("an empty provider priority list never refreshes or writes the cache", asyn
   assert.equal(existsSync(cachePath), false);
   assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
 });
+
+test("a provider change is a normal switch subject to the margin (US 29)", async () => {
+  // The incumbent is `openrouter/org/model-a`; the priority makes model-a's
+  // effective provider flocta. A bonus inside the margin keeps the incumbent on
+  // OpenRouter; a bonus outside it switches to flocta. Pre-fix, the pool row
+  // (model-a on flocta) was the incumbent, so `kept-eligible` rewrote the
+  // selector with no margin check.
+  const config = 'modelRoles:\n  default: "openrouter/org/model-a"\n';
+  const inside = setupAgentDir(config);
+  const kept = await runInTempDir(inside, () =>
+    runUpdater("manual", providerDeps(providerModels(), inside, { getSettings: async () => onlyDefault({ providerPriority: "flocta", providerBonus: 0.01 }) }), { force: true }),
+  );
+  assert.equal(kept.aborted, undefined);
+  assert.equal(kept.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
+  assert.equal(readConfig(inside).modelRoles.default, "openrouter/org/model-a:auto");
+
+  const outside = setupAgentDir(config);
+  const switched = await runInTempDir(outside, () =>
+    runUpdater("manual", providerDeps(providerModels(), outside, { getSettings: async () => onlyDefault({ providerPriority: "flocta", providerBonus: 0.05 }) }), { force: true }),
+  );
+  assert.equal(switched.aborted, undefined);
+  assert.equal(switched.decisions.find((d) => d.role === "default")?.reason, "switched");
+  assert.equal(readConfig(outside).modelRoles.default, "flocta/org/model-a:auto");
+});
+
+test("a provider catalog cache write failure does not abort the run", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  // A file where the cache's parent directory would be makes the write throw.
+  writeFileSync(join(dir, "blocker"), "");
+  const notified: string[] = [];
+  const deps = providerDeps(providerModels(), dir, {
+    providerCatalogCachePath: join(dir, "blocker", "provider-catalog-cache.json"),
+    notify: (lines) => notified.push(...lines),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  // The fresh rows are still used for this run.
+  assert.equal(readConfig(dir).modelRoles.default, "flocta/org/model-a:auto");
+  assert.ok(notified.some((l) => l.includes("provider catalog cache write failed")));
+});

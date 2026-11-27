@@ -23,7 +23,8 @@ import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSe
 import { discoverAgentPins } from "./agent-pins.ts";
 import { registerProject } from "./project-registry.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
-import { agentDisablePatch, buildChains, chainPlanFor, cheapestOrder, decide, ladderInputs, PROBE_BUDGET, selectorFor, type Candidate, type ChainPlan, type Decision, type DecisionReason } from "./selection.ts";
+import { agentDisablePatch, buildChains, chainPlanFor, cheapestOrder, decide, incumbentOnProvider, ladderInputs, PROBE_BUDGET, selectorFor, type Candidate, type ChainPlan, type Decision, type DecisionReason } from "./selection.ts";
+import { providerOf } from "./provider-priority.ts";
 
 // The decision core lives in `src/selection.ts` (spec #109) so the explorer's
 // preview and the run share one implementation; re-exported here so every
@@ -234,7 +235,15 @@ async function providerMergedCatalog(prioritized: readonly string[], today: stri
       notes.push(`@${provider}: catalog is static — add discovery: { type: openai-models-list } to its models.yml entry`);
     }
   }
-  if (fetched) writeProviderCatalogCache(today, cached, cachePath);
+  if (fetched) {
+    try {
+      writeProviderCatalogCache(today, cached, cachePath);
+    } catch (err) {
+      // The cache write must never abort the run: the fresh rows are already in
+      // memory and are used for this run; the next run re-fetches.
+      notes.push(`provider catalog cache write failed (${err instanceof Error ? err.message : String(err)}) — using the fresh rows for this run`);
+    }
+  }
   // The fresh rows replace the session catalog's rows for that provider; every
   // other provider's session rows stay.
   const fresh = new Set(Object.keys(cached));
@@ -547,13 +556,22 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           }
         }
       }
-      // The per-mode inputs to the shared ladder (see `ladderInputs`): the
-      // challenger, the incumbent and the two switch predicates. The incumbent
-      // is looked up in the mode's own pool, and only when the probe accepts it
-      // — a probe-blocked incumbent is not in the pool at all, and cheapest mode
-      // must not keep a model the account cannot run. The walk probes the
-      // incumbent first, so a non-key-blocked incumbent's verdict is known here.
-      const inputs = ladderInputs({ mode, settings: hysteresis, usable, pool, currentId, ordered, pick, clean: (c) => probeVerdicts.get(verdictKey(c)) !== "blocked" });
+      // The incumbent on the provider its current selector names: the pool row
+      // when the provider matches (and the probe accepts it — a probe-blocked
+      // incumbent must not be kept), else the model re-ranked on the selector's
+      // provider so a provider change is a normal switch (US 29). A key-blocked
+      // OpenRouter incumbent is not kept.
+      const currentProvider = currentSelector === null ? null : providerOf(currentSelector);
+      const poolCurrent = currentId === null ? null : usable.find((c) => c.ranked.model.id === currentId && probeVerdicts.get(verdictKey(c)) !== "blocked") ?? null;
+      const currentEntry =
+        poolCurrent === null
+          ? null
+          : currentProvider === null || (poolCurrent.ranked.provider ?? "openrouter") === currentProvider
+            ? poolCurrent
+            : currentProvider === "openrouter" && availability.active && availability.blocked.has(poolCurrent.ranked.model.id)
+              ? null
+              : incumbentOnProvider(poolCurrent.ranked.model, def, currentProvider, mergedCatalog, tier);
+      const inputs = ladderInputs({ mode, settings: hysteresis, pool, currentEntry, ordered, pick });
       if (inputs === null) {
         notes.push(`@${role}: no probe-clean candidate at or above the bar (key-blocked: ${keyBlockedCount}) — role untouched`);
         continue;
@@ -616,7 +634,10 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         to: parts.selector,
         reason,
         value: chosen.ranked.value,
-        bestValue: best.ranked.value,
+        // Value mode's challenger is the effective-value leader; cheapest mode's
+        // challenger is the pick, so the log keeps the value walk's leader there
+        // for comparability (matches `previewSelection`).
+        bestValue: mode === "value" ? inputs.challenger.ranked.value : best.ranked.value,
         currentValue: inputs.currentEntry?.ranked.value ?? null,
         blocked: blockedForRole,
         endpointBlocked: endpointFilterDrops(def, rank.models),

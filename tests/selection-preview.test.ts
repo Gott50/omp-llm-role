@@ -495,3 +495,23 @@ test("agreement: the preview matches a real dry run under a provider priority", 
     "openrouter/org/model-c:auto",
   ]);
 });
+
+test("agreement: a provider change is a margin switch, not a kept-eligible rewrite", async () => {
+  // The incumbent is `openrouter/org/model-a`; the priority makes model-a's
+  // effective provider flocta. A bonus inside the margin keeps the incumbent on
+  // OpenRouter, and the preview must agree with the run.
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const flocta = providerCatalog("flocta", ["model-a"]);
+  const catalog = [...makeCatalog(models.map((m) => m.id)), ...flocta];
+  const raw = onlyDefault({ providerPriority: "flocta", providerBonus: 0.01 });
+  const { result, preview } = await agreement(raw, models, 'modelRoles:\n  default: "openrouter/org/model-a"\n', {}, {
+    catalog,
+    deps: {
+      getProviderCatalog: async () => flocta,
+      refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    },
+  });
+  assertAgrees(result, preview);
+  assert.equal(preview.decisions[0].reason, "kept-margin");
+  assert.equal(preview.decisions[0].to, "openrouter/org/model-a:auto");
+});

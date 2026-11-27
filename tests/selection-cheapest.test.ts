@@ -459,7 +459,7 @@ test("the provider discount is applied once in pickOrder, not squared", () => {
 test("a same-model provider change adopts the pick in cheapest mode", () => {
   const incumbent = { ranked: providerRow("model-a", 1.0, 10, "openrouter", 0), catalogId: "org/model-a" };
   const pick = { ranked: providerRow("model-a", 1.0, 10, "flocta", 0.05), catalogId: "org/model-a" };
-  const inputs = ladderInputs({ mode: "cheapest", settings: DEFAULT_SETTINGS, usable: [incumbent, pick], pool: [pick], currentId: "model-a", ordered: [pick], pick, clean: () => true });
+  const inputs = ladderInputs({ mode: "cheapest", settings: DEFAULT_SETTINGS, pool: [pick], currentEntry: incumbent, ordered: [pick], pick });
   assert.ok(inputs);
   assert.ok(inputs.currentEntry);
   // The model is still bar-clearing, but the pick routes it through a different

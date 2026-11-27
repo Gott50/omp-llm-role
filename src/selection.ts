@@ -11,9 +11,9 @@
  * against each other on a probe-clean fixture.
  */
 
-import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, type Ranked, type RankData, type RoleDef, type SelectionMode } from "./engine.ts";
+import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, rankRole, type Model, type Ranked, type RankData, type RoleDef, type SelectionMode } from "./engine.ts";
 import { currentRankingId, resolveProviderVariant, resolveVariant, splitThinkingSuffix, type CatalogEntry, type KeyAvailability, type Tier } from "./availability.ts";
-import { chainProviderOrder, providerOrder } from "./provider-priority.ts";
+import { chainProviderOrder, providerOf, providerOrder } from "./provider-priority.ts";
 import { roleUniverse, type ResolvedSettings } from "./settings.ts";
 import type { AgentPin } from "./agent-pins.ts";
 
@@ -153,30 +153,48 @@ export function cheapestOrder(usable: readonly Candidate[], floor: number): Cand
 }
 
 /**
- * The per-mode inputs to the shared ladder: the challenger, the incumbent
- * (looked up in the mode's own pool) and the two switch predicates. `null` when
- * the cheapest mode has no pick (every bar-clearing candidate was probe-blocked,
- * or the probe budget ran out).
+ * The incumbent candidate on the provider its current selector names: the model
+ * re-ranked on that provider (the same gates, price basis and bonus the run
+ * would apply), with the provider-scoped catalog id. Null when the model is not
+ * eligible on that provider.
  *
- * `pick` is the cheapest mode's bar-clearing pick — the run probe-verifies it,
- * the preview takes the cheapest. `ordered` is that mode's bar-clearing list
- * (its ids are the bar's `good` set). `clean` reports the probe verdict for the
- * incumbent lookup; the preview is probe-optimistic, so it passes `() => true`.
+ * The run's pool rows carry the model's *effective* provider, so when the
+ * current selector names a different provider the pool row is not the
+ * incumbent: comparing against it would report `kept-eligible` and rewrite the
+ * selector with no margin check (US 29). This rebuilds the incumbent on the
+ * selector's provider so a provider change is a normal switch.
+ */
+export function incumbentOnProvider(model: Model, def: RoleDef, provider: string, catalog: readonly CatalogEntry[], tier: "billed" | "free"): Candidate | null {
+  const ranked = rankRole({ ...def, providerPriority: [provider] }, [model])[0];
+  if (ranked === undefined) return null;
+  const catalogId = resolveProviderVariant(model.id, provider, catalog, tier);
+  return catalogId === null ? null : { ranked, catalogId };
+}
+
+/**
+ * The per-mode inputs to the shared ladder: the challenger, the incumbent and
+ * the two switch predicates. `null` when the cheapest mode has no pick (every
+ * bar-clearing candidate was probe-blocked, or the probe budget ran out).
+ *
+ * `currentEntry` is the incumbent candidate on the provider its current selector
+ * names — the caller builds it (the run applies the keyed/probe-clean rule, the
+ * preview is probe-optimistic) and guarantees it is usable. `pick` is the
+ * cheapest mode's bar-clearing pick — the run probe-verifies it, the preview
+ * takes the cheapest. `ordered` is that mode's bar-clearing list (its ids are
+ * the bar's `good` set).
  */
 export function ladderInputs(input: {
   mode: SelectionMode;
   settings: ResolvedSettings;
-  /** The role's usable candidate set (the keyed prune applied). */
-  usable: readonly Candidate[];
-  /** The walk window: value mode's challenger and incumbent lookup. */
+  /** The walk window: value mode's challenger. */
   pool: readonly Candidate[];
-  currentId: string | null;
+  /** The incumbent on the provider its current selector names (null when there
+   *  is no current selector or the model is not eligible on that provider). */
+  currentEntry: Candidate | null;
   /** Cheapest mode: the bar-clearing candidates in `pickOrder` order. */
   ordered: readonly Candidate[];
   /** Cheapest mode: the pick from `ordered`. */
   pick: Candidate | null;
-  /** Cheapest mode: whether a candidate is probe-clean. */
-  clean: (c: Candidate) => boolean;
 }): { challenger: Candidate; currentEntry: Candidate | null; switched: (cur: Candidate) => boolean; costEscape: (cur: Candidate) => boolean } | null {
   if (input.mode === "cheapest") {
     const pick = input.pick;
@@ -184,12 +202,7 @@ export function ladderInputs(input: {
     const goodIds = new Set(input.ordered.map((c) => c.ranked.model.id));
     return {
       challenger: pick,
-      // The incumbent is looked up in `usable` (not the walk window: an
-      // incumbent outside it is still a valid incumbent to compare against),
-      // but only when the probe accepts it — a probe-blocked incumbent is not
-      // in the pool at all, and cheapest mode must not keep a model the account
-      // cannot run.
-      currentEntry: input.currentId === null ? null : input.usable.find((c) => c.ranked.model.id === input.currentId && input.clean(c)) ?? null,
+      currentEntry: input.currentEntry,
       // The incumbent fell below the bar: dropped with no margin. A same-model
       // provider change (issue #116) is also adopted: the model is still
       // bar-clearing, but the pick routes it through a different provider.
@@ -213,7 +226,7 @@ export function ladderInputs(input: {
   const best = input.pool.reduce((a, b) => (eff(b.ranked) > eff(a.ranked) ? b : a));
   return {
     challenger: best,
-    currentEntry: input.currentId === null ? null : input.pool.find((c) => c.ranked.model.id === input.currentId) ?? null,
+    currentEntry: input.currentEntry,
     // The ladder compares effective values (issue #116): the incumbent's own
     // bonus included, under the existing `switchMargin`.
     switched: (cur) => eff(best.ranked) - eff(cur.ranked) >= input.settings.switchMargin,
@@ -297,8 +310,10 @@ export function selectorFor(input: {
  * `keep` is the caller's extra candidate filter: the run drops probe-blocked
  * candidates (the chain's deeper entries are no longer required to be
  * probe-verified, but a candidate the account cannot run must not be chained),
- * the preview is probe-optimistic. The chosen model passed every predicate, so
- * it is always in the list and `chosenIdx` is never -1.
+ * the preview is probe-optimistic. The chosen candidate may be the incumbent on
+ * its current provider, which is not in `candidates` (the pool rows carry
+ * today's effective provider); it is inserted at its value-rank position so
+ * `chosenIdx` is never -1 and the chain's `after` set is correct.
  */
 export function chainPlanFor(input: {
   role: string;
@@ -310,7 +325,13 @@ export function chainPlanFor(input: {
 }): { role: string; plan: ChainPlan } {
   const { key, pin, suffix, pinnedSlug, autoPin } = input.selector;
   const candidates = input.candidates.filter(input.keep);
-  return { role: input.role, plan: { key, suffix, pin, pinnedSlug, candidates, chosenIdx: candidates.indexOf(input.chosen), def: input.def, autoPin } };
+  let chosenIdx = candidates.indexOf(input.chosen);
+  if (chosenIdx === -1) {
+    chosenIdx = candidates.findIndex((c) => c.ranked.value < input.chosen.ranked.value);
+    if (chosenIdx === -1) chosenIdx = candidates.length;
+    candidates.splice(chosenIdx, 0, input.chosen);
+  }
+  return { role: input.role, plan: { key, suffix, pin, pinnedSlug, candidates, chosenIdx, def: input.def, autoPin } };
 }
 
 /**
@@ -631,13 +652,25 @@ export function previewSelection(input: {
     const currentIdx = currentId === null ? -1 : usable.findIndex((c) => c.ranked.model.id === currentId);
     const pool = probeWindow(usable, currentIdx, settings.fallbackChainDepth);
     const mode = def.selection ?? settings.selection;
+    // The incumbent on the provider its current selector names: the pool row
+    // when the provider matches, else the model re-ranked on the selector's
+    // provider — so a provider change is a normal switch (US 29), not a
+    // `kept-eligible` rewrite with no margin check.
+    const currentProvider = currentSelector === null ? null : providerOf(currentSelector);
+    const poolCurrent = currentId === null ? null : usable.find((c) => c.ranked.model.id === currentId) ?? null;
+    const currentEntry =
+      poolCurrent === null
+        ? null
+        : currentProvider === null || (poolCurrent.ranked.provider ?? "openrouter") === currentProvider
+          ? poolCurrent
+          : incumbentOnProvider(poolCurrent.ranked.model, def, currentProvider, providerCatalog, tier);
     // The cheapest mode's bar-clearing list: the rule's pool is the role's
     // usable candidate set (see `runUpdater`) — the catalog/tier gate and the
     // allowed-providers prune are baked into `rank.models`, and the keyed-catalog
     // prune is `keyBlocked`. Probe-optimistically the pick is the cheapest
     // bar-clearing candidate.
     const ordered = mode === "cheapest" ? cheapestOrder(usable, def.qualityFloor ?? settings.qualityFloor) : [];
-    const inputs = ladderInputs({ mode, settings, usable, pool, currentId, ordered, pick: ordered[0] ?? null, clean: () => true });
+    const inputs = ladderInputs({ mode, settings, pool, currentEntry, ordered, pick: ordered[0] ?? null });
     if (inputs === null) {
       skipped.push({ role, reason: "no candidate at or above the bar" });
       continue;
