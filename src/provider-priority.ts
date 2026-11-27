@@ -16,14 +16,13 @@
  * source is `openrouter`.
  *
  * Import note: this module imports **types only** from `availability.ts` and
- * `engine.ts` (the frozen contract, CONTEXT.md §2). T4 rewrites
- * `availability.ts` to call into this module, so a runtime import here would
- * close a real cycle. `rankingIdOf` is therefore mirrored locally (a stable
- * 5-line suffix normalization) rather than imported; the deviation from the
- * "reuse it" guidance is deliberate and reported.
+ * `engine.ts` (the frozen contract, CONTEXT.md §2), plus one runtime leaf
+ * module, `ranking-id.ts`, which has no imports of its own — so no cycle forms
+ * even though `availability.ts` calls into this module.
  */
 import type { CatalogEntry } from "./availability.ts";
 import type { Model } from "./engine.ts";
+import { DATED_RE, rankingIdOf } from "./ranking-id.ts";
 
 /** One provider's offer of a model: the provider's catalog id (the selector's
  * model part), the 3:1 in:out blend of the catalog cost when non-zero (else
@@ -48,17 +47,6 @@ export type ProviderOffer = { catalogId: string; price: number | null; thinking:
 export type PriceSource = "openrouter" | "provider" | "reference" | "openrouter-proxy";
 
 const OPENROUTER = "openrouter";
-/** Trailing -MMDD or -YYYYMMDD date suffix (same shape as `availability.ts`). */
-const DATED_RE = /-(\d{4}|\d{8})$/;
-
-/** Ranking-row identity of a catalog id: suffix after the last `/`, minus
- * `:free`, minus one `-latest`. Mirrors `availability.ts`'s `rankingIdOf`
- * (kept local so this module imports types only — see the import note). */
-function rankingIdOf(catalogId: string): string {
-  const suffix = catalogId.slice(catalogId.lastIndexOf("/") + 1);
-  const noFree = suffix.endsWith(":free") ? suffix.slice(0, -":free".length) : suffix;
-  return noFree.endsWith("-latest") ? noFree.slice(0, -"-latest".length) : noFree;
-}
 
 /**
  * The provider of a selector: its first path segment. A trailing `:level` and

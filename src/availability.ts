@@ -10,6 +10,9 @@
 import { isRecord } from "./guards.ts";
 import type { Model } from "./engine.ts";
 import { providerCatalogIdFor, providerOffersFor, providerOrder } from "./provider-priority.ts";
+import { DATED_RE, rankingIdOf } from "./ranking-id.ts";
+
+export { rankingIdOf } from "./ranking-id.ts";
 
 export type CatalogEntry = {
   provider: string;
@@ -342,13 +345,6 @@ export function filterCatalog(catalog: CatalogEntry[], tier: Tier): CatalogEntry
   });
 }
 
-/** Ranking-row identity of a catalog id: suffix after the last `/`, minus `:free`, minus `-latest`. */
-export function rankingIdOf(catalogId: string): string {
-  const suffix = catalogId.slice(catalogId.lastIndexOf("/") + 1);
-  const noFree = suffix.endsWith(":free") ? suffix.slice(0, -":free".length) : suffix;
-  return noFree.endsWith("-latest") ? noFree.slice(0, -"-latest".length) : noFree;
-}
-
 /** Split a selector's trailing thinking suffix (`provider/model[:level]`):
  * `base` without the suffix, `level` the suffix or null. The single home for
  * the `:level` strip shared by `currentRankingId`, `providerPinOfSelector`, and
@@ -367,7 +363,12 @@ export function splitThinkingSuffix(selector: string): { base: string; level: st
  * `@`. The first path segment is stripped when it is `openrouter` or a member of
  * `knownProviders` (the catalog's provider ids); an unknown prefix is kept, so a
  * hand-written bare selector is not misparsed. `knownProviders` absent = the
- * historical `openrouter/`-only rule. */
+ * historical `openrouter/`-only rule.
+ *
+ * The strip is currently identity-preserving for the ranking id: `rankingIdOf`
+ * takes the last path segment, so `flocta/x` and `x` normalize the same. The
+ * parameter exists so a future identity that keeps the path can distinguish a
+ * known provider from a hand-written prefix. */
 export function currentRankingId(selector: string, knownProviders?: ReadonlySet<string>): string {
   const { base } = splitThinkingSuffix(selector);
   const at = base.lastIndexOf("@");
@@ -377,9 +378,6 @@ export function currentRankingId(selector: string, knownProviders?: ReadonlySet<
   const strip = first !== null && (first === "openrouter" || (knownProviders?.has(first) ?? false));
   return rankingIdOf(strip ? unpinned.slice(slash + 1) : unpinned);
 }
-
-// "Newest dated" = trailing -MMDD or -YYYYMMDD (max numeric wins; ties lexicographic).
-const DATED_RE = /-(\d{4}|\d{8})$/;
 
 /**
  * Map a ranking row id (llm-stats bare id) to a concrete catalog id among
