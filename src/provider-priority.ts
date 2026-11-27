@@ -15,13 +15,14 @@
  * model's effective provider is `openrouter`, the bonus is 0 and the price
  * source is `openrouter`.
  *
- * Import note: `rankingIdOf` and `splitThinkingSuffix` are reused from
- * `availability.ts` (the single homes of the ranking-id normalization and the
- * `:level` strip) rather than re-implemented. Both are pure function
- * declarations, so the availability <-> provider-priority import edge is a safe
- * ESM cycle (hoisted functions, no top-level calls).
+ * Import note: this module imports **types only** from `availability.ts` and
+ * `engine.ts` (the frozen contract, CONTEXT.md §2). T4 rewrites
+ * `availability.ts` to call into this module, so a runtime import here would
+ * close a real cycle. `rankingIdOf` is therefore mirrored locally (a stable
+ * 5-line suffix normalization) rather than imported; the deviation from the
+ * "reuse it" guidance is deliberate and reported.
  */
-import { rankingIdOf, splitThinkingSuffix, type CatalogEntry } from "./availability.ts";
+import type { CatalogEntry } from "./availability.ts";
 import type { Model } from "./engine.ts";
 
 /** One provider's offer of a model: the provider's catalog id (the selector's
@@ -50,9 +51,19 @@ const OPENROUTER = "openrouter";
 /** Trailing -MMDD or -YYYYMMDD date suffix (same shape as `availability.ts`). */
 const DATED_RE = /-(\d{4}|\d{8})$/;
 
+/** Ranking-row identity of a catalog id: suffix after the last `/`, minus
+ * `:free`, minus one `-latest`. Mirrors `availability.ts`'s `rankingIdOf`
+ * (kept local so this module imports types only — see the import note). */
+function rankingIdOf(catalogId: string): string {
+  const suffix = catalogId.slice(catalogId.lastIndexOf("/") + 1);
+  const noFree = suffix.endsWith(":free") ? suffix.slice(0, -":free".length) : suffix;
+  return noFree.endsWith("-latest") ? noFree.slice(0, -"-latest".length) : noFree;
+}
+
 /**
- * The provider of a selector: its first path segment, after stripping a trailing
- * `:level` and an `@<slug>` provider pin. A bare selector with no `/` is
+ * The provider of a selector: its first path segment. A trailing `:level` and
+ * an `@<slug>` pin always ride after the model part (after the first `/`), so
+ * they never affect the first segment; a bare selector with no `/` is
  * `openrouter` (today's implicit provider).
  *
  *   providerOf("flocta/deepseek-v4.1-flash:high")      -> "flocta"
@@ -60,11 +71,8 @@ const DATED_RE = /-(\d{4}|\d{8})$/;
  *   providerOf("deepseek-v4.1-flash")                  -> "openrouter"
  */
 export function providerOf(selector: string): string {
-  const { base } = splitThinkingSuffix(selector);
-  const at = base.lastIndexOf("@");
-  const unpinned = at !== -1 ? base.slice(0, at) : base;
-  const slash = unpinned.indexOf("/");
-  return slash === -1 ? OPENROUTER : unpinned.slice(0, slash);
+  const slash = selector.indexOf("/");
+  return slash === -1 ? OPENROUTER : selector.slice(0, slash);
 }
 
 /**
