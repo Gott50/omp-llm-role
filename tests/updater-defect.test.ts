@@ -141,3 +141,18 @@ test("a getKeyMeta failure is an enumerated abort, not a defect", async () => {
   assert.match(result.aborted, /key endpoint down/);
   assert.equal(result.defect, undefined);
 });
+
+// Spec #116: the daily provider catalog refresh is best-effort — a failed
+// refresh or read degrades to the session catalog and the run still writes.
+test("a failed provider catalog refresh is not a defect", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const deps = fakeDeps(MODELS, { providerPriority: "flocta" }, {
+    getProviderCatalog: async () => null,
+    refreshProviderCatalog: async (provider) => ({ provider, ok: false, reason: "provider flocta not found" }),
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  assert.equal(result.defect, undefined);
+  assert.equal(result.wrote, true);
+});

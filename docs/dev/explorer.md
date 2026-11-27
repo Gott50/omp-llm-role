@@ -99,8 +99,8 @@ Endpoints:
 | `GET /api/bootstrap` | — | `bootstrapPayload(opts, activeScope)` |
 | `POST /api/scope` | `{scope}` | switch the active scope, then the bootstrap payload (404 unknown id, 409 non-present) |
 | `POST /api/pool` | `{mode}` | switch the ranked pool (`"raw"` \| `"as-written"`), then the bootstrap payload (400 on any other mode) |
-| `POST /api/rank` | `{role, def, settings?}` | `{eligible, lambda, derivedLambda, selection, rows, errors}` — each row carries the display-only `perTask` and the `excludedByBar` flag |
-| `POST /api/explain` | `{role, def, modelId, settings?}` | `explainModel(...)` spread + `leaderFlip` + `thinkingLevels` + `errors` |
+| `POST /api/rank` | `{role, def, settings?}` | `{eligible, lambda, derivedLambda, selection, rows, errors}` — each row carries the display-only `perTask`, the `excludedByBar` flag, and the provider fields (`provider`, `priceSource`, `providerBonus`) |
+| `POST /api/explain` | `{role, def, modelId, settings?}` | `explainModel(...)` spread + `leaderFlip` + `thinkingLevels` + `errors` — the explanation carries `provider`, `priceSource`, `providerBonus`, `providerLine` and `providerPreferenceLine` |
 | `POST /api/preview` | `{settings?, roles}` | `{preview, errors}` — the `SelectionPreview` the updater would write (read-only, probe-optimistic) |
 | `POST /api/export` | `{roles, settings?}` | `{ok:true, backupPath, roles, lockPath}` or `{ok:false, errors}` |
 | `POST /api/refresh` | — | `await opts.refresh()` (re-ranks and re-derives the availability overlay) then the bootstrap payload |
@@ -119,6 +119,19 @@ Endpoints:
   `/api/explain` derive the global `features.<id>` flags from `settings` when
   present (`settings[`features.${id}`] === true` for each `FEATURES` row), else
   from `state.features` — so an edited-but-unexported flag re-ranks the table.
+
+- **Provider priority (spec #116).** Each rank row carries the model's effective
+  `provider`, its `priceSource` (`openrouter` / `reference` / `openrouter-proxy`;
+  `provider` is reserved for an exact rate) and its `providerBonus` — the bonus
+  is **never** folded into `value` or `q`, so the value column stays honest. The
+  explain view adds `providerLine` (e.g. `flocta (reference price)`) and
+  `providerPreferenceLine` (e.g. `+0.05 (selection only, not in value)`). The
+  edited global `providerPriority`/`providerBonus` **do** re-rank the table: the
+  SPA fills an unauthored def's provider keys from the edited global before
+  posting, so the table follows the Settings panel (unlike the deliberately
+  narrow `selection`/`qualityFloor` block below). The as-written pool keeps a
+  model that only a prioritized provider offers (the provider gate is the
+  catalog membership, not the OpenRouter tier gate).
 
 - `bootstrapPayload` ships `roles` (resolved), `defaults` (`DEFAULT_ROLES`),
   `universe` (kind/enabled/locked + effective def per known role), `metrics`
@@ -436,20 +449,23 @@ The explorer is a settings editor, not only a role editor, and it previews the
 **decision** the updater would make, not only the ranking.
 
 - **The Settings panel** renders one control per global setting (number /
-  boolean / enum / the two `tokenProfile` fields) plus a toggle per capability
-  flag, each with the effective value, the shipped default, a dirty marker and a
-  reset. It is reachable with no role selected. `activateDefaultOnEmptySession`
-  and `errorReporting` are labelled **no visual impact** — they change a session
-  behaviour and a side channel, not the ranking or the preview. The panel renders
-  the scope's **authored** values (the raw lock-file keys) and shows the
-  **effective** ones; Export writes the authored values only, never the
-  `expandFeatures` output.
+  boolean / enum / the two `tokenProfile` fields, plus a **text input** for the
+  comma-separated `providerPriority` and a **number input** for `providerBonus`)
+  plus a toggle per capability flag, each with the effective value, the shipped
+  default, a dirty marker and a reset. It is reachable with no role selected.
+  `activateDefaultOnEmptySession` and `errorReporting` are labelled **no visual
+  impact** — they change a session behaviour and a side channel, not the ranking
+  or the preview. The panel renders the scope's **authored** values (the raw
+  lock-file keys) and shows the **effective** ones; Export writes the authored
+  values only, never the `expandFeatures` output.
 - **The per-role editor** renders the five endpoint filters (`filters.tools`,
   `filters.minContextTokens`, `filters.minOutputTokens`,
   `filters.maxPriceUsdPerM`, `filters.preferredMinThroughput`) as first-class
-  fields, and `bundleKnobs` **skips** the four keys a capability bundle also
-  recommends, so one def key has exactly one input. `cacheHitRate` and
-  `preferOwnProvider` stay bundle-only.
+  fields, plus the per-role provider overrides (`providerPriority` as a
+  comma-separated text field, `providerBonus` as a number field; a value equal to
+  the global is marked **derived** and cleared on Export), and `bundleKnobs`
+  **skips** the four keys a capability bundle also recommends, so one def key has
+  exactly one input. `cacheHitRate` and `preferOwnProvider` stay bundle-only.
 - **The Preview panel** lists every managed role's decision (from → to, reason,
   value / bestValue), its chain, the config side effects (`roleRemovals`, the
   `task.disabledAgents` adds/removes), the per-role `endpointBlocked` /
@@ -564,6 +580,15 @@ a scraped third-party site, so the DOM is built with
   is unchanged (it already compares the authored def against the authored
   baseline), so a role whose only change is a flag exports just
   `roles.<name>.features.<id>`.
+- **Provider column and explain lines** (spec #116): the table gains a
+  **provider** column showing each row's effective provider with a compact
+  price-source marker (`·ref` for a reference price, `·proxy` for the
+  OpenRouter proxy; the gateway's own blend and an exact provider rate carry no
+  marker), and the explain panel adds the provider line and the
+  provider-preference line (`+0.05 (selection only, not in value)`). The
+  Settings panel's `providerPriority`/`providerBonus` inputs and the role
+  editor's overrides feed the same `defForRank` path, so an edited global
+  provider priority re-ranks the table.
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
   `recompute()`. `recompute()` → `POST /api/rank {role, def, settings:
   state.settingsEdited}` → `state.rows`, `lambda`, `derivedLambda`, `selection`,

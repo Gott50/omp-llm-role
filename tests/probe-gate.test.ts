@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { probeModel } from "../src/availability.ts";
+import { probeModel, type CatalogEntry } from "../src/availability.ts";
 import { runUpdater } from "../src/updater.ts";
-import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
+import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
 // Uniform quality metrics -> q = (v+20)/80: A 1.375, B 1.25, C 1.125; margin(A,B) ≈ 0.1355.
 const MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
@@ -142,4 +142,44 @@ test("the chain reaches a cheaper candidate the walk never probes", async () => 
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const text = readFileSync(join(dir, "config.yml"), "utf8");
   assert.match(text, /openrouter\/org\/model-a:\n\s+- "openrouter\/org\/model-d:auto"\n\s+- "openrouter\/org\/model-b:auto"/);
+});
+
+// Spec #116: a non-OpenRouter pick is availability-verified by catalog
+// membership, not by a probe — the probe walk and the route probe are
+// OpenRouter-only.
+test("a non-OpenRouter pick is not probe-verified", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const probed: string[] = [];
+  // Fresh models: `enrichThinkingLevels` mutates the ranking rows in place.
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
+  // A dated flocta variant of model-a: its catalog id differs from the
+  // OpenRouter id, so a probe of an OpenRouter candidate cannot be mistaken for
+  // a probe of the flocta pick.
+  const flocta: CatalogEntry = {
+    provider: "flocta",
+    id: "org/model-a-1017",
+    selector: "flocta/org/model-a-1017",
+    name: "model-a",
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: true,
+    thinking: [],
+    input: ["text"],
+    cost: null,
+  };
+  const deps = fakeDeps(models, { providerPriority: "flocta" }, {
+    getCatalog: async () => [...makeCatalog(models.map((m) => m.id)), flocta],
+    getProviderCatalog: async () => [flocta],
+    refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+    probeModel: async (_token, id) => {
+      probed.push(id);
+      return "ok";
+    },
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  const d = result.decisions.find((x) => x.role === "default");
+  assert.ok(d);
+  assert.equal(d.to, "flocta/org/model-a-1017:auto");
+  assert.ok(!probed.includes("org/model-a-1017"), `the flocta pick was probed: ${probed.join(", ")}`);
 });
