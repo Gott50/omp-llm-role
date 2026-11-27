@@ -448,11 +448,53 @@ test("a bonus that flips the effective-value leader adopts the challenger", () =
 });
 
 test("the incumbent's own bonus counts in the margin", () => {
-  // Challenger effective 1.05 (1.00 + 0.05); incumbent effective 1.07
-  // (1.02 + 0.05) -> the gap is negative, so the incumbent is kept.
-  const inputs = valueLadder([rankedRow("model-a", 1.0, 1, "flocta", 0.05), rankedRow("model-b", 1.02, 5, "other", 0.05)], "model-b");
+  // Challenger effective 1.05 (1.00 + 0.05); incumbent effective 1.04
+  // (1.02 + 0.02) -> the 0.01 gap is inside the 0.02 margin, so the incumbent is
+  // kept. Without the incumbent's bonus (1.02) the gap is 0.03 -> switched.
+  const challenger = rankedRow("model-a", 1.0, 1, "flocta", 0.05);
+  const boosted = valueLadder([challenger, rankedRow("model-b", 1.02, 5, "other", 0.02)], "model-b");
+  assert.ok(boosted.currentEntry);
+  assert.equal(boosted.switched(boosted.currentEntry), false);
+  const plain = valueLadder([challenger, rankedRow("model-b", 1.02, 5, "other", 0)], "model-b");
+  assert.ok(plain.currentEntry);
+  assert.equal(plain.switched(plain.currentEntry), true);
+});
+
+test("the effective-value leader is the challenger, not the honest value leader", () => {
+  // A leads on honest value (1.00 vs 0.98); B's 0.05 bonus lifts its effective
+  // value to 1.03, so B is the challenger and is adopted.
+  const a = rankedRow("model-a", 1.0, 1, "openrouter", 0);
+  const b = rankedRow("model-b", 0.98, 1, "flocta", 0.05);
+  const inputs = valueLadder([a, b], "model-a");
+  assert.equal(inputs.challenger.ranked.model.id, "model-b");
+  assert.ok(inputs.currentEntry);
+  assert.equal(inputs.switched(inputs.currentEntry), true);
+  const d = decide({ currentSelector: "openrouter/org/model-a", currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
+  assert.equal(d.reason, "switched");
+  assert.equal(d.chosen.ranked.model.id, "model-b");
+});
+
+test("with a zero bonus the honest value leader stays the challenger", () => {
+  const a = rankedRow("model-a", 1.0, 1, "openrouter", 0);
+  const b = rankedRow("model-b", 0.98, 1, "flocta", 0);
+  const inputs = valueLadder([a, b], "model-a");
+  assert.equal(inputs.challenger.ranked.model.id, "model-a");
   assert.ok(inputs.currentEntry);
   assert.equal(inputs.switched(inputs.currentEntry), false);
+  const d = decide({ currentSelector: "openrouter/org/model-a", currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
+  assert.equal(d.reason, "kept-eligible");
+});
+
+test("an effective-value lead inside the margin keeps the incumbent", () => {
+  // B's effective value (1.03) leads A's (1.00) by 0.03, inside a 0.1 margin.
+  const a = rankedRow("model-a", 1.0, 1, "openrouter", 0);
+  const b = rankedRow("model-b", 0.98, 1, "flocta", 0.05);
+  const inputs = valueLadder([a, b], "model-a", { ...DEFAULT_SETTINGS, switchMargin: 0.1 });
+  assert.equal(inputs.challenger.ranked.model.id, "model-b");
+  assert.ok(inputs.currentEntry);
+  assert.equal(inputs.switched(inputs.currentEntry), false);
+  const d = decide({ currentSelector: "openrouter/org/model-a", currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
+  assert.equal(d.reason, "kept-margin");
 });
 
 test("an empty provider priority and a zero bonus are byte-identical to no provider settings", async () => {
