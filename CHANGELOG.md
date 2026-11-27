@@ -8,6 +8,8 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-27
+
 ### Added
 
 - **Provider priority: prefer any omp provider, with a soft bonus** — two new
@@ -895,7 +897,8 @@ install routes verified end-to-end).
   showed it disabled again until the server restarted. Every request now
   re-reads the lock file (`getState()`), so a reload reflects the Export.
 
-[Unreleased]: https://github.com/Gott50/omp-llm-role/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/Gott50/omp-llm-role/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.7.0
 [1.6.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.5.0
 [1.4.0]: https://github.com/Gott50/omp-llm-role/releases/tag/v1.4.0
