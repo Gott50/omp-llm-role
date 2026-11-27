@@ -246,7 +246,7 @@ function formatRankings(
 export function formatModelRolesYaml(rankings: Record<string, Ranked[]>, roles: Record<string, RoleDef>, catalog: CatalogEntry[]): string {
   const lines: string[] = [
     "# Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).",
-    "# Selectors are openrouter/<id>; the omp-llm-role plugin writes this block daily.",
+    "# Selectors are <provider>/<id> (openrouter unless a provider priority is set); the omp-llm-role plugin writes this block daily.",
     "modelRoles:",
   ];
   for (const role of Object.keys(roles)) {

@@ -109,7 +109,24 @@ test("an empty priority list produces the exact pre-change YAML", () => {
   // No lock entry at all, and an explicit empty list, both match the old output.
   assert.equal(report({}, models(), catalog), legacy);
   assert.equal(report({ providerPriority: "" }, models(), catalog), legacy);
-  assert.match(legacy, /^ {2}default: "openrouter\/org\/model-a:auto"$/m);
+  // The header is provider-neutral (issue #116); every selector line is unchanged.
+  assert.equal(
+    legacy,
+    [
+      "# Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).",
+      "# Selectors are <provider>/<id> (openrouter unless a provider priority is set); the omp-llm-role plugin writes this block daily.",
+      "modelRoles:",
+      '  default: "openrouter/org/model-a:auto"',
+      '  smol: "openrouter/org/model-a:off"',
+      // The OpenRouter row advertises no thinking list, so `slow`'s `high` is bare.
+      '  slow: "openrouter/org/model-a"',
+      '  plan: "openrouter/org/model-a:auto"',
+      '  commit: "openrouter/org/model-a:off"',
+      '  tiny: "openrouter/org/model-a:off"',
+      '  task: "openrouter/org/model-a:auto"',
+      '  advisor: "openrouter/org/model-a:auto"',
+    ].join("\n"),
+  );
 });
 
 test("a role's own priority overrides the global list", () => {
