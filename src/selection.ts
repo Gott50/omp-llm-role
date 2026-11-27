@@ -205,14 +205,18 @@ export function ladderInputs(input: {
         pick.ranked.priceEff <= cur.ranked.priceEff * (1 - input.settings.priceSwitchFraction),
     };
   }
-  const best = input.pool[0];
+  // The challenger is the effective-value leader of the probed pool (issue
+  // #116): `value + providerBonus`, so a preferred provider's model can be
+  // promoted over the honest value leader. With a zero bonus this is the honest
+  // value leader (`pool[0]`), byte-identical to the pre-#116 ladder.
+  const eff = (r: Ranked) => r.value + (r.providerBonus ?? 0);
+  const best = input.pool.reduce((a, b) => (eff(b.ranked) > eff(a.ranked) ? b : a));
   return {
     challenger: best,
     currentEntry: input.currentId === null ? null : input.pool.find((c) => c.ranked.model.id === input.currentId) ?? null,
-    // The ladder compares effective values (issue #116): `value + providerBonus`,
-    // the incumbent's own bonus included, under the existing `switchMargin`.
-    switched: (cur) =>
-      best.ranked.value + (best.ranked.providerBonus ?? 0) - (cur.ranked.value + (cur.ranked.providerBonus ?? 0)) >= input.settings.switchMargin,
+    // The ladder compares effective values (issue #116): the incumbent's own
+    // bonus included, under the existing `switchMargin`.
+    switched: (cur) => eff(best.ranked) - eff(cur.ranked) >= input.settings.switchMargin,
     costEscape: (cur) => cheaperInsideMargin(best.ranked, cur.ranked, input.settings),
   };
 }
@@ -626,7 +630,6 @@ export function previewSelection(input: {
     }
     const currentIdx = currentId === null ? -1 : usable.findIndex((c) => c.ranked.model.id === currentId);
     const pool = probeWindow(usable, currentIdx, settings.fallbackChainDepth);
-    const best = pool[0];
     const mode = def.selection ?? settings.selection;
     // The cheapest mode's bar-clearing list: the rule's pool is the role's
     // usable candidate set (see `runUpdater`) — the catalog/tier gate and the
@@ -652,7 +655,10 @@ export function previewSelection(input: {
       to: parts.selector,
       reason,
       value: chosen.ranked.value,
-      bestValue: best.ranked.value,
+      // Value mode's challenger is the effective-value leader; cheapest mode's
+      // challenger is the pick, so the log keeps the value walk's leader there
+      // for comparability.
+      bestValue: mode === "value" ? inputs.challenger.ranked.value : pool[0].ranked.value,
       currentValue: inputs.currentEntry?.ranked.value ?? null,
       blocked: [],
       endpointBlocked: endpointFilterDrops(def, rank.models),
