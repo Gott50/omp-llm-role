@@ -9,6 +9,11 @@ const state = {
   universe: {},
   effective: {},
   defs: {},
+  // The bootstrap's RESOLVED role defs (enabled roles only). The universe def is
+  // filled with the shipped provider defaults (spec #116), so authorship of the
+  // provider keys is read from the resolved def against the global, not from the
+  // filled universe def.
+  resolvedRoles: {},
   defaults: {},
   metrics: [],
   metricMeta: {},
@@ -227,21 +232,35 @@ function effectiveGlobalBonus() {
 
 /** The universe def is filled with the shipped provider defaults (spec #116), so
  * an inherit-equal value would look authored to the server. Strip it, so the
- * preview's `resolveSettings` fills the global and the editor's badge is honest. */
-function stripInheritedProviderKeys(def) {
+ * preview's `resolveSettings` fills the global and the editor's badge is honest.
+ *
+ * Authorship is read from the RESOLVED def (`state.resolvedRoles[name]`), not the
+ * filled universe def: a role inherits when its resolved value equals the global
+ * (a role that authors the same value is indistinguishable and harmless). A
+ * disabled role has no resolved def, so the shipped-default fill is the signal. */
+function stripInheritedProviderKeys(def, name) {
+  const resolved = state.resolvedRoles?.[name];
+  const globalPriority = providerList(state.settingsResolved?.providerPriority);
+  const globalBonus = state.settingsResolved?.providerBonus;
+  if (resolved) {
+    if (JSON.stringify(providerList(resolved.providerPriority)) === JSON.stringify(globalPriority)) delete def.providerPriority;
+    if (resolved.providerBonus === globalBonus) delete def.providerBonus;
+    return;
+  }
   if (Array.isArray(def.providerPriority) && def.providerPriority.length === 0) delete def.providerPriority;
   if (def.providerBonus !== undefined && def.providerBonus === state.settingsDefaults?.providerBonus) delete def.providerBonus;
 }
 
 /** The def the rank/explain endpoints need: the AUTHORED def with the provider
  * keys resolved from the edited global. Those endpoints treat the posted def as
- * authored and do not merge the global, so an inherit-equal value must be filled
- * here or the global priority would be inert. */
+ * authored and do not merge the global, so an absent key must be filled here or
+ * the global priority would be inert. After the bootstrap strip, a present key
+ * is authored (an authored `[]` is a real opt-out), so only an absent key
+ * inherits. */
 function resolvedDefForRank(def) {
   const out = { ...def };
-  if (providerList(def.providerPriority).length === 0) out.providerPriority = effectiveGlobalPriority();
-  const shipped = state.settingsDefaults?.providerBonus;
-  if (def.providerBonus === undefined || def.providerBonus === shipped) out.providerBonus = effectiveGlobalBonus();
+  if (!("providerPriority" in def)) out.providerPriority = effectiveGlobalPriority();
+  if (!("providerBonus" in def)) out.providerBonus = effectiveGlobalBonus();
   return out;
 }
 
@@ -1495,13 +1514,13 @@ function endpointFilterField(def, spec) {
 }
 
 /** The role's authored provider priority (spec #116): a comma-separated text
- * input. Empty = inherit the global list. The universe def is filled with the
- * shipped default (`[]`), so an empty array is the "not authored" signal; a
- * non-empty global marks the field derived. */
+ * input. Empty = inherit the global list. The bootstrap strip removes an
+ * inherited key, so a PRESENT key is authored (an authored `[]` is a real
+ * opt-out); a non-empty global marks an absent key derived. */
 function providerPriorityField(def) {
   const global = effectiveGlobalPriority();
   const authored = providerList(def.providerPriority);
-  const isAuthored = authored.length > 0;
+  const isAuthored = "providerPriority" in def;
   const derived = !isAuthored && global.length > 0;
   const cell = el("span", { class: "knob endpoint-filter" + (derived ? " derived" : "") });
   const input = el("input", { type: "text", class: "knob-input provider-input", "data-tip": TIPS.providerPriority, value: authored.join(", "), placeholder: global.length ? global.join(", ") : "e.g. flocta, openrouter" });
@@ -1521,13 +1540,12 @@ function providerPriorityField(def) {
 }
 
 /** The role's authored provider bonus (spec #116): a number input. Empty =
- * inherit the global. The universe def is filled with the shipped default, so a
- * value equal to it is the "not authored" signal; a non-default global marks
- * the field derived. */
+ * inherit the global. The bootstrap strip removes an inherited key, so a
+ * PRESENT key is authored; a non-default global marks an absent key derived. */
 function providerBonusField(def) {
   const shipped = state.settingsDefaults?.providerBonus;
   const global = effectiveGlobalBonus();
-  const authored = def.providerBonus !== undefined && def.providerBonus !== shipped ? def.providerBonus : undefined;
+  const authored = "providerBonus" in def ? def.providerBonus : undefined;
   const derived = authored === undefined && global !== undefined && global !== shipped;
   const cell = el("span", { class: "knob endpoint-filter" + (derived ? " derived" : "") });
   const input = el("input", { type: "number", min: "0", max: "1", step: "0.001", class: "knob-input", "data-tip": TIPS.providerBonus, placeholder: global === undefined ? "—" : String(global) });
@@ -2175,6 +2193,7 @@ function applyBootstrap(data) {
   state.poolMode = data.poolMode || "raw";
   state.tokenProfile = data.tokenProfile ?? null;
   state.universe = data.universe;
+  state.resolvedRoles = data.roles || {};
   state.effective = {};
   for (const [name, entry] of Object.entries(state.universe)) state.effective[name] = entry.def;
   state.defs = structuredClone(state.effective);
@@ -2199,8 +2218,8 @@ function applyBootstrap(data) {
   // strip an inherit-equal value so the preview's resolveSettings fills the
   // global and the editor's authored/derived badge is honest.
   for (const name of Object.keys(state.defs)) {
-    stripInheritedProviderKeys(state.defs[name]);
-    stripInheritedProviderKeys(state.effective[name]);
+    stripInheritedProviderKeys(state.defs[name], name);
+    stripInheritedProviderKeys(state.effective[name], name);
   }
   state.preview = null;
   state.previewErrors = [];
