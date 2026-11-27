@@ -28,6 +28,7 @@ import { formatFeatures } from "./features.ts";
 import { startExplorer, type ExplorerHandle } from "./explorer/boot.ts";
 import { resolveScopes, unionRoles } from "./explorer/scopes.ts";
 import { isRecord } from "./guards.ts";
+import { getProviderCatalog, refreshProviderCatalog } from "./provider-catalog.ts";
 import { applyProviderDisplay, providerPinOf, providerPinOfSelector } from "./provider-display.ts";
 import { applyProfileOverrides, formatProjectRolesReport, parseProjectRolesArgs, PROJECT_ROLES_USAGE, setupProject, type ProjectProfile } from "./project-setup.ts";
 import { DEFAULT_ROLES, findProjectAnchor, KNOWN_METRICS, PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings } from "./settings.ts";
@@ -247,6 +248,11 @@ function extDeps(pi: ExtensionAPI, ctx: ExtContext): Deps {
       });
       return catalogFromOmpModelsJson({ models: rows });
     },
+    // The daily provider refresh (spec #116): the extension's subprocess seams.
+    // `omp models refresh <provider>` then `omp models ls --json`, both
+    // best-effort; the updater degrades to the session catalog on failure.
+    refreshProviderCatalog,
+    getProviderCatalog,
     notify: (lines) => {
       const text = lines.join("\n");
       ctx.ui.notify(text, "info");
