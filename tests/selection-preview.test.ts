@@ -495,3 +495,32 @@ test("agreement: the preview matches a real dry run under a provider priority", 
     "openrouter/org/model-c:auto",
   ]);
 });
+
+test("agreement: a provider bonus promotes a lower-value model and bestValue follows the challenger", async () => {
+  // model-a is the honest value leader; model-b is offered by the prioritized
+  // provider, so its bonus makes it the effective-value leader. The decision's
+  // `bestValue` must be the challenger's honest value (not the value walk's
+  // leader), and the preview must agree.
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 88, 1, 100)];
+  const flocta = providerCatalog("flocta", ["model-b"]);
+  const catalog = [...makeCatalog(models.map((m) => m.id)), ...flocta];
+  const raw = onlyDefault({ providerPriority: "flocta" });
+  const { result, preview } = await agreement(raw, models, "other: 1\n", {}, {
+    catalog,
+    deps: {
+      getProviderCatalog: async () => flocta,
+      refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    },
+  });
+  assertAgrees(result, preview);
+  const ranked = rankRole(resolved(raw).roles.default, models);
+  const modelA = ranked.find((r) => r.model.id === "model-a");
+  const modelB = ranked.find((r) => r.model.id === "model-b");
+  assert.ok(modelA && modelB);
+  // The bonus flips the effective leader: model-b's honest value is lower.
+  assert.ok(modelB.value < modelA.value);
+  assert.ok(modelB.value + (modelB.providerBonus ?? 0) > modelA.value + (modelA.providerBonus ?? 0));
+  assert.equal(result.decisions[0].to, "flocta/org/model-b:auto");
+  assert.equal(result.decisions[0].bestValue, modelB.value);
+  assert.equal(preview.decisions[0].bestValue, modelB.value);
+});
