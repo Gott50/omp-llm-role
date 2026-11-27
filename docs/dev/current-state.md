@@ -6,8 +6,8 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
-ranking numbers below are the 2026-10-25 measurement (regenerated at the 1.6.0
-cut). The pool moved 416 → 408 models and eight leaders moved (`default`,
+ranking numbers below are the 2026-11-27 measurement (regenerated for spec #116).
+The pool moved 416 → 408 models and eight leaders moved (`default`,
 `smol`, `slow`, `vision`, `commit`, `tiny`, `task`, `designer`; `plan` and
 `advisor` held) because the daily caches moved, not the code: the ranking CLI
 is unchanged since the 2026-10-19 measurement, which was itself byte-identical
@@ -40,9 +40,10 @@ read.
   Settings panel and role editor expose the new keys. **The default install's
   ranking is byte-identical** — an empty priority list and a zero bonus leave
   every model's effective provider `openrouter`, the bonus `0` and every
-  selector, chain and ranking unchanged — so the matched/priced/eligible counts
-  and per-role leaders below are still the 2026-10-25 measurement; the report
-  was not regenerated (it needs a live fetch, and the spec does not ask for it).
+  selector, chain and ranking unchanged — and the report was regenerated for
+  spec #116: **456 models, 152 with OpenRouter throughput, 151 priced**; the
+  per-role eligible counts and leaders are below and in
+  `docs/llm-role-rankings.md`.
 
 - Release 1.6.0 (2026-10-25, cut `82b2a29`, tag `v1.6.0`): the spec #109 explorer
   settings editor and decision preview, and the spec #103 opt-in cheapest-model
@@ -919,18 +920,22 @@ read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 408 llm-stats models; OpenRouter matched 144/408 (throughput), 144 priced (the
-  2026-10-20 snapshot read 151/416 — the daily cache moved, not the code; the
-  #34–#40 axes and flags leave every ranking byte-identical until a flag is
-  turned on).
-- Eligible per role: 137 (vision 71, designer 84, image-input filter).
-- Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
-  leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.811), `smol` Muse Spark 1.3 (0.767),
-  `slow` Muse Spark 1.3 (0.842), `vision` Kimi K3 (0.731), `plan` Muse Spark 1.3
-  (0.809), `commit` Muse Spark 1.3 (0.811), `tiny` Muse Spark 1.3 (0.853),
-  `task` DeepSeek-V4.1-Flash (0.757), `advisor` Muse Spark 1.3 (0.834),
-  `designer` Muse Spark 1.3 (0.810).
+- 456 llm-stats models; OpenRouter matched 152/456 (throughput), 151 priced (the
+  2026-11-27 snapshot; the daily cache moved, not the code — the #34–#40 axes
+  and flags leave every ranking byte-identical until a flag is turned on).
+- Eligible per role: 144 (vision 83, designer 100, image-input filter).
+- Value-ranking leaders (this report's suggested `modelRoles`, thinking-adjusted
+  prices; the *ranking* leaders, before the account's provider whitelist drops
+  the blocked ones): `default` `openrouter/moonshotai/kimi-k3.1-pro:auto`,
+  `smol` `openrouter/reflection/beam-1.0-501b-a23b:off`, `slow`
+  `openrouter/moonshotai/kimi-k3.1-pro:high`, `vision`
+  `openrouter/moonshotai/kimi-k3.1-pro:auto`, `plan`
+  `openrouter/reflection/beam-1.0-501b-a23b:auto`, `commit`
+  `openrouter/reflection/beam-1.0-501b-a23b:off`, `tiny`
+  `openrouter/reflection/beam-1.0-501b-a23b:off`, `task`
+  `openrouter/deepseek/deepseek-v4.1-flash-1017:auto`, `advisor`
+  `openrouter/reflection/beam-1.0-501b-a23b:auto`, `designer`
+  `openrouter/deepseek/deepseek-v4.1-flash-1017:auto`.
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)
