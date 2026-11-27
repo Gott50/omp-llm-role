@@ -16,7 +16,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { autoPinApplies, computeRankings, endpointFilterDrops, loadRankData, providerPinDrops, rankedRoutes, type RankData } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, pruneRoutesToAllowed, resolveProviderVariant, splitThinkingSuffix, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { currentRankingId, enrichCatalogData, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, pruneRoutesToAllowed, resolveProviderVariant, splitThinkingSuffix, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
 import { getProviderCatalog, providerCatalogCachePath, providerDiscovery, readProviderCatalogCache, refreshProviderCatalog, writeProviderCatalogCache, type ProviderRefresh } from "./provider-catalog.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "./settings.ts";
@@ -343,7 +343,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     // probe walk with no abort path.
     const availability = await (deps.getKeyAvailability?.(token) ?? fetchKeyAvailability(token));
     const rowById = new Map(eligible.map((c) => [c.id, c]));
-    enrichThinkingLevels(rank.models, mergedCatalog);
+    enrichCatalogData(rank.models, mergedCatalog);
 
     let configText = "";
     try {

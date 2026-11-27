@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { enrichThinkingLevels, type CatalogEntry } from "../src/availability.ts";
+import { enrichCatalogData, type CatalogEntry } from "../src/availability.ts";
 import { computeRankings, type Model, type RoleDef } from "../src/engine.ts";
 import { formatModelRolesYaml } from "../src/cli/llm-role-rank.ts";
 import { DEFAULT_ROLES, readPluginSettingsMap, resolveSettings } from "../src/settings.ts";
@@ -43,14 +43,14 @@ function lockSettings(map: Record<string, unknown>): Record<string, unknown> {
 /** The report's pipeline: settings -> roles -> catalog enrichment -> rankings. */
 function report(settingsMap: Record<string, unknown>, models: Model[], catalog: CatalogEntry[]): string {
   const { settings } = resolveSettings(lockSettings(settingsMap));
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   return formatModelRolesYaml(computeRankings(models, settings.roles), settings.roles, catalog);
 }
 
 /** The report with no plugin settings: the shipped defaults, no provider
  * priority (the CLI's no-lock-entry path). */
 function defaultReport(models: Model[], catalog: CatalogEntry[]): string {
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   return formatModelRolesYaml(computeRankings(models, DEFAULT_ROLES), DEFAULT_ROLES, catalog);
 }
 

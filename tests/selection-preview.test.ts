@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { enrichThinkingLevels, filterCatalog, type CatalogEntry, type KeyAvailability, type Tier } from "../src/availability.ts";
+import { enrichCatalogData, filterCatalog, type CatalogEntry, type KeyAvailability, type Tier } from "../src/availability.ts";
 import { rankRole, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
 import { DEFAULT_ROLES, resolveSettings, type ResolvedSettings } from "../src/settings.ts";
 import { discoverAgentPins, type AgentPin } from "../src/agent-pins.ts";
@@ -318,7 +318,7 @@ async function agreement(
   // One shared `RankData`, enriched once before either call: `runUpdater` enriches
   // in place, so a preview run first on unenriched models would diverge on the
   // thinking price factor for a non-bug reason.
-  enrichThinkingLevels(rank.models, catalog);
+  enrichCatalogData(rank.models, catalog);
   const dir = setupAgentDir(configText, state);
   const deps = fakeDeps(models, raw, {
     getRankData: async () => rank,
@@ -437,7 +437,7 @@ function providerCatalog(provider: string, ids: string[], thinking: string[] = [
 test("a provider priority resolves the candidate on its effective provider", () => {
   const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
   const catalog = [...makeCatalog(["model-a", "model-b"]), ...providerCatalog("flocta", ["model-a"])];
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   const p = preview(onlyDefault({ providerPriority: "flocta" }), { models, catalog });
   assert.equal(p.decisions[0].to, "flocta/org/model-a:auto");
   assert.equal(p.decisions[0].chainKey, "flocta/org/model-a");
@@ -451,7 +451,7 @@ test("a none tier resolves no candidate even with a full catalog", () => {
   // passed for provider resolution must not resurrect a candidate.
   const models = [makeModel("model-a", 90, 1, 100)];
   const catalog = [...makeCatalog(["model-a"]), ...providerCatalog("flocta", ["model-a"])];
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   const p = preview(onlyDefault({ providerPriority: "flocta" }), { models, catalog, tier: "none" });
   assert.deepEqual(p.decisions, []);
   assert.deepEqual(p.skipped, [{ role: "default", reason: "no eligible candidate" }]);
@@ -463,7 +463,7 @@ test("a non-OpenRouter candidate is not pruned by the OpenRouter keyed set", () 
   // the decision's key-blocked count is 0.
   const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
   const catalog = [...makeCatalog(["model-a", "model-b"]), ...providerCatalog("flocta", ["model-a"])];
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   const p = preview(onlyDefault({ providerPriority: "flocta" }), { models, catalog, availability: availability(["model-a"], ["model-b"]) });
   assert.equal(p.decisions.length, 1);
   assert.equal(p.decisions[0].to, "flocta/org/model-a:auto");
@@ -473,7 +473,7 @@ test("a non-OpenRouter candidate is not pruned by the OpenRouter keyed set", () 
 // Spec #116: the preview and the run share the provider-priority decision, so
 // they cannot drift on the selector or the cross-provider chain.
 test("agreement: the preview matches a real dry run under a provider priority", async () => {
-  // Fresh models: `enrichThinkingLevels` mutates the ranking rows in place.
+  // Fresh models: `enrichCatalogData` mutates the ranking rows in place.
   const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
   const flocta = providerCatalog("flocta", ["model-a"]);
   const catalog = [...makeCatalog(models.map((m) => m.id)), ...flocta];

@@ -133,7 +133,7 @@ export type Model = {
    * present */
   thinking: boolean;
   /** omp catalog `thinking[]` for the joined model (per-model level list), set
-   * by `enrichThinkingLevels` when the catalog is available. Undefined = no
+   * by `enrichCatalogData` when the catalog is available. Undefined = no
    * catalog data — the ranking falls back to the `supports_reasoning` flag. */
   thinkingLevels?: string[];
   /** OpenRouter blended $/M (3:1 in:out, standard route); null until enrichment */
