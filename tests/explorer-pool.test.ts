@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { KeyAvailability } from "../src/availability.ts";
+import type { CatalogEntry, KeyAvailability } from "../src/availability.ts";
 import { rankRole, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
 import { rankRows } from "../src/explorer/explain.ts";
 import { asWrittenPool } from "../src/explorer/pool.ts";
@@ -66,33 +66,33 @@ function rankData(models: Model[]): RankData {
 
 test("a model whose ranking id resolves to no tier-eligible catalog entry is dropped", () => {
   const rank = rankData([routed("kept", ["p"]), routed("ghost", ["p"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["kept"]), tier: "billed", allowed: null, availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["kept"]), tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models.map((m) => m.id), ["kept"]);
 });
 
 test("a model that resolves is kept", () => {
   const rank = rankData([routed("kept", ["p"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["kept"]), tier: "billed", allowed: null, availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["kept"]), tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models.map((m) => m.id), ["kept"]);
 });
 
 test("a :free catalog entry is not tier-eligible on the billed tier but is on the free tier", () => {
   const rank = rankData([routed("freebie", ["p"])]);
-  const billed = asWrittenPool(rank, { catalog: makeCatalog(["freebie:free"]), tier: "billed", allowed: null, availability: INACTIVE });
+  const billed = asWrittenPool(rank, { catalog: makeCatalog(["freebie:free"]), tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(billed.models, []);
-  const free = asWrittenPool(rank, { catalog: makeCatalog(["freebie:free"]), tier: "free", allowed: null, availability: INACTIVE });
+  const free = asWrittenPool(rank, { catalog: makeCatalog(["freebie:free"]), tier: "free", allowed: null, availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(free.models.map((m) => m.id), ["freebie"]);
 });
 
 test("a :batch catalog entry is never tier-eligible", () => {
   const rank = rankData([routed("batched", ["p"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["batched:batch"]), tier: "billed", allowed: null, availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["batched:batch"]), tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models, []);
 });
 
 test("tier none yields an empty pool", () => {
   const rank = rankData([routed("a", ["p"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "none", allowed: null, availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "none", allowed: null, availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models, []);
 });
 
@@ -100,33 +100,33 @@ test("tier none yields an empty pool", () => {
 
 test("with allowed !== null, each kept model's routes are pruned to allowed providers", () => {
   const rank = rankData([routed("a", ["cheap", "mid", "exp"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["mid"]), availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["mid"]), availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models[0].routes?.map((r) => r.providerSlug), ["mid"]);
 });
 
 test("a bare whitelist entry matches a tiered route slug by prefix", () => {
   const rank = rankData([routed("a", ["coreweave/fp8", "other"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["coreweave"]), availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["coreweave"]), availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models[0].routes?.map((r) => r.providerSlug), ["coreweave/fp8"]);
 });
 
 test("a model left with zero routes is still kept", () => {
   const rank = rankData([routed("a", ["blocked"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["mid"]), availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["mid"]), availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models.map((m) => m.id), ["a"]);
   assert.deepEqual(pool.models[0].routes, []);
 });
 
 test("a model with no routes is kept route-less", () => {
   const rank = rankData([makeModel("a", 50, 1, 10)]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["mid"]), availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["mid"]), availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models.map((m) => m.id), ["a"]);
   assert.equal(pool.models[0].routes, undefined);
 });
 
 test("with allowed === null, routes are untouched", () => {
   const rank = rankData([routed("a", ["cheap", "mid"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: null, availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
   assert.deepEqual(pool.models[0].routes?.map((r) => r.providerSlug), ["cheap", "mid"]);
 });
 
@@ -134,7 +134,7 @@ test("with allowed === null, routes are untouched", () => {
 
 test("the fetch metadata is carried through unchanged", () => {
   const rank = rankData([routed("a", ["p"])]);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: null, availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
   assert.equal(pool.fetchedAt, rank.fetchedAt);
   assert.equal(pool.source, rank.source);
   assert.equal(pool.orMatched, rank.orMatched);
@@ -144,7 +144,7 @@ test("the fetch metadata is carried through unchanged", () => {
 test("the input RankData and its models are not mutated", () => {
   const rank = rankData([routed("a", ["cheap", "mid"]), routed("ghost", ["p"])]);
   const before = JSON.stringify(rank);
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["mid"]), availability: INACTIVE });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["a"]), tier: "billed", allowed: new Set(["mid"]), availability: INACTIVE, providerPriority: [] });
   assert.equal(JSON.stringify(rank), before);
   assert.notEqual(pool, rank);
   assert.equal(rank.models.length, 2);
@@ -160,6 +160,7 @@ test("the as-written pool drops a model the keyed catalog blocks and keeps one i
     tier: "billed",
     allowed: null,
     availability: availability({ allowed: new Set(["kept"]), blocked: new Set(["blocked"]) }),
+    providerPriority: [],
   });
   assert.deepEqual(pool.models.map((m) => m.id), ["kept"]);
 });
@@ -171,6 +172,7 @@ test("a model in neither keyed-catalog set is kept (unknown is not blocked)", ()
     tier: "billed",
     allowed: null,
     availability: availability({ allowed: new Set(["other"]), blocked: new Set(["blocked"]) }),
+    providerPriority: [],
   });
   assert.deepEqual(pool.models.map((m) => m.id), ["unknown"]);
 });
@@ -178,10 +180,10 @@ test("a model in neither keyed-catalog set is kept (unknown is not blocked)", ()
 test("with the keyed catalog inactive the pool is unchanged", () => {
   const rank = rankData([routed("a", ["cheap", "mid"]), routed("b", ["p"])]);
   const inputs = { catalog: makeCatalog(["a", "b"]), tier: "billed" as const, allowed: new Set(["mid"]) };
-  const today = asWrittenPool(rank, { ...inputs, availability: INACTIVE });
+  const today = asWrittenPool(rank, { ...inputs, availability: INACTIVE, providerPriority: [] });
   // A non-empty `blocked` set on an inactive record must not prune: the updater
   // gates on `availability.active`, and so must the pool.
-  const inactiveWithBlocked = asWrittenPool(rank, { ...inputs, availability: { ...INACTIVE, blocked: new Set(["b"]) } });
+  const inactiveWithBlocked = asWrittenPool(rank, { ...inputs, availability: { ...INACTIVE, blocked: new Set(["b"]) }, providerPriority: [] });
   assert.deepEqual(inactiveWithBlocked.models, today.models);
   // ...and "today" is the two-filter result: both models kept, `a`'s routes pruned.
   assert.deepEqual(today.models.map((m) => m.id), ["a", "b"]);
@@ -198,7 +200,7 @@ test("the raw path is untouched: every row is kept and the overlay still marks k
   assert.equal(rows.find((r) => r.id === "blocked")?.key, "blocked");
   assert.equal(rows.find((r) => r.id === "kept")?.key, "usable");
   // The as-written pool on the same inputs is where the prune happens.
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(["kept", "blocked"]), tier: "billed", allowed: null, availability: avail });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(["kept", "blocked"]), tier: "billed", allowed: null, availability: avail, providerPriority: [] });
   assert.deepEqual(pool.models.map((m) => m.id), ["kept"]);
 });
 
@@ -208,7 +210,7 @@ test("the as-written leader is the model the updater picks when the value leader
   const rank = rankData(models);
   // model-a is the raw value leader; the keyed prune removes it.
   assert.equal(rankRole(DEFAULT_ROLES.default, rank.models)[0].model.id, "model-a");
-  const pool = asWrittenPool(rank, { catalog: makeCatalog(models.map((m) => m.id)), tier: "billed", allowed: null, availability: avail });
+  const pool = asWrittenPool(rank, { catalog: makeCatalog(models.map((m) => m.id)), tier: "billed", allowed: null, availability: avail, providerPriority: [] });
   const leader = rankRole(DEFAULT_ROLES.default, pool.models)[0];
   assert.equal(leader.model.id, "model-b");
 
@@ -218,4 +220,50 @@ test("the as-written leader is the model the updater picks when the value leader
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.to, `openrouter/org/${leader.model.id}:auto`);
+});
+
+// --- provider priority (spec #116, ticket #124) ------------------------------
+
+/** A non-OpenRouter provider's catalog rows. The id is `org/<id>` (not
+ * provider-prefixed), so `providerCatalogIdFor` matches the ranking id. */
+function providerCatalog(provider: string, ids: string[]): CatalogEntry[] {
+  return ids.map((id) => ({
+    provider,
+    id: `org/${id}`,
+    selector: `${provider}/org/${id}`,
+    name: id,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: true,
+    thinking: [],
+    input: ["text"],
+    cost: null,
+  }));
+}
+
+test("a provider-only model is kept only when its provider is prioritized", () => {
+  const rank = rankData([routed("flocta-model", ["p"])]);
+  const catalog = providerCatalog("flocta", ["flocta-model"]);
+  const without = asWrittenPool(rank, { catalog, tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
+  assert.deepEqual(without.models, []);
+  const withPriority = asWrittenPool(rank, { catalog, tier: "billed", allowed: null, availability: INACTIVE, providerPriority: ["flocta"] });
+  assert.deepEqual(withPriority.models.map((m) => m.id), ["flocta-model"]);
+});
+
+test("the keyed prune is OpenRouter-only: a provider-only model is not key-blocked", () => {
+  const rank = rankData([routed("or-model", ["p"]), routed("flocta-model", ["p"])]);
+  const catalog = [...makeCatalog(["or-model"]), ...providerCatalog("flocta", ["flocta-model"])];
+  const avail = availability({ allowed: new Set(), blocked: new Set(["or-model", "flocta-model"]) });
+  const pool = asWrittenPool(rank, { catalog, tier: "billed", allowed: null, availability: avail, providerPriority: ["flocta"] });
+  // `or-model`'s effective provider is OpenRouter, so the keyed set prunes it;
+  // `flocta-model` runs on flocta, so the OpenRouter keyed set cannot block it.
+  assert.deepEqual(pool.models.map((m) => m.id), ["flocta-model"]);
+});
+
+test("a priority list whose providers offer nothing leaves the pool unchanged", () => {
+  const rank = rankData([routed("a", ["p"]), routed("ghost", ["p"])]);
+  const catalog = makeCatalog(["a"]);
+  const base = asWrittenPool(rank, { catalog, tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
+  const withPriority = asWrittenPool(rank, { catalog, tier: "billed", allowed: null, availability: INACTIVE, providerPriority: ["flocta"] });
+  assert.deepEqual(withPriority.models.map((m) => m.id), base.models.map((m) => m.id));
 });

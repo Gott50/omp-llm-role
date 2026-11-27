@@ -16,8 +16,19 @@ import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.t
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
 import { autoPinApplies, BENCHMARK_CHANCE, blendOutputPrice, blendRoutePool, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, routeInputPrice, routeOutputPrice, routePassesEndpointFilters, thinkingAdjustedPrice, type BarSelection, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { type PriceSource } from "../provider-priority.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 import { type TokenProfile } from "../usage-ledger.ts";
+
+/** Human label for a ranked row's price basis (spec #116): the gateway's own
+ * blend, a provider's reference price, or the OpenRouter blend used as a proxy
+ * when the provider's price is unknown. */
+const PRICE_SOURCE_LABEL: Record<PriceSource, string> = {
+  openrouter: "OpenRouter price",
+  provider: "provider price",
+  reference: "reference price",
+  "openrouter-proxy": "OpenRouter proxy",
+};
 
 // ---------------------------------------------------------------------------
 // Metric metadata (the UI's picklists and formula legends)
@@ -236,6 +247,15 @@ export type RankRow = {
   /** whether the `cheapest` selection's bar excludes this model (its `q` is
    * under the bar). Always false in `value` mode, which has no bar. */
   excludedByBar: boolean;
+  /** the model's effective provider (spec #116): the first prioritized provider
+   * that offers it, else `openrouter`. */
+  provider: string;
+  /** where `priceEff` came from: the gateway blend, a provider reference price,
+   * or the OpenRouter blend as a labelled proxy. */
+  priceSource: PriceSource;
+  /** the soft provider preference for this row's effective provider (0 when the
+   * provider is not listed or is `openrouter`). Never folded into `value`. */
+  providerBonus: number;
 };
 
 /** The availability overlay verdict for one model id: `"usable"` when the keyed
@@ -288,6 +308,9 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], avai
       delta: b == null ? null : b - rank,
       perTask: profile == null ? null : perTaskPrice(r.model, def, profile)?.total ?? null,
       excludedByBar: good !== null && !good.has(r.model.id),
+      provider: r.provider,
+      priceSource: r.priceSource,
+      providerBonus: r.providerBonus,
     };
   });
 }
@@ -362,6 +385,18 @@ export type Explanation =
        * route or drop the pin, so this is the candidate, not the written pin.
        * Read-only in the UI; a manual `providerPin` overrides it. */
       autoPin: string | null;
+      /** the model's effective provider (spec #116): the first prioritized
+       * provider that offers it, else `openrouter`. */
+      provider: string;
+      /** where `priceEff` came from (see `RankRow.priceSource`). */
+      priceSource: PriceSource;
+      /** the soft provider preference for the effective provider. Applied in the
+       * selection comparison only — never in `value`, `q` or `cost`. */
+      providerBonus: number;
+      /** the provider line the panel renders, e.g. `flocta (reference price)`. */
+      providerLine: string;
+      /** the provider-preference line, e.g. `+0.05 (selection only, not in value)`. */
+      providerPreferenceLine: string;
       role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
       contributions: Contribution[];
       cost: { priceEff: number; billedPrice: number; lambda: number; penalty: number; q: number; value: number };
@@ -519,6 +554,11 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     priceEff: self.priceEff,
     ownProvider,
     autoPin,
+    provider: self.provider,
+    priceSource: self.priceSource,
+    providerBonus: self.providerBonus,
+    providerLine: `${self.provider} (${PRICE_SOURCE_LABEL[self.priceSource]})`,
+    providerPreferenceLine: `${self.providerBonus > 0 ? "+" : ""}${self.providerBonus} (selection only, not in value)`,
     role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking, cacheHitRate },
     contributions,
     cost: { priceEff: self.priceEff, billedPrice: route !== null ? routeEffectivePrice(route, cacheHitRate) ?? eff.price : eff.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
