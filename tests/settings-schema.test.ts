@@ -23,13 +23,15 @@ test("schema covers every global knob and every shipped role field", () => {
     "errorReporting",
     "selection",
     "qualityFloor",
+    "providerPriority",
+    "providerBonus",
     "tokenProfile.inputTokens",
     "tokenProfile.outputTokens",
   ]) {
     assert.ok(key in schema, `missing global ${key}`);
   }
   for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
-    for (const suffix of ["enabled", "thinking", "providerPin", "required"]) {
+    for (const suffix of ["enabled", "thinking", "providerPin", "required", "providerPriority", "providerBonus"]) {
       assert.ok(`roles.${name}.${suffix}` in schema, `missing roles.${name}.${suffix}`);
     }
     for (const metric of Object.keys(def.weights)) {
@@ -48,10 +50,14 @@ test("schema rows carry the shipped defaults", () => {
   assert.equal(schema.errorReporting.type, "enum");
   assert.deepEqual(schema.errorReporting.values, ["off", "ask", "auto"]);
   assert.equal(schema.errorReporting.default, DEFAULT_SETTINGS.errorReporting);
+  assert.equal(schema.providerPriority.default, "");
+  assert.equal(schema.providerBonus.default, DEFAULT_SETTINGS.providerBonus);
   for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
     assert.equal(schema[`roles.${name}.enabled`].default, def.enabled ?? true);
     assert.equal(schema[`roles.${name}.thinking`].default, def.thinking);
     assert.equal(schema[`roles.${name}.required`].default, def.required.join(","));
+    assert.equal(schema[`roles.${name}.providerPriority`].default, "");
+    assert.equal(schema[`roles.${name}.providerBonus`].default, DEFAULT_SETTINGS.providerBonus);
     for (const [metric, w] of Object.entries(def.weights)) {
       assert.equal(schema[`roles.${name}.weights.${metric}`].default, w);
     }
@@ -229,4 +235,33 @@ test("README documents the selection and qualityFloor knobs", () => {
     /inert in `"value"` mode/i,
     "README must say qualityFloor is inert in \"value\" mode",
   );
+});
+
+test("schema exposes the provider priority and bonus rows", () => {
+  const schema = deriveSettingsSchema();
+  const priority = schema.providerPriority;
+  assert.ok(priority, "missing providerPriority");
+  assert.equal(priority.type, "string");
+  assert.equal(priority.default, "");
+  const bonus = schema.providerBonus;
+  assert.ok(bonus, "missing providerBonus");
+  assert.equal(bonus.type, "number");
+  assert.equal(bonus.min, 0);
+  assert.equal(bonus.max, 1);
+  assert.equal(bonus.step, 0.001);
+  assert.equal(bonus.default, DEFAULT_SETTINGS.providerBonus);
+  for (const name of Object.keys(DEFAULT_ROLES)) {
+    const rp = schema[`roles.${name}.providerPriority`];
+    assert.ok(rp, `missing roles.${name}.providerPriority`);
+    assert.equal(rp.type, "string");
+    assert.equal(rp.default, "");
+    assert.match(rp.description ?? "", new RegExp(name), "the per-role priority description must name the role");
+    const rb = schema[`roles.${name}.providerBonus`];
+    assert.ok(rb, `missing roles.${name}.providerBonus`);
+    assert.equal(rb.type, "number");
+    assert.equal(rb.min, 0);
+    assert.equal(rb.max, 1);
+    assert.equal(rb.step, 0.001);
+    assert.equal(rb.default, DEFAULT_SETTINGS.providerBonus);
+  }
 });
