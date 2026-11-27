@@ -13,6 +13,7 @@ import {
   providerOrder,
 } from "../src/provider-priority.ts";
 import { makeModel } from "./helpers.ts";
+import { rankingIdOf } from "../src/ranking-id.ts";
 
 function entry(provider: string, id: string, cost: { input: number; output: number } | null = null, thinking: string[] = []): CatalogEntry {
   return {
@@ -34,6 +35,17 @@ function model(id: string, price: number | null): Model {
   m.price = price;
   return m;
 }
+
+// ---------------------------------------------------------------------------
+// rankingIdOf (the shared leaf module — one implementation, one behavior)
+// ---------------------------------------------------------------------------
+
+test("rankingIdOf strips org prefix, :free, and one -latest", () => {
+  assert.equal(rankingIdOf("deepseek/deepseek-v4-flash"), "deepseek-v4-flash");
+  assert.equal(rankingIdOf("~deepseek/deepseek-v4-flash-latest"), "deepseek-v4-flash");
+  assert.equal(rankingIdOf("inclusionai/ling-3.0-flash:free"), "ling-3.0-flash");
+  assert.equal(rankingIdOf("z-ai/glm-5.3-flash"), "glm-5.3-flash");
+});
 
 // ---------------------------------------------------------------------------
 // providerOf
