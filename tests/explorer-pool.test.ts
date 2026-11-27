@@ -4,6 +4,7 @@ import type { CatalogEntry, KeyAvailability } from "../src/availability.ts";
 import { rankRole, type Model, type OpenRouterEndpointRecord, type RankData } from "../src/engine.ts";
 import { rankRows } from "../src/explorer/explain.ts";
 import { asWrittenPool } from "../src/explorer/pool.ts";
+import { poolProviderPriority } from "../src/explorer/scopes.ts";
 import { DEFAULT_ROLES } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
@@ -266,4 +267,16 @@ test("a priority list whose providers offer nothing leaves the pool unchanged", 
   const base = asWrittenPool(rank, { catalog, tier: "billed", allowed: null, availability: INACTIVE, providerPriority: [] });
   const withPriority = asWrittenPool(rank, { catalog, tier: "billed", allowed: null, availability: INACTIVE, providerPriority: ["flocta"] });
   assert.deepEqual(withPriority.models.map((m) => m.id), base.models.map((m) => m.id));
+});
+
+test("a model offered only by a per-role priority provider stays in the as-written pool", () => {
+  const rank = rankData([routed("flocta-model", ["p"])]);
+  const catalog = providerCatalog("flocta", ["flocta-model"]);
+  // The global list is empty; only a role's per-role override names flocta. The
+  // pool must honor the union, or that role's table would lose the model.
+  const roles = { r: { ...DEFAULT_ROLES.default, providerPriority: ["flocta"] } };
+  const priority = poolProviderPriority([], roles);
+  assert.deepEqual(priority, ["flocta"]);
+  const pool = asWrittenPool(rank, { catalog, tier: "billed", allowed: null, availability: INACTIVE, providerPriority: priority });
+  assert.deepEqual(pool.models.map((m) => m.id), ["flocta-model"]);
 });

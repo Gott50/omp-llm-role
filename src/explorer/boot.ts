@@ -22,7 +22,7 @@ import { DEFAULT_ROLES, PLUGIN_SETTINGS_PATH } from "../settings.ts";
 import { agentDir, loadState } from "../state.ts";
 import { readUsageRows, type TokenProfile } from "../usage-ledger.ts";
 import type { PoolInputs } from "./pool.ts";
-import { readScopeConfig, readScopeRoles, resolveScope, resolveScopes, scopeDir, type Scope, type ScopeInputs } from "./scopes.ts";
+import { poolProviderPriority, readScopeConfig, readScopeRoles, resolveScope, resolveScopes, scopeDir, type Scope, type ScopeInputs } from "./scopes.ts";
 import { createExplorerServer } from "./server.ts";
 
 /** Preferred loopback port; a busy port falls back to an OS-assigned one. */
@@ -187,16 +187,21 @@ export async function startExplorer(opts: ExplorerBootOpts): Promise<ExplorerHan
         }
       }
     },
-    // The scope's global provider priority (spec #116) rides with the pool
-    // inputs, so the as-written pool keeps a provider-only model and the keyed
-    // prune stays OpenRouter-only. Re-read per call, like the whitelist.
-    getPoolInputs: (scope): PoolInputs => ({
-      catalog: opts.catalog,
-      tier,
-      allowed,
-      availability,
-      providerPriority: readScopeRoles(scope, userLockPath).settings.resolved.providerPriority,
-    }),
+    // The scope's provider priority (spec #116) rides with the pool inputs, so
+    // the as-written pool keeps a provider-only model and the keyed prune stays
+    // OpenRouter-only. The list is the union of the global and every role's
+    // per-role override — a model only a role's priority offers must stay in the
+    // pool. Re-read per call, like the whitelist.
+    getPoolInputs: (scope): PoolInputs => {
+      const { settings, roles } = readScopeRoles(scope, userLockPath);
+      return {
+        catalog: opts.catalog,
+        tier,
+        allowed,
+        availability,
+        providerPriority: poolProviderPriority(settings.resolved.providerPriority, roles),
+      };
+    },
     // The ledger follows the plugin's state location: a project scope keeps its
     // usage in its own `<root>/.omp`, so its per-task column never mixes with
     // the user-level profile.

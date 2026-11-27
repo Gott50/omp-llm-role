@@ -237,10 +237,15 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   (`usable`/`blocked`/`unknown`), orthogonal to `missing` and to the eligibility
   gates — `perTask` (the display-only dollars-per-task, or `null`), and
   `excludedByBar` (the `cheapest` selection's bar excludes the row; always
-  `false` in `value` mode, which has no bar). `availability`, `profile` and `bar`
-  are optional and pure (no I/O); omitted or inactive ⇒ every row reads
-  `unknown` / `perTask: null` / `excludedByBar: false`. None affects the ranking
-  order or the deltas.
+  `false` in `value` mode, which has no bar). Each row also carries the
+  provider-priority fields (spec #116): `provider` (the effective provider),
+  `priceSource` (`openrouter` / `provider` / `reference` / `openrouter-proxy`)
+  and `providerBonus` (the soft preference, never folded into `value`).
+  `perTask` is `null` for a non-OpenRouter provider: its offer carries only the
+  3:1 blend, not the input/output split the per-task price needs.
+  `availability`, `profile` and `bar` are optional and pure (no I/O); omitted or
+  inactive ⇒ every row reads `unknown` / `perTask: null` / `excludedByBar:
+  false`. None affects the ranking order or the deltas.
 - **`inverseCardinal(metric, t)`** — inverse of `cardinalMetric` for the "what
   would it take" targets: `index` → `t*80 − 20`; `throughput` → `10 * 30**t`
   (null outside `[0,1]`, because the forward transform clamps); everything else
@@ -261,8 +266,10 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   recorded usage and no `tokenProfile` set), **or** the model has no usable
   route price (e.g. every route pruned by the as-written whitelist — the model
   still ranks on its blend price, but the per-task column has no route to
-  price). It never feeds the ranking's sort key, `value`, or the explanation's
-  `cost` block.
+  price). A non-OpenRouter effective provider (spec #116) also yields `null`:
+  its offer carries only the 3:1 blend, so the input/output split the per-task
+  price needs is unknown and is not invented. It never feeds the ranking's sort
+  key, `value`, or the explanation's `cost` block.
 - **`explainModel(def, models, modelId, roleName, availability?, profile?)`** — the full
   decomposition, or the eligibility gates it failed (same gates `rankRole`
   applies, same order: missing required, image filter, no billed price). On
@@ -286,6 +293,19 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   availability overlay `key`/`keyReason`
   (the same verdict as `rankRows`, plus the reason it reads that way). It mirrors
   `rankRole`'s capability fill so the contributions sum exactly to `q`.
+  It also mirrors `rankRole`'s **provider basis** (spec #116): the effective
+  provider (`provider`), the price basis (`priceSource`), the soft preference
+  (`providerBonus`), and the two rendered lines `providerLine` (e.g.
+  `flocta (reference price)`) and `providerPreferenceLine` (e.g.
+  `+0.05 (selection only, not in value)`). The eligibility gates read the same
+  basis `rankRole` does — the required-metric gate and the `maxPriceUsdPerM` cap
+  use `basis.price`, and the price gate is `basis.price == null` (no OpenRouter
+  route **and** no provider price), so a model the run ranks on a provider price
+  is eligible here too. `cost.billedPrice` is the basis price (the provider's
+  reference price, or the OpenRouter blend as a proxy), and `ownProvider`/
+  `autoPin` are OpenRouter-only (a non-OpenRouter provider is the route and
+  writes no pin). `perTask` is `null` for a non-OpenRouter provider (see
+  `perTaskPrice`).
 - **`leaderFlip(def, models)`** / **`thinkingLevelEffect(def, models)`**
   (`src/explorer/levers.ts`) — the two price-lever readouts, computed on the pool
   they are handed (so the readout and the ranking above it agree). `leaderFlip`
@@ -564,11 +584,17 @@ a scraped third-party site, so the DOM is built with
   **provider** column showing each row's effective provider with a compact
   price-source marker (`·ref` for a reference price, `·proxy` for the
   OpenRouter proxy; the gateway's own blend and an exact provider rate carry no
-  marker), and the explain panel adds the provider line and the
-  provider-preference line (`+0.05 (selection only, not in value)`). The
-  Settings panel's `providerPriority`/`providerBonus` inputs and the role
-  editor's overrides feed the same `defForRank` path, so an edited global
-  provider priority re-ranks the table.
+  marker) and, when the row's `providerBonus` is non-zero, the
+  provider-preference term (`flocta·ref +0.05`, trimmed to 3 decimals). The
+  cell's tooltip explains the term per mode: in `value` mode it is a value-unit
+  nudge applied in the selection comparison only (never in the honest `value`);
+  in `cheapest` mode it is a price-fraction discount on the bar-clearing order.
+  The explain
+  panel adds the provider line and the provider-preference line
+  (`+0.05 (selection only, not in value)`). The Settings panel's
+  `providerPriority`/`providerBonus` inputs and the role editor's overrides feed
+  the same `resolvedDefForRank` path, so an edited global provider priority
+  re-ranks the table.
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
   `recompute()`. `recompute()` → `POST /api/rank {role, def, settings:
   state.settingsEdited}` → `state.rows`, `lambda`, `derivedLambda`, `selection`,
@@ -599,7 +625,11 @@ a scraped third-party site, so the DOM is built with
   settings: state.settingsEdited}` →
   `renderExplain()` (composition table, cost line, **per-task price** line, "why
   not higher", dominators, the **Price levers** section, and the availability
-  line). The cost line appends `· best route`
+  line). A **provider line** renders the explanation's `providerLine` (e.g.
+  `provider: flocta (reference price)`) and a **provider-preference line** its
+  `providerPreferenceLine` (e.g. `provider preference: +0.05 (selection only,
+  not in value)`), so the value decomposition stays honest — the bonus is never
+  folded into `value`. The cost line appends `· best route`
   when the model was priced on the soft best route (`ownProvider`), and a
   **pin line** shows the pin in force: `pin: <slug> (manual)` when the edited def
   carries a `providerPin`, else `auto pin (candidate): <slug>` from the
