@@ -163,6 +163,15 @@ export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Rec
   };
 }
 
+/** The provider priority the as-written pool honors: the union of the global
+ * list and every role's per-role override (the updater's own union), minus
+ * `openrouter` (the implicit last resort, never a pool gate). A model only a
+ * per-role priority offers must stay in the pool, or the role's table would
+ * silently lose it. */
+export function poolProviderPriority(global: readonly string[], roles: Record<string, RoleDef>): string[] {
+  return [...new Set([...global, ...Object.values(roles).flatMap((d) => d.providerPriority ?? [])])].filter((p) => p !== "openrouter");
+}
+
 /** The agent dir a scope's `config.yml`, state and history live in: the
  * project's `<root>/.omp`, or the user-level agent dir. The same resolution
  * `runUpdater` performs (`resolveProjectDir() ?? agentDir()`). */
