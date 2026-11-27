@@ -30,7 +30,7 @@ import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
-import { catalogFromOmpModelsJson, enrichCatalogData, resolveVariant, type CatalogEntry } from "../availability.ts";
+import { catalogFromOmpModelsJson, enrichCatalogData, resolveProviderVariant, type CatalogEntry } from "../availability.ts";
 import { cachedSourceInfo, loadDeclaredSources } from "../benchmark-sources.ts";
 import { computeRankings, loadRankData, META_LEVELS, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "../engine.ts";
 import { focusMetricsOf } from "../explorer/explain.ts";
@@ -235,14 +235,17 @@ function formatRankings(
 }
 
 /**
- * Suggested settings.modelRoles: each role's #1 ranked model resolved through the
- * same catalog/variant resolution the plugin uses (tier "billed"), emitted as
- * the effective provider's selector (issue #116): `openrouter/<catalogId>` for
- * the gateway, `<provider>/<catalogId>` for a prioritized non-OpenRouter
- * provider. The thinking suffix follows the same provider-scoped rule as the
- * plugin's `selectorFor` — the effective provider's own catalog row must
- * advertise the level (a meta level always applies). Roles whose best model has
- * no catalog match get a comment placeholder instead of a selector.
+ * Suggested settings.modelRoles: each role's best ranked model that resolves
+ * through the same catalog/variant resolution the plugin uses (tier "billed"),
+ * emitted as the effective provider's selector (issue #116):
+ * `openrouter/<catalogId>` for the gateway, `<provider>/<catalogId>` for a
+ * prioritized non-OpenRouter provider. The walk mirrors the plugin's candidate
+ * building — a model with no routable catalog row is skipped and the next
+ * ranked model is tried — so the block matches what the plugin would write; the
+ * ranking table above stays the honest raw ranking. The thinking suffix follows
+ * the same provider-scoped rule as the plugin's `selectorFor` — the effective
+ * provider's own catalog row must advertise the level (a meta level always
+ * applies). A role with no resolvable model gets a comment placeholder.
  */
 export function formatModelRolesYaml(rankings: Record<string, Ranked[]>, roles: Record<string, RoleDef>, catalog: CatalogEntry[]): string {
   const lines: string[] = [
@@ -251,30 +254,29 @@ export function formatModelRolesYaml(rankings: Record<string, Ranked[]>, roles: 
     "modelRoles:",
   ];
   for (const role of Object.keys(roles)) {
-    const best = rankings[role]?.[0];
-    if (!best) continue;
-    const provider = best.provider ?? "openrouter";
+    const ranked = rankings[role] ?? [];
+    if (ranked.length === 0) continue;
     const suffix = roles[role].thinking;
-    if (provider !== "openrouter") {
-      // A non-OpenRouter provider IS the route: `<provider>/<catalog-id>[:<level>]`,
-      // no `@<slug>`. The level comes from that provider's own offer list.
-      const offer = best.model.providerOffers?.[provider];
-      if (offer === undefined) {
-        lines.push(`  ${role}: # no catalog match for ${best.model.id}`);
-        continue;
+    let line: string | null = null;
+    for (const r of ranked) {
+      const provider = r.provider ?? "openrouter";
+      if (provider !== "openrouter") {
+        // A non-OpenRouter provider IS the route: `<provider>/<catalog-id>[:<level>]`,
+        // no `@<slug>`. The level comes from that provider's own offer list.
+        const offer = r.model.providerOffers?.[provider];
+        if (offer === undefined) continue;
+        const appendSuffix = suffix !== undefined && (META_LEVELS[suffix] === true || offer.thinking.includes(suffix));
+        line = `  ${role}: "${provider}/${offer.catalogId}${appendSuffix ? `:${suffix}` : ""}"`;
+        break;
       }
-      const appendSuffix = suffix !== undefined && (META_LEVELS[suffix] === true || offer.thinking.includes(suffix));
-      lines.push(`  ${role}: "${provider}/${offer.catalogId}${appendSuffix ? `:${suffix}` : ""}"`);
-      continue;
+      const catalogId = resolveProviderVariant(r.model.id, provider, catalog, "billed");
+      if (catalogId === null) continue;
+      const row = catalog.find((c) => c.provider === "openrouter" && c.id === catalogId);
+      const appendSuffix = suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix));
+      line = `  ${role}: "openrouter/${catalogId}${appendSuffix ? `:${suffix}` : ""}"`;
+      break;
     }
-    const catalogId = resolveVariant(best.model.id, catalog, "billed");
-    if (catalogId === null) {
-      lines.push(`  ${role}: # no catalog match for ${best.model.id}`);
-      continue;
-    }
-    const row = catalog.find((c) => c.provider === "openrouter" && c.id === catalogId);
-    const appendSuffix = suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix));
-    lines.push(`  ${role}: "openrouter/${catalogId}${appendSuffix ? `:${suffix}` : ""}"`);
+    lines.push(line ?? `  ${role}: # no catalog match for ${ranked[0].model.id}`);
   }
   return lines.join("\n");
 }

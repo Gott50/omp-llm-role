@@ -187,13 +187,13 @@ focus: website — coverage 141/456 (30.9%) ok; dispersion 0.993 ok; composition
 # Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).
 # Selectors are <provider>/<id> (openrouter unless a provider priority is set); the omp-llm-role plugin writes this block daily.
 modelRoles:
-  default: # no catalog match for gemini-4-neon
+  default: "openrouter/moonshotai/kimi-k3.1-pro:auto"
   smol: "openrouter/reflection/beam-1.0-501b-a23b:off"
-  slow: # no catalog match for gemini-4-neon
+  slow: "openrouter/moonshotai/kimi-k3.1-pro:high"
   vision: "openrouter/moonshotai/kimi-k3.1-pro:auto"
-  plan: # no catalog match for muse-spark-1.3
+  plan: "openrouter/reflection/beam-1.0-501b-a23b:auto"
   commit: "openrouter/reflection/beam-1.0-501b-a23b:off"
   tiny: "openrouter/reflection/beam-1.0-501b-a23b:off"
   task: "openrouter/deepseek/deepseek-v4.1-flash-1017:auto"
-  advisor: # no catalog match for muse-spark-1.3
+  advisor: "openrouter/reflection/beam-1.0-501b-a23b:auto"
   designer: "openrouter/deepseek/deepseek-v4.1-flash-1017:auto"

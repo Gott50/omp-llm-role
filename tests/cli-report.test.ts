@@ -138,7 +138,18 @@ test("a role's own priority overrides the global list", () => {
   assert.match(yaml, /^ {2}smol: "other\/model-a:off"$/m);
 });
 
-test("a role whose #1 has no catalog match keeps the comment placeholder", () => {
+test("a role whose #1 has no catalog row emits the next resolvable model's selector", () => {
+  // The plugin's candidate building skips a model with no routable catalog row
+  // and picks the next one; the suggested block must match it. model-a (the #1)
+  // has no catalog row, model-b does.
+  const roles: Record<string, RoleDef> = { default: DEFAULT_ROLES.default };
+  const catalog = [entry("openrouter", "org/model-b")];
+  const yaml = formatModelRolesYaml(computeRankings(models(), roles), roles, catalog);
+  assert.match(yaml, /^ {2}default: "openrouter\/org\/model-b:auto"$/m);
+  assert.doesNotMatch(yaml, /no catalog match/);
+});
+
+test("a role with no resolvable model keeps the comment placeholder", () => {
   const roles: Record<string, RoleDef> = { default: DEFAULT_ROLES.default };
   const yaml = formatModelRolesYaml(computeRankings(models(), roles), roles, []);
   assert.match(yaml, /^ {2}default: # no catalog match for model-a$/m);
