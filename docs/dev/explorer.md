@@ -584,11 +584,17 @@ a scraped third-party site, so the DOM is built with
   **provider** column showing each row's effective provider with a compact
   price-source marker (`·ref` for a reference price, `·proxy` for the
   OpenRouter proxy; the gateway's own blend and an exact provider rate carry no
-  marker), and the explain panel adds the provider line and the
-  provider-preference line (`+0.05 (selection only, not in value)`). The
-  Settings panel's `providerPriority`/`providerBonus` inputs and the role
-  editor's overrides feed the same `defForRank` path, so an edited global
-  provider priority re-ranks the table.
+  marker) and, when the row's `providerBonus` is non-zero, the
+  provider-preference term (`flocta·ref +0.05`, trimmed to 3 decimals). The
+  cell's tooltip explains the term per mode: in `value` mode it is a value-unit
+  nudge applied in the selection comparison only (never in the honest `value`);
+  in `cheapest` mode it is a price-fraction discount on the bar-clearing order.
+  The explain
+  panel adds the provider line and the provider-preference line
+  (`+0.05 (selection only, not in value)`). The Settings panel's
+  `providerPriority`/`providerBonus` inputs and the role editor's overrides feed
+  the same `resolvedDefForRank` path, so an edited global provider priority
+  re-ranks the table.
 - **Recompute**: `selectRole` → `renderRoles`/`renderEditor`/`renderExplain` +
   `recompute()`. `recompute()` → `POST /api/rank {role, def, settings:
   state.settingsEdited}` → `state.rows`, `lambda`, `derivedLambda`, `selection`,
