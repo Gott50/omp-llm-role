@@ -103,6 +103,19 @@
         "max": 1,
         "step": 0.001
       },
+      "providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids to prefer, in order (empty = OpenRouter only)",
+        "default": ""
+      },
+      "providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1): bonus/(position+1) in value mode, a price-fraction discount in cheapest mode",
+        "default": 0.05,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "tokenProfile.inputTokens": {
         "type": "number",
         "description": "Input tokens per task for the per-task price (used when the role has no recorded usage)",
@@ -252,6 +265,19 @@
         "type": "number",
         "description": "Quality floor for default in cheapest mode (overrides the global qualityFloor)",
         "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.default.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the default role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.default.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the default role (overrides the global providerBonus)",
+        "default": 0.05,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -427,6 +453,19 @@
         "max": 1,
         "step": 0.001
       },
+      "roles.smol.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the smol role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.smol.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the smol role (overrides the global providerBonus)",
+        "default": 0.05,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.smol.weights.price": {
         "type": "number",
         "description": "Weight of price in the smol quality composite",
@@ -590,6 +629,19 @@
         "max": 1,
         "step": 0.001
       },
+      "roles.slow.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the slow role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.slow.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the slow role (overrides the global providerBonus)",
+        "default": 0.05,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.slow.weights.general": {
         "type": "number",
         "description": "Weight of general in the slow quality composite",
@@ -749,6 +801,19 @@
         "type": "number",
         "description": "Quality floor for vision in cheapest mode (overrides the global qualityFloor)",
         "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.vision.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the vision role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.vision.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the vision role (overrides the global providerBonus)",
+        "default": 0.05,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -924,6 +989,19 @@
         "max": 1,
         "step": 0.001
       },
+      "roles.plan.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the plan role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.plan.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the plan role (overrides the global providerBonus)",
+        "default": 0.05,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.plan.weights.general": {
         "type": "number",
         "description": "Weight of general in the plan quality composite",
@@ -1075,6 +1153,19 @@
         "type": "number",
         "description": "Quality floor for commit in cheapest mode (overrides the global qualityFloor)",
         "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.commit.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the commit role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.commit.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the commit role (overrides the global providerBonus)",
+        "default": 0.05,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -1234,6 +1325,19 @@
         "max": 1,
         "step": 0.001
       },
+      "roles.tiny.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the tiny role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.tiny.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the tiny role (overrides the global providerBonus)",
+        "default": 0.05,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.tiny.weights.price": {
         "type": "number",
         "description": "Weight of price in the tiny quality composite",
@@ -1377,6 +1481,19 @@
         "type": "number",
         "description": "Quality floor for task in cheapest mode (overrides the global qualityFloor)",
         "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.task.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the task role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.task.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the task role (overrides the global providerBonus)",
+        "default": 0.05,
         "min": 0,
         "max": 1,
         "step": 0.001
@@ -1552,6 +1669,19 @@
         "max": 1,
         "step": 0.001
       },
+      "roles.advisor.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the advisor role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.advisor.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the advisor role (overrides the global providerBonus)",
+        "default": 0.05,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
       "roles.advisor.weights.general": {
         "type": "number",
         "description": "Weight of general in the advisor quality composite",
@@ -1703,6 +1833,19 @@
         "type": "number",
         "description": "Quality floor for designer in cheapest mode (overrides the global qualityFloor)",
         "default": 0.9,
+        "min": 0,
+        "max": 1,
+        "step": 0.001
+      },
+      "roles.designer.providerPriority": {
+        "type": "string",
+        "description": "Comma-separated omp provider ids the designer role prefers, in order (empty = the global providerPriority)",
+        "default": ""
+      },
+      "roles.designer.providerBonus": {
+        "type": "number",
+        "description": "Soft provider preference (0–1) for the designer role (overrides the global providerBonus)",
+        "default": 0.05,
         "min": 0,
         "max": 1,
         "step": 0.001
