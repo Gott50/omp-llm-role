@@ -308,10 +308,17 @@ async function main(): Promise<void> {
   // (designer) — which also pulls in their exclusive sources (Design Arena).
   // The plugin settings (the lock file's `omp-llm-role` map) supply the role
   // overrides and the global provider priority, so the report matches the
-  // plugin's run. No lock entry (or invalid settings) keeps today's behavior
-  // exactly: the shipped defaults and an empty priority list.
+  // plugin's run. No lock entry keeps today's behavior exactly: the shipped
+  // defaults and an empty priority list.
   const raw = readPluginSettingsMap();
   const resolved = Object.keys(raw).length > 0 ? resolveSettings(raw) : null;
+  // Invalid settings abort the report, as they abort the plugin's run: a report
+  // built on a half-valid lock would suggest selectors the plugin never writes.
+  if (resolved !== null && resolved.errors.length > 0) {
+    console.error("omp-llm-role settings invalid:");
+    for (const e of resolved.errors) console.error(`  ${e}`);
+    process.exit(1);
+  }
   const settings = resolved?.settings;
   const baseRoles = settings?.roles ?? ROLES;
   const roles = all ? baseRoles : Object.fromEntries(Object.entries(baseRoles).filter(([, d]) => d.enabled !== false));

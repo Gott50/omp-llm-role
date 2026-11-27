@@ -2088,9 +2088,11 @@ test("rankRows: a provider with no own price labels the OpenRouter blend as a pr
   assert.equal(rows[0].priceEff, 1);
 });
 
-test("explainModel: the eligible branch carries the provider and preference lines", () => {
-  const models = [makeModel("alpha", 80, 1, 100)];
-  const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 3 })];
+test("explainModel: the eligible branch prices on the provider basis and carries the lines", () => {
+  // OpenRouter price 5, flocta offer blend (3·1 + 5)/4 = 2: the explain view must
+  // report the provider's price, not the OpenRouter blend.
+  const models = [makeModel("alpha", 80, 5, 100)];
+  const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 5 })];
   enrichThinkingLevels(models, catalog);
   const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
   const ex = explainModel(def, models, "alpha");
@@ -2098,10 +2100,27 @@ test("explainModel: the eligible branch carries the provider and preference line
   assert.equal(ex.provider, "flocta");
   assert.equal(ex.priceSource, "reference");
   assert.equal(ex.providerBonus, 0.05);
+  assert.equal(ex.priceEff, 2);
+  assert.equal(ex.cost.billedPrice, 2);
   assert.equal(ex.providerLine, "flocta (reference price)");
   assert.equal(ex.providerPreferenceLine, "+0.05 (selection only, not in value)");
   // The value decomposition stays honest: the bonus is never folded into value.
   assert.ok(Math.abs(ex.value - (ex.q - ex.cost.penalty)) < 1e-12);
+});
+
+test("explainModel: a model with no OpenRouter price but a provider price is eligible", () => {
+  const model = makeModel("alpha", 80, 5, 100);
+  model.price = null;
+  model.metrics.price = null;
+  const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 5 })];
+  enrichThinkingLevels([model], catalog);
+  const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
+  const ex = explainModel(def, [model], "alpha");
+  if (!ex.eligible) throw new Error(`unexpected ineligible: ${ex.reasons.join(", ")}`);
+  assert.equal(ex.provider, "flocta");
+  assert.equal(ex.priceSource, "reference");
+  assert.equal(ex.priceEff, 2);
+  assert.equal(ex.cost.billedPrice, 2);
 });
 
 test("rankRows and explainModel: an empty priority list reads openrouter with no bonus", () => {

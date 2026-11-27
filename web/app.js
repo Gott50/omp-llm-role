@@ -856,14 +856,41 @@ function keyBadge(key) {
  * price and the OpenRouter proxy do, because they are not the provider's rate. */
 const PRICE_SOURCE_MARK = { openrouter: "", provider: "", reference: "·ref", "openrouter-proxy": "·proxy" };
 
-/** The provider column's tooltip: the effective provider plus what the price
- * basis actually is. The server owns the source; the client only explains it. */
+/** The provider-preference term, trimmed to 3 decimals: a decayed bonus
+ * (`providerBonus / (index + 1)`, e.g. 0.05/3) would otherwise print a 17-digit
+ * float in a compact cell. */
+function fmtBonus(value) {
+  return Number(value.toFixed(3));
+}
+
+/** The provider cell's text: the effective provider, the price-source marker,
+ * and the soft preference term when non-zero (spec #116). A zero bonus renders
+ * exactly as before. */
+function providerCellText(row) {
+  const mark = PRICE_SOURCE_MARK[row.priceSource] || "";
+  const bonus = row.providerBonus > 0 ? " +" + fmtBonus(row.providerBonus) : "";
+  return row.provider + mark + bonus;
+}
+
+/** The provider column's tooltip: the effective provider, what the price basis
+ * actually is, and — when the row carries a preference — how the term applies in
+ * the active selection mode. The server owns the source and the mode; the client
+ * only explains them. */
 function providerTip(row) {
   const source = row.priceSource;
-  if (source === "reference") return "provider " + row.provider + " — reference price: omp's hydration of the model's list price, not the provider's own rate";
-  if (source === "openrouter-proxy") return "provider " + row.provider + " — OpenRouter proxy: the provider has no own price, so the OpenRouter blend is used as a labelled proxy";
-  if (source === "provider") return "provider " + row.provider + " — the provider's own catalog price";
-  return "provider " + row.provider + " — OpenRouter price: the model's own standard-route blend (3:1 in:out)";
+  let text;
+  if (source === "reference") text = "provider " + row.provider + " — reference price: omp's hydration of the model's list price, not the provider's own rate";
+  else if (source === "openrouter-proxy") text = "provider " + row.provider + " — OpenRouter proxy: the provider has no own price, so the OpenRouter blend is used as a labelled proxy";
+  else if (source === "provider") text = "provider " + row.provider + " — the provider's own catalog price";
+  else text = "provider " + row.provider + " — OpenRouter price: the model's own standard-route blend (3:1 in:out)";
+  if (row.providerBonus > 0) {
+    const mode = state.selection?.mode;
+    const term = mode === "cheapest"
+      ? "the provider preference is a price-fraction discount on the bar-clearing order"
+      : "the provider preference is a value-unit nudge applied in the selection comparison only (never in the honest value)";
+    text += " · +" + fmtBonus(row.providerBonus) + " — " + term;
+  }
+  return text;
 }
 
 function renderTable() {
@@ -909,7 +936,7 @@ function renderTable() {
         el("td", { class: "star", text: r.frontier ? "★" : "" }),
         el("td", { class: "model", text: r.name }),
         el("td", { class: "org", text: r.org }),
-        el("td", { class: "provider", "data-tip": providerTip(r), text: r.provider + (PRICE_SOURCE_MARK[r.priceSource] || "") }),
+        el("td", { class: "provider", "data-tip": providerTip(r), text: providerCellText(r) }),
         el("td", { class: "key" }, keyBadge(r.key)),
         el("td", { class: "num", text: fmt(r.value, 3) }),
         el("td", { class: "num", text: fmt(r.q, 3) }),

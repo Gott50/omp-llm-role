@@ -178,3 +178,12 @@ test("currentRankingId leaves a bare selector alone", () => {
   assert.equal(currentRankingId("deepseek-v4.1-flash", known), "deepseek-v4.1-flash");
   assert.equal(currentRankingId("deepseek-v4.1-flash:high", known), "deepseek-v4.1-flash");
 });
+
+test("currentRankingId's known-provider strip is identity-preserving for the ranking id", () => {
+  // rankingIdOf takes the last path segment, so stripping a known provider
+  // prefix and not stripping it normalize to the same ranking id today. The
+  // parameter exists so a future path-keeping identity can tell a known
+  // provider from a hand-written prefix.
+  assert.equal(currentRankingId("flocta/x:high", new Set(["flocta"])), "x");
+  assert.equal(currentRankingId("flocta/x:high"), "x");
+});

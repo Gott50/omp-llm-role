@@ -33,7 +33,7 @@
 
 import { filterCatalog, pruneRoutesToAllowed, resolveProviderVariant, resolveVariant, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
-import { providerOrder } from "../provider-priority.ts";
+import { effectiveProvider, providerOffersFor, providerOrder } from "../provider-priority.ts";
 
 /** Which dataset the explorer ranks: the raw fetch, or the pool the updater writes from. */
 export type PoolMode = "raw" | "as-written";
@@ -51,18 +51,6 @@ export type PoolInputs = {
   /** The scope's global `providerPriority` (spec #116). Empty = today's pool. */
   providerPriority: string[];
 };
-
-/** The model's effective provider in the pool: the first prioritized provider
- * that offers it, else `openrouter` (the implicit last resort). Mirrors
- * `effectiveProvider` but resolves against the catalog rather than the
- * enrichment-attached offers, so the pool is pure and order-independent. */
-function effectiveProviderInPool(modelId: string, order: readonly string[], catalog: readonly CatalogEntry[], tier: "billed" | "free"): string {
-  for (const provider of order) {
-    if (provider === "openrouter") return "openrouter";
-    if (resolveProviderVariant(modelId, provider, catalog, tier) !== null) return provider;
-  }
-  return "openrouter";
-}
 
 /** The as-written pool: `rank` with the catalog/tier gate, the
  * allowed-providers prune, and the keyed-catalog prune applied. `tier: "none"`
@@ -85,9 +73,14 @@ export function asWrittenPool(rank: RankData, inputs: PoolInputs): RankData {
   const routed = pruneRoutesToAllowed(gated, allowed).models;
   const availability = inputs.availability;
   // The keyed prune is OpenRouter-only: a model whose effective provider is a
-  // prioritized non-OpenRouter provider is not key-blocked.
+  // prioritized non-OpenRouter provider is not key-blocked. The offers are
+  // derived from the catalog on a copy, so the input models are never mutated.
   const models = availability.active
-    ? routed.filter((m) => effectiveProviderInPool(m.id, order, inputs.catalog, t) !== "openrouter" || !availability.blocked.has(m.id))
+    ? routed.filter(
+        (m) =>
+          effectiveProvider({ ...m, providerOffers: providerOffersFor(m, inputs.catalog, order) }, order) !== "openrouter" ||
+          !availability.blocked.has(m.id),
+      )
     : routed;
   return { ...rank, models };
 }
