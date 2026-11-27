@@ -16,7 +16,8 @@
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { autoPinApplies, computeRankings, endpointFilterDrops, loadRankData, providerPinDrops, rankedRoutes, type RankData } from "./engine.ts";
-import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, pruneRoutesToAllowed, resolveVariant, splitThinkingSuffix, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { currentRankingId, enrichThinkingLevels, fetchAllowedProviders, fetchKeyAvailability, fetchKeyMeta, filterCatalog, probeModel, probeRoute, pruneRoutesToAllowed, resolveProviderVariant, splitThinkingSuffix, tierGate, type CatalogEntry, type KeyAvailability, type KeyMeta, type ProbeVerdict } from "./availability.ts";
+import { getProviderCatalog, providerCatalogCachePath, providerDiscovery, readProviderCatalogCache, refreshProviderCatalog, writeProviderCatalogCache, type ProviderRefresh } from "./provider-catalog.ts";
 import { ConfigEditError, parseConfig, patchConfig, writeConfigAtomic, type ConfigPatch } from "./config-edit.ts";
 import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "./settings.ts";
 import { discoverAgentPins } from "./agent-pins.ts";
@@ -87,6 +88,25 @@ export type Deps = {
    * role was unset); the host decides whether the session still qualifies.
    */
   applySessionModel?(selector: string, previous: string | null): Promise<void>;
+  /**
+   * DI seam like `probeModel`; production defaults to the real
+   * `refreshProviderCatalog` (`omp models refresh <provider>`, best-effort).
+   * The daily run refreshes each prioritized non-OpenRouter provider once per
+   * UTC day (spec #116).
+   */
+  refreshProviderCatalog?(provider: string): Promise<ProviderRefresh>;
+  /**
+   * DI seam like `refreshProviderCatalog`; production defaults to the real
+   * `getProviderCatalog` (`omp models ls --json`, filtered to the provider).
+   * `null` degrades to the session catalog; `[]` means the provider has no rows.
+   */
+  getProviderCatalog?(provider: string): Promise<CatalogEntry[] | null>;
+  /**
+   * DI seam: the daily provider-catalog cache path. Production uses the
+   * repo-root `cache/provider-catalog-fetched-data.json`; tests point it at a
+   * temp dir so parallel test files never share the cache file.
+   */
+  providerCatalogCachePath?: string;
 };
 
 const CONFLICT_RETRIES = 3;
@@ -103,6 +123,19 @@ function mtimeOf(path: string): number {
   } catch {
     return 0; // file absent — writeConfigAtomic accepts a create when it is still absent
   }
+}
+
+/**
+ * The probe-verdict cache key. A non-OpenRouter candidate is keyed by
+ * `<provider>/<catalog-id>`: its catalog id is often the same string as the
+ * OpenRouter catalog id of the same model (`org/model-a`), so a bare key would
+ * let one role's provider pre-seed mark — or overwrite a real "blocked" verdict
+ * for — another role's OpenRouter candidate. OpenRouter keeps the bare catalog
+ * id (the probe's own identity).
+ */
+function verdictKey(c: Candidate): string {
+  const provider = c.ranked.provider ?? "openrouter";
+  return provider === "openrouter" ? c.catalogId : `${provider}/${c.catalogId}`;
 }
 
 function decisionLine(d: Decision): string {
@@ -165,6 +198,47 @@ export function resolveProjectDir(): string | null {
   const projectDir = join(process.cwd(), ".omp");
   const raw = readPluginSettingsMap({ global: join(projectDir, "plugins", "omp-plugins.lock.json"), project: null });
   return Object.keys(raw).length > 0 ? projectDir : null;
+}
+
+/**
+ * The run's catalog: the session catalog with each prioritized non-OpenRouter
+ * provider's rows replaced by the daily fresh read (spec #116).
+ *
+ * Best-effort: a failed refresh or read keeps the session rows and notes why;
+ * nothing here aborts the run. The fresh rows are cached per UTC day, so a
+ * later `/refresh-roles` the same day skips the subprocess. A provider whose
+ * `models.yml` entry has no `discovery` block is noted with the exact snippet
+ * to add (the plugin never writes `models.yml`).
+ */
+async function providerMergedCatalog(prioritized: readonly string[], today: string, deps: Deps, notes: string[]): Promise<CatalogEntry[]> {
+  const catalog = await deps.getCatalog();
+  if (prioritized.length === 0) return catalog;
+  const cachePath = deps.providerCatalogCachePath ?? providerCatalogCachePath();
+  const cached = readProviderCatalogCache(today, cachePath) ?? {};
+  let fetched = false;
+  for (const provider of prioritized) {
+    if (!(provider in cached)) {
+      const refresh = await (deps.refreshProviderCatalog ?? refreshProviderCatalog)(provider);
+      const rows = await (deps.getProviderCatalog ?? getProviderCatalog)(provider);
+      if (rows !== null) {
+        cached[provider] = rows;
+        fetched = true;
+        notes.push(`@${provider}: catalog refreshed (${rows.length} models)`);
+        if (rows.length === 0) notes.push(`@${provider}: no catalog rows — the provider is not used`);
+      } else {
+        const reason = refresh.ok ? "catalog read failed" : (refresh.reason ?? "unknown");
+        notes.push(`@${provider}: catalog refresh failed (${reason}) — using the session catalog`);
+      }
+    }
+    if (providerDiscovery(provider) === "static") {
+      notes.push(`@${provider}: catalog is static — add discovery: { type: openai-models-list } to its models.yml entry`);
+    }
+  }
+  if (fetched) writeProviderCatalogCache(today, cached, cachePath);
+  // The fresh rows replace the session catalog's rows for that provider; every
+  // other provider's session rows stay.
+  const fresh = new Set(Object.keys(cached));
+  return [...catalog.filter((c) => !fresh.has(c.provider)), ...Object.values(cached).flat()];
 }
 
 export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: boolean; dryRun?: boolean; switchMargin?: number }): Promise<RunResult> {
@@ -247,14 +321,20 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       ]);
     }
 
-    const catalog = await deps.getCatalog();
-    const eligible = filterCatalog(catalog, tier);
+    const notes: string[] = [];
+    // Provider priority (spec #116): each prioritized non-OpenRouter provider's
+    // catalog is refreshed once per UTC day and its fresh rows replace the
+    // session catalog's rows for that provider. Best-effort — a failed refresh
+    // or read degrades to the session catalog with a note.
+    const prioritized = [...new Set([...settings.providerPriority, ...Object.values(settings.roles).flatMap((d) => d.providerPriority ?? [])])].filter((p) => p !== "openrouter");
+    const mergedCatalog = await providerMergedCatalog(prioritized, today, deps, notes);
+    const eligible = filterCatalog(mergedCatalog, tier);
     // Keyed-catalog availability: fetched once per run and shared
     // across roles. Never throws — an unavailable allowlist degrades to the
     // probe walk with no abort path.
     const availability = await (deps.getKeyAvailability?.(token) ?? fetchKeyAvailability(token));
     const rowById = new Map(eligible.map((c) => [c.id, c]));
-    enrichThinkingLevels(rank.models, catalog);
+    enrichThinkingLevels(rank.models, mergedCatalog);
 
     let configText = "";
     try {
@@ -272,7 +352,6 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
     // whitelist is otherwise invisible to /api/v1/key and the catalog
     // endpoints.
     const decisions: Decision[] = [];
-    const notes: string[] = [];
     // Per-run `switchMargin` override (spec #99, `/refresh-roles --no-margin`):
     // it never reaches the lock file, the state or `resolveSettings` (which still
     // validates the configured value). A non-finite override is ignored, so the
@@ -331,8 +410,15 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       const rankings = computeRankings(rank.models, { [role]: def });
       const candidates: Candidate[] = [];
       for (const ranked of rankings[role] ?? []) {
-        const catalogId = resolveVariant(ranked.model.id, eligible, tier);
+        const catalogId = resolveProviderVariant(ranked.model.id, ranked.provider ?? "openrouter", mergedCatalog, tier);
         if (catalogId !== null) candidates.push({ ranked, catalogId });
+      }
+      // A non-OpenRouter candidate is availability-verified by catalog
+      // membership (the daily snapshot), not by a probe: the probe walk and the
+      // route probe are OpenRouter-only. Pre-seeding "ok" keeps it out of the
+      // probe request path while the walk still sees it as clean.
+      for (const c of candidates) {
+        if ((c.ranked.provider ?? "openrouter") !== "openrouter") probeVerdicts.set(verdictKey(c), "ok");
       }
       if (candidates.length === 0) {
         // A pin that matches no route must never silently unpin: leave the role
@@ -347,7 +433,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       }
 
       const currentSelector = current.modelRoles[role] ?? null;
-      const currentId = currentSelector === null ? null : currentRankingId(currentSelector);
+      const currentId = currentSelector === null ? null : currentRankingId(currentSelector, new Set(mergedCatalog.map((c) => c.provider)));
       const currentIdx = currentId === null ? -1 : candidates.findIndex((c) => c.ranked.model.id === currentId);
 
       // Keyed-catalog fast path: when the account's OpenRouter
@@ -357,10 +443,16 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // "blocked" verdict) is load-bearing: the budget counts candidates
       // *examined*, so a pre-seeded blocked candidate would still consume it
       // and reproduce the all-blocked-pool failure this path exists to fix.
-      const keyBlocked = (c: Candidate) => availability.active && availability.blocked.has(c.ranked.model.id);
+      // The keyed-catalog prune is OpenRouter-only: `availability.blocked` is
+      // the OpenRouter keyed set, so a model offered by a non-OpenRouter
+      // provider must not be pruned by it (spec #116).
+      const keyBlocked = (c: Candidate) => (c.ranked.provider ?? "openrouter") === "openrouter" && availability.active && availability.blocked.has(c.ranked.model.id);
       if (availability.active) {
         for (const c of candidates) {
-          if (availability.allowed.has(c.ranked.model.id)) probeVerdicts.set(c.catalogId, "ok");
+          // `availability.allowed` is the OpenRouter keyed set: a non-OpenRouter
+          // candidate is not classified by it (and its bare catalog id could
+          // collide with an OpenRouter candidate's).
+          if ((c.ranked.provider ?? "openrouter") === "openrouter" && availability.allowed.has(c.ranked.model.id)) probeVerdicts.set(verdictKey(c), "ok");
         }
       }
       const keyBlockedCount = candidates.filter(keyBlocked).length;
@@ -387,11 +479,13 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       let cleanAfterCurrent = 0;
       for (const idx of order) {
         if (probed.length >= PROBE_BUDGET) break;
-        const id = candidates[idx].catalogId;
-        let verdict = probeVerdicts.get(id);
+        const candidate = candidates[idx];
+        const id = candidate.catalogId;
+        const key = verdictKey(candidate);
+        let verdict = probeVerdicts.get(key);
         if (verdict === undefined) {
           verdict = await probe(token, id);
-          probeVerdicts.set(id, verdict);
+          probeVerdicts.set(key, verdict);
         }
         probed.push(idx);
         if (verdict === "blocked") {
@@ -400,11 +494,11 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
           cleanCount++;
           if (currentWalkIdx >= 0 && idx > currentWalkIdx) cleanAfterCurrent++;
         }
-        const currentClean = currentWalkIdx >= 0 && probeVerdicts.get(candidates[currentWalkIdx].catalogId) !== "blocked";
+        const currentClean = currentWalkIdx >= 0 && probeVerdicts.get(verdictKey(candidates[currentWalkIdx])) !== "blocked";
         if (cleanCount >= target && (!currentClean || cleanAfterCurrent >= settings.fallbackChainDepth)) break;
       }
       const pool = probed
-        .filter((idx) => probeVerdicts.get(candidates[idx].catalogId) !== "blocked")
+        .filter((idx) => probeVerdicts.get(verdictKey(candidates[idx])) !== "blocked")
         .sort((a, b) => a - b)
         .map((idx) => candidates[idx]);
       if (pool.length === 0) {
@@ -439,11 +533,12 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         // count.
         let probesSpent = 0;
         for (const c of ordered) {
-          let verdict = probeVerdicts.get(c.catalogId);
+          const key = verdictKey(c);
+          let verdict = probeVerdicts.get(key);
           if (verdict === undefined) {
             if (probesSpent >= PROBE_BUDGET) break;
             verdict = await probe(token, c.catalogId);
-            probeVerdicts.set(c.catalogId, verdict);
+            probeVerdicts.set(key, verdict);
             probesSpent++;
           }
           if (verdict !== "blocked") {
@@ -458,7 +553,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // — a probe-blocked incumbent is not in the pool at all, and cheapest mode
       // must not keep a model the account cannot run. The walk probes the
       // incumbent first, so a non-key-blocked incumbent's verdict is known here.
-      const inputs = ladderInputs({ mode, settings: hysteresis, usable, pool, currentId, ordered, pick, clean: (c) => probeVerdicts.get(c.catalogId) !== "blocked" });
+      const inputs = ladderInputs({ mode, settings: hysteresis, usable, pool, currentId, ordered, pick, clean: (c) => probeVerdicts.get(verdictKey(c)) !== "blocked" });
       if (inputs === null) {
         notes.push(`@${role}: no probe-clean candidate at or above the bar (key-blocked: ${keyBlockedCount}) — role untouched`);
         continue;
@@ -488,7 +583,8 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // usable (a transient blip must never unpin a role), and a pool with no
       // clean candidate drops the pin: the selector stays bare and OpenRouter
       // routes the request itself instead of 404ing on an unroutable `@<slug>`.
-      const autoRoutes = autoPinApplies(def) ? rankedRoutes(chosen.ranked.model, def) : [];
+      // A non-OpenRouter provider IS the route: no `@<slug>`, no auto-pin.
+      const autoRoutes = (chosen.ranked.provider ?? "openrouter") === "openrouter" && autoPinApplies(def) ? rankedRoutes(chosen.ranked.model, def) : [];
       // No gate-passing route means nothing to pin and nothing to drop: the bare
       // selector is default routing, not a dropped pin.
       const hasAutoRoutes = autoRoutes.length > 0;
@@ -543,7 +639,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // catalog but not for this key). An unprobed candidate stays: the chain's
       // deeper entries are no longer required to be probe-verified.
       if (settings.writeFallbackChains) {
-        chainPlanByRole[role] = chainPlanFor({ role, chosen, candidates, selector: parts, def, keep: (c) => !keyBlocked(c) && probeVerdicts.get(c.catalogId) !== "blocked" }).plan;
+        chainPlanByRole[role] = chainPlanFor({ role, chosen, candidates, selector: parts, def, keep: (c) => !keyBlocked(c) && probeVerdicts.get(verdictKey(c)) !== "blocked" }).plan;
       }
     }
 
@@ -562,7 +658,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       keepKeys.push(splitThinkingSuffix(sel).base);
     }
     const plans = settings.writeFallbackChains ? decisions.map((d) => ({ role: d.role, plan: chainPlanByRole[d.role] })) : [];
-    const { chainUpserts, chainPrunes } = buildChains({ plans, settings, rowById, keepKeys, writtenKeys: state.pluginWrittenChainKeys });
+    const { chainUpserts, chainPrunes } = buildChains({ plans, settings, rowById, keepKeys, writtenKeys: state.pluginWrittenChainKeys, tier });
     // The chain keys the plugin now owns: every written chain key plus the keys
     // of the roles it left untouched — the same set `buildChains` prunes against.
     const referenced = new Set<string>([...plans.map((p) => p.plan.key), ...keepKeys]);
