@@ -402,8 +402,10 @@ rule: `selection` (`"value"` default, or
 overrides the global. The rule and its math are in scoring.md, *Selection rule —
 the cheapest model above the bar*; this section is the write path's view.
 
-`"value"` mode (the default) is unchanged: the pool leader is the value leader
-and the hysteresis ladder is `switchMargin`-first. `"cheapest"` mode replaces the
+`"value"` mode (the default) is unchanged apart from the provider bonus: the
+challenger is the **effective-value leader** (`value + providerBonus`) and the
+hysteresis ladder is `switchMargin`-first on the effective values; with a zero
+bonus it reduces to the value leader. `"cheapest"` mode replaces the
 objective with the cheapest candidate at or above `qualityFloor × anchor.q`
 (anchor = the pool's highest-`q` candidate). The decision table itself lives
 there (a fact has one home); the write-path-specific facts are:
