@@ -8,6 +8,16 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The CLI report's suggested `modelRoles` follows the provider priority** —
+  `node src/cli/llm-role-rank.ts` reads the plugin settings, so each role's #1
+  is written with the effective provider's selector (`<provider>/<id>` for a
+  prioritized non-OpenRouter provider, `openrouter/<id>` otherwise) and the
+  role's thinking level (`:level`) is appended when the effective provider's
+  catalog row advertises it. Invalid plugin settings now abort the report with
+  the errors on stderr instead of printing a block built on a half-valid lock.
+
 ## [1.6.0] - 2026-10-25
 
 ### Added

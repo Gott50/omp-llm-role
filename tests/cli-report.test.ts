@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { enrichThinkingLevels, type CatalogEntry } from "../src/availability.ts";
 import { computeRankings, type Model, type RoleDef } from "../src/engine.ts";
 import { formatModelRolesYaml } from "../src/cli/llm-role-rank.ts";
@@ -45,8 +47,9 @@ function report(settingsMap: Record<string, unknown>, models: Model[], catalog: 
   return formatModelRolesYaml(computeRankings(models, settings.roles), settings.roles, catalog);
 }
 
-/** The pre-#116 report: shipped defaults, no settings, no provider offers. */
-function legacyReport(models: Model[], catalog: CatalogEntry[]): string {
+/** The report with no plugin settings: the shipped defaults, no provider
+ * priority (the CLI's no-lock-entry path). */
+function defaultReport(models: Model[], catalog: CatalogEntry[]): string {
   enrichThinkingLevels(models, catalog);
   return formatModelRolesYaml(computeRankings(models, DEFAULT_ROLES), DEFAULT_ROLES, catalog);
 }
@@ -89,8 +92,8 @@ test("a level the provider's offer does not advertise leaves the selector bare",
   const yaml = report({ providerPriority: "flocta" }, models(), catalog);
   assert.match(yaml, /^ {2}slow: "flocta\/model-a"$/m);
   // The same fixture without the priority keeps the OpenRouter suffix.
-  const legacy = legacyReport(models(), catalog);
-  assert.match(legacy, /^ {2}slow: "openrouter\/org\/model-a:high"$/m);
+  const defaults = defaultReport(models(), catalog);
+  assert.match(defaults, /^ {2}slow: "openrouter\/org\/model-a:high"$/m);
 });
 
 test("a model the prioritized provider does not offer stays on OpenRouter", () => {
@@ -103,16 +106,10 @@ test("a model the prioritized provider does not offer stays on OpenRouter", () =
   assert.doesNotMatch(yaml, /flocta\//);
 });
 
-test("an empty priority list produces the exact pre-change YAML", () => {
+test("an empty priority list writes the OpenRouter selectors with the role's level", () => {
   const catalog = [...OPENROUTER, entry("flocta", "model-a", ["high"])];
-  const legacy = legacyReport(models(), catalog);
-  // No lock entry at all, and an explicit empty list, both match the old output.
-  assert.equal(report({}, models(), catalog), legacy);
-  assert.equal(report({ providerPriority: "" }, models(), catalog), legacy);
-  // The header is provider-neutral (issue #116); every selector line is unchanged.
-  assert.equal(
-    legacy,
-    [
+  // No lock entry at all, and an explicit empty list, both produce this block.
+  const expected = [
       "# Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).",
       "# Selectors are <provider>/<id> (openrouter unless a provider priority is set); the omp-llm-role plugin writes this block daily.",
       "modelRoles:",
@@ -125,8 +122,11 @@ test("an empty priority list produces the exact pre-change YAML", () => {
       '  tiny: "openrouter/org/model-a:off"',
       '  task: "openrouter/org/model-a:auto"',
       '  advisor: "openrouter/org/model-a:auto"',
-    ].join("\n"),
-  );
+    ].join("\n");
+  assert.equal(report({}, models(), catalog), expected);
+  assert.equal(report({ providerPriority: "" }, models(), catalog), expected);
+  // The no-settings path (the shipped defaults) writes the same block.
+  assert.equal(defaultReport(models(), catalog), expected);
 });
 
 test("a role's own priority overrides the global list", () => {
@@ -140,4 +140,21 @@ test("a role whose #1 has no catalog match keeps the comment placeholder", () =>
   const roles: Record<string, RoleDef> = { default: DEFAULT_ROLES.default };
   const yaml = formatModelRolesYaml(computeRankings(models(), roles), roles, []);
   assert.match(yaml, /^ {2}default: # no catalog match for model-a$/m);
+});
+
+test("invalid plugin settings abort the report with the errors on stderr", () => {
+  // The CLI reads the lock file from $HOME; a throwaway HOME carries an invalid
+  // `providerPriority` (a selector delimiter), which must abort before any fetch.
+  const home = mkdtempSync(join(tmpdir(), "llm-role-cli-home-"));
+  const plugins = join(home, ".omp", "plugins");
+  mkdirSync(plugins, { recursive: true });
+  writeFileSync(
+    join(plugins, "omp-plugins.lock.json"),
+    JSON.stringify({ settings: { "omp-llm-role": { providerPriority: "flocta@x" } } }),
+  );
+  const cli = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "cli", "llm-role-rank.ts");
+  const res = spawnSync(process.execPath, [cli], { env: { ...process.env, HOME: home }, encoding: "utf8" });
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /^omp-llm-role settings invalid:\n {2}providerPriority: /m);
+  assert.equal(res.stdout, "");
 });
