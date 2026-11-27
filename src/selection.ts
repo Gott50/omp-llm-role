@@ -177,6 +177,35 @@ export function incumbentOnProvider(model: Model, def: RoleDef, provider: string
 }
 
 /**
+ * The incumbent candidate on the provider its current selector names, or null
+ * when there is no current selector, the model is not in the usable pool, or the
+ * incumbent is not usable (`clean`). The run passes the keyed + probe verdict;
+ * the preview passes the keyed verdict only (it is probe-optimistic).
+ *
+ * One shared construction so the run and the preview cannot drift: a
+ * key-blocked OpenRouter incumbent is not kept by either.
+ */
+export function incumbentCandidate(input: {
+  currentSelector: string | null;
+  currentId: string | null;
+  usable: readonly Candidate[];
+  def: RoleDef;
+  catalog: readonly CatalogEntry[];
+  tier: "billed" | "free";
+  clean: (c: Candidate) => boolean;
+}): Candidate | null {
+  if (input.currentId === null) return null;
+  const poolCurrent = input.usable.find((c) => c.ranked.model.id === input.currentId) ?? null;
+  if (poolCurrent === null) return null;
+  const currentProvider = input.currentSelector === null ? null : providerOf(input.currentSelector);
+  if (currentProvider === null || (poolCurrent.ranked.provider ?? "openrouter") === currentProvider) {
+    return input.clean(poolCurrent) ? poolCurrent : null;
+  }
+  const incumbent = incumbentOnProvider(poolCurrent.ranked.model, input.def, currentProvider, input.catalog, input.tier);
+  return incumbent !== null && input.clean(incumbent) ? incumbent : null;
+}
+
+/**
  * The per-mode inputs to the shared ladder: the challenger, the incumbent and
  * the two switch predicates. `null` when the cheapest mode has no pick (every
  * bar-clearing candidate was probe-blocked, or the probe budget ran out).
@@ -661,14 +690,20 @@ export function previewSelection(input: {
     // when the provider matches, else the model re-ranked on the selector's
     // provider — so a provider change is a normal switch (US 29), not a
     // `kept-eligible` rewrite with no margin check.
-    const currentProvider = currentSelector === null ? null : providerOf(currentSelector);
-    const poolCurrent = currentId === null ? null : usable.find((c) => c.ranked.model.id === currentId) ?? null;
-    const currentEntry =
-      poolCurrent === null
-        ? null
-        : currentProvider === null || (poolCurrent.ranked.provider ?? "openrouter") === currentProvider
-          ? poolCurrent
-          : incumbentOnProvider(poolCurrent.ranked.model, def, currentProvider, providerCatalog, tier);
+    const currentEntry = incumbentCandidate({
+      currentSelector,
+      currentId,
+      usable,
+      def,
+      catalog: providerCatalog,
+      tier,
+      // Probe-optimistic: only the keyed verdict applies (a key-blocked
+      // OpenRouter incumbent is not kept).
+      clean: (c) => {
+        const p = c.ranked.provider ?? "openrouter";
+        return !(p === "openrouter" && availability.active && availability.blocked.has(c.ranked.model.id));
+      },
+    });
     // The cheapest mode's bar-clearing list: the rule's pool is the role's
     // usable candidate set (see `runUpdater`) — the catalog/tier gate and the
     // allowed-providers prune are baked into `rank.models`, and the keyed-catalog

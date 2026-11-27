@@ -23,8 +23,7 @@ import { PLUGIN_SETTINGS_PATH, projectLockPath, readPluginSettingsMap, resolveSe
 import { discoverAgentPins } from "./agent-pins.ts";
 import { registerProject } from "./project-registry.ts";
 import { agentDir, acquireLock, appendHistory, loadState, releaseLock, saveState } from "./state.ts";
-import { agentDisablePatch, buildChains, chainPlanFor, cheapestOrder, decide, incumbentOnProvider, ladderInputs, PROBE_BUDGET, selectorFor, type Candidate, type ChainPlan, type Decision, type DecisionReason } from "./selection.ts";
-import { providerOf } from "./provider-priority.ts";
+import { agentDisablePatch, buildChains, chainPlanFor, cheapestOrder, decide, incumbentCandidate, ladderInputs, PROBE_BUDGET, selectorFor, type Candidate, type ChainPlan, type Decision, type DecisionReason } from "./selection.ts";
 
 // The decision core lives in `src/selection.ts` (spec #109) so the explorer's
 // preview and the run share one implementation; re-exported here so every
@@ -561,16 +560,21 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
       // incumbent must not be kept), else the model re-ranked on the selector's
       // provider so a provider change is a normal switch (US 29). A key-blocked
       // OpenRouter incumbent is not kept.
-      const currentProvider = currentSelector === null ? null : providerOf(currentSelector);
-      const poolCurrent = currentId === null ? null : usable.find((c) => c.ranked.model.id === currentId && probeVerdicts.get(verdictKey(c)) !== "blocked") ?? null;
-      const currentEntry =
-        poolCurrent === null
-          ? null
-          : currentProvider === null || (poolCurrent.ranked.provider ?? "openrouter") === currentProvider
-            ? poolCurrent
-            : currentProvider === "openrouter" && availability.active && availability.blocked.has(poolCurrent.ranked.model.id)
-              ? null
-              : incumbentOnProvider(poolCurrent.ranked.model, def, currentProvider, mergedCatalog, tier);
+      const currentEntry = incumbentCandidate({
+        currentSelector,
+        currentId,
+        usable,
+        def,
+        catalog: mergedCatalog,
+        tier,
+        // The run's verdict: a key-blocked OpenRouter incumbent is not kept, and
+        // a probe-blocked incumbent is not kept.
+        clean: (c) => {
+          const p = c.ranked.provider ?? "openrouter";
+          if (p === "openrouter" && availability.active && availability.blocked.has(c.ranked.model.id)) return false;
+          return probeVerdicts.get(verdictKey(c)) !== "blocked";
+        },
+      });
       const inputs = ladderInputs({ mode, settings: hysteresis, pool, currentEntry, ordered, pick });
       if (inputs === null) {
         notes.push(`@${role}: no probe-clean candidate at or above the bar (key-blocked: ${keyBlockedCount}) — role untouched`);
