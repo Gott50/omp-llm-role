@@ -311,9 +311,10 @@ async function agreement(
   models: Model[],
   configText: string,
   state: StateFixture = {},
-  opts: { catalog?: CatalogEntry[]; deps?: Partial<Deps> } = {},
+  opts: { catalog?: CatalogEntry[]; deps?: Partial<Deps>; availability?: KeyAvailability } = {},
 ) {
   const catalog = opts.catalog ?? makeCatalog(models.map((m) => m.id));
+  const availability = opts.availability ?? NO_FILTER_AVAILABILITY;
   const rank: RankData = { models, fetchedAt: "2026-09-22T00:00:00.000Z", source: "test", orMatched: models.length, orPriced: models.length };
   // One shared `RankData`, enriched once before either call: `runUpdater` enriches
   // in place, so a preview run first on unenriched models would diverge on the
@@ -323,6 +324,7 @@ async function agreement(
   const deps = fakeDeps(models, raw, {
     getRankData: async () => rank,
     getCatalog: async () => catalog,
+    getKeyAvailability: async () => availability,
     probeModel: async () => "ok",
     probeRoute: async () => "ok",
     // Per-test cache path: the provider refresh must never touch the repo cache.
@@ -336,7 +338,7 @@ async function agreement(
       rank,
       eligible: filterCatalog(catalog, "billed"),
       catalog,
-      availability: NO_FILTER_AVAILABILITY,
+      availability,
       currentSelectors: parseConfig(readFileSync(join(dir, "config.yml"), "utf8")).modelRoles,
       state: {
         managedRoles: state.managedRoles ?? [],
@@ -543,4 +545,27 @@ test("agreement: a provider bonus promotes a lower-value model and bestValue fol
   assert.equal(result.decisions[0].to, "flocta/org/model-b:auto");
   assert.equal(result.decisions[0].bestValue, modelB.value);
   assert.equal(preview.decisions[0].bestValue, modelB.value);
+});
+
+test("agreement: a key-blocked OpenRouter incumbent is adopted away from, not kept", async () => {
+  // model `x` is key-blocked on OpenRouter; its effective provider is flocta
+  // (blend 4.5 vs OpenRouter 5). The incumbent `openrouter/org/x` is not usable,
+  // so both the run and the preview adopt the flocta challenger.
+  const models = [makeModel("x", 90, 5, 100)];
+  const flocta = [{ ...providerCatalog("flocta", ["x"])[0], cost: { input: 4.5, output: 4.5 } }];
+  const catalog = [...makeCatalog(["x"]), ...flocta];
+  const raw = onlyDefault({ providerPriority: "flocta", providerBonus: 0.01, switchMargin: 0.5 });
+  const { result, preview } = await agreement(raw, models, 'modelRoles:\n  default: "openrouter/org/x"\n', {}, {
+    catalog,
+    availability: availability(["x"], []),
+    deps: {
+      getProviderCatalog: async () => flocta,
+      refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    },
+  });
+  assertAgrees(result, preview);
+  assert.equal(result.decisions[0].reason, "adopted");
+  assert.equal(result.decisions[0].to, "flocta/org/x:auto");
+  assert.equal(preview.decisions[0].reason, "adopted");
+  assert.equal(preview.decisions[0].to, "flocta/org/x:auto");
 });
