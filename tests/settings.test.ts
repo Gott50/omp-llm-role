@@ -103,10 +103,17 @@ test("no flag is a no-op: resolved roles equal the shipped defs", () => {
   const { settings, errors } = resolveSettings({});
   assert.deepEqual(errors, []);
   // The resolved set drops shipped-disabled roles (designer), so compare the
-  // surviving key set and each def byte-for-byte against DEFAULT_ROLES.
+  // surviving key set and each def byte-for-byte against DEFAULT_ROLES, plus
+  // the provider knobs every role inherits from the global defaults.
   const expectedNames = Object.keys(DEFAULT_ROLES).filter((n) => DEFAULT_ROLES[n].enabled !== false);
   assert.deepEqual(Object.keys(settings.roles).sort(), expectedNames.sort());
-  for (const [name, def] of Object.entries(settings.roles)) assert.deepEqual(def, DEFAULT_ROLES[name]);
+  for (const [name, def] of Object.entries(settings.roles)) {
+    assert.deepEqual(def, {
+      ...DEFAULT_ROLES[name],
+      providerPriority: DEFAULT_SETTINGS.providerPriority,
+      providerBonus: DEFAULT_SETTINGS.providerBonus,
+    });
+  }
   assert.deepEqual(settings.features, {});
 });
 
@@ -306,4 +313,125 @@ test("globalSettingsOf projects exactly the global keys (no roles)", () => {
   // The two maps are copies: mutating the projection cannot reach the resolved settings.
   global.features.costCap = false;
   assert.equal(settings.features.costCap, true);
+});
+
+test("providerPriority accepts a comma-separated string or an array, defaulting to []", () => {
+  const unset = resolveSettings({});
+  assert.deepEqual(unset.errors, []);
+  assert.deepEqual(unset.settings.providerPriority, []);
+
+  const fromString = resolveSettings({ providerPriority: "flocta, openrouter" });
+  assert.deepEqual(fromString.errors, []);
+  assert.deepEqual(fromString.settings.providerPriority, ["flocta", "openrouter"]);
+
+  const fromArray = resolveSettings({ providerPriority: ["flocta", "openrouter"] });
+  assert.deepEqual(fromArray.errors, []);
+  assert.deepEqual(fromArray.settings.providerPriority, ["flocta", "openrouter"]);
+
+  const empty = resolveSettings({ providerPriority: "" });
+  assert.deepEqual(empty.errors, []);
+  assert.deepEqual(empty.settings.providerPriority, []);
+});
+
+test("providerBonus defaults to 0.05 and accepts the [0, 1] bounds", () => {
+  const unset = resolveSettings({});
+  assert.deepEqual(unset.errors, []);
+  assert.equal(unset.settings.providerBonus, 0.05);
+  for (const value of [0, 0.25, 1]) {
+    const { settings, errors } = resolveSettings({ providerBonus: value });
+    assert.deepEqual(errors, []);
+    assert.equal(settings.providerBonus, value);
+  }
+});
+
+test("a per-role providerPriority/providerBonus wins over the global one", () => {
+  const { settings, errors } = resolveSettings({
+    providerPriority: "flocta, openrouter",
+    providerBonus: 0.2,
+    "roles.default.providerPriority": "openrouter, flocta",
+    "roles.default.providerBonus": 0.5,
+  });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(settings.roles.default.providerPriority, ["openrouter", "flocta"]);
+  assert.equal(settings.roles.default.providerBonus, 0.5);
+  // The global values stay on the resolved settings for the explorer.
+  assert.deepEqual(settings.providerPriority, ["flocta", "openrouter"]);
+  assert.equal(settings.providerBonus, 0.2);
+});
+
+test("a role that does not set the provider knobs inherits the global ones", () => {
+  const { settings, errors } = resolveSettings({ providerPriority: "flocta", providerBonus: 0.3 });
+  assert.deepEqual(errors, []);
+  for (const [name, def] of Object.entries(settings.roles)) {
+    assert.deepEqual(def.providerPriority, ["flocta"], `role ${name} did not inherit the global priority`);
+    assert.equal(def.providerBonus, 0.3, `role ${name} did not inherit the global bonus`);
+  }
+  // The inherited list is a copy: mutating one role cannot reach the global.
+  settings.roles.default.providerPriority?.push("openrouter");
+  assert.deepEqual(settings.providerPriority, ["flocta"]);
+});
+
+test("an empty priority list and the default bonus fill every role with the shipped defaults", () => {
+  const { settings, errors } = resolveSettings({});
+  assert.deepEqual(errors, []);
+  for (const [name, def] of Object.entries(settings.roles)) {
+    assert.deepEqual(def.providerPriority, [], `role ${name}`);
+    assert.equal(def.providerBonus, 0.05, `role ${name}`);
+  }
+});
+
+test("resolveSettings rejects a malformed providerPriority", () => {
+  const cases: Array<[unknown, string]> = [
+    [42, "providerPriority: must be a comma-separated string or an array of provider ids, got 42"],
+    [["flocta", 7], 'providerPriority: must be a comma-separated string or an array of provider ids, got ["flocta",7]'],
+    [{ flocta: true }, 'providerPriority: must be a comma-separated string or an array of provider ids, got {"flocta":true}'],
+  ];
+  for (const [bad, expected] of cases) {
+    const { errors } = resolveSettings({ providerPriority: bad });
+    assert.deepEqual(errors, [expected]);
+  }
+});
+
+test("resolveSettings rejects a provider id carrying a selector delimiter", () => {
+  const at = resolveSettings({ providerPriority: "flocta@fp8" });
+  assert.deepEqual(at.errors, ['providerPriority: provider id "flocta@fp8" must be a non-empty string without "@" or ":"']);
+  const colon = resolveSettings({ providerPriority: ["flocta", "openrouter:high"] });
+  assert.deepEqual(colon.errors, ['providerPriority: provider id "openrouter:high" must be a non-empty string without "@" or ":"']);
+});
+
+test("resolveSettings rejects a malformed providerBonus", () => {
+  const cases: Array<[unknown, string]> = [
+    [-0.1, "providerBonus: must be a number in [0, 1], got -0.1"],
+    [1.1, "providerBonus: must be a number in [0, 1], got 1.1"],
+    [Number.NaN, "providerBonus: must be a number in [0, 1], got null"],
+    [Number.POSITIVE_INFINITY, "providerBonus: must be a number in [0, 1], got null"],
+    ["0.5", 'providerBonus: must be a number in [0, 1], got "0.5"'],
+  ];
+  for (const [bad, expected] of cases) {
+    const { errors } = resolveSettings({ providerBonus: bad });
+    assert.deepEqual(errors, [expected]);
+  }
+});
+
+test("resolveSettings rejects malformed per-role provider knobs with the role prefix", () => {
+  const priority = resolveSettings({ "roles.default.providerPriority": 42 });
+  assert.deepEqual(priority.errors, [
+    "role default: providerPriority: must be a comma-separated string or an array of provider ids, got 42",
+  ]);
+  const entry = resolveSettings({ "roles.default.providerPriority": "flocta@fp8" });
+  assert.deepEqual(entry.errors, [
+    'role default: providerPriority: provider id "flocta@fp8" must be a non-empty string without "@" or ":"',
+  ]);
+  const bonus = resolveSettings({ "roles.default.providerBonus": 2 });
+  assert.deepEqual(bonus.errors, ["role default: providerBonus: must be a number in [0, 1], got 2"]);
+});
+
+test("globalSettingsOf carries providerPriority (copied) and providerBonus", () => {
+  const { settings, errors } = resolveSettings({ providerPriority: "flocta, openrouter", providerBonus: 0.3 });
+  assert.deepEqual(errors, []);
+  const global = globalSettingsOf(settings);
+  assert.deepEqual(global.providerPriority, ["flocta", "openrouter"]);
+  assert.equal(global.providerBonus, 0.3);
+  global.providerPriority.push("openrouter");
+  assert.deepEqual(settings.providerPriority, ["flocta", "openrouter"]);
 });

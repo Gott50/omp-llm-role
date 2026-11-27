@@ -16,8 +16,19 @@ import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.t
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
 import { autoPinApplies, BENCHMARK_CHANCE, blendOutputPrice, blendRoutePool, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, routeInputPrice, routeOutputPrice, routePassesEndpointFilters, thinkingAdjustedPrice, type BarSelection, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { effectiveProvider, priceBasisFor, providerOrder, type PriceSource } from "../provider-priority.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 import { type TokenProfile } from "../usage-ledger.ts";
+
+/** Human label for a ranked row's price basis (spec #116): the gateway's own
+ * blend, a provider's reference price, or the OpenRouter blend used as a proxy
+ * when the provider's price is unknown. */
+const PRICE_SOURCE_LABEL: Record<PriceSource, string> = {
+  openrouter: "OpenRouter price",
+  provider: "provider price",
+  reference: "reference price",
+  "openrouter-proxy": "OpenRouter proxy",
+};
 
 // ---------------------------------------------------------------------------
 // Metric metadata (the UI's picklists and formula legends)
@@ -236,6 +247,15 @@ export type RankRow = {
   /** whether the `cheapest` selection's bar excludes this model (its `q` is
    * under the bar). Always false in `value` mode, which has no bar. */
   excludedByBar: boolean;
+  /** the model's effective provider (spec #116): the first prioritized provider
+   * that offers it, else `openrouter`. */
+  provider: string;
+  /** where `priceEff` came from: the gateway blend, a provider reference price,
+   * or the OpenRouter blend as a labelled proxy. */
+  priceSource: PriceSource;
+  /** the soft provider preference for this row's effective provider (0 when the
+   * provider is not listed or is `openrouter`). Never folded into `value`. */
+  providerBonus: number;
 };
 
 /** The availability overlay verdict for one model id: `"usable"` when the keyed
@@ -286,8 +306,13 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], avai
       rank,
       baselineRank: b,
       delta: b == null ? null : b - rank,
-      perTask: profile == null ? null : perTaskPrice(r.model, def, profile)?.total ?? null,
+      // A non-OpenRouter provider's offer carries only the 3:1 blend, not the
+      // input/output split the per-task price needs, so the column is absent.
+      perTask: profile == null || r.provider !== "openrouter" ? null : perTaskPrice(r.model, def, profile)?.total ?? null,
       excludedByBar: good !== null && !good.has(r.model.id),
+      provider: r.provider,
+      priceSource: r.priceSource,
+      providerBonus: r.providerBonus,
     };
   });
 }
@@ -362,6 +387,18 @@ export type Explanation =
        * route or drop the pin, so this is the candidate, not the written pin.
        * Read-only in the UI; a manual `providerPin` overrides it. */
       autoPin: string | null;
+      /** the model's effective provider (spec #116): the first prioritized
+       * provider that offers it, else `openrouter`. */
+      provider: string;
+      /** where `priceEff` came from (see `RankRow.priceSource`). */
+      priceSource: PriceSource;
+      /** the soft provider preference for the effective provider. Applied in the
+       * selection comparison only — never in `value`, `q` or `cost`. */
+      providerBonus: number;
+      /** the provider line the panel renders, e.g. `flocta (reference price)`. */
+      providerLine: string;
+      /** the provider-preference line, e.g. `+0.05 (selection only, not in value)`. */
+      providerPreferenceLine: string;
       role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
       contributions: Contribution[];
       cost: { priceEff: number; billedPrice: number; lambda: number; penalty: number; q: number; value: number };
@@ -393,33 +430,41 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
   const cacheHitRate = def.cacheHitRate ?? 0;
   const em = endpointFilteredModel(model, def.filters, cacheHitRate);
   const eff = em ?? model;
+  // Provider priority (mirrors rankRole): the effective provider, its price
+  // basis, its thinking levels, and the route. A non-OpenRouter provider IS the
+  // route, so it carries no pin and no soft best-route basis.
+  const order = providerOrder(def.providerPriority ?? []);
+  const provider = effectiveProvider(eff, order);
+  const basis = priceBasisFor(eff, order, eff.price);
+  const levels = provider === "openrouter" ? eff.thinkingLevels : eff.providerOffers?.[provider]?.thinking;
   // Soft best-route preference (mirrors rankRole): with no hard pin, a role that
   // prefers a bound route is priced on the model's best route by the role's own
   // value, else on the blend. Never a gate — a model with no candidate route keeps
-  // the blend.
-  const route = roleRoute(model, def);
+  // the blend. A non-OpenRouter provider is the route, so it has no route basis.
+  const route = provider === "openrouter" ? roleRoute(model, def) : null;
   // The model is priced on the soft best route (not a hard pin, not the blend).
-  const ownProvider = pinRoute === null && route !== null;
+  const ownProvider = provider === "openrouter" && pinRoute === null && route !== null;
   // The automatic pin's CANDIDATE route: the model's best route's slug — the
   // first route the updater's walk tries — only when the role prefers a bound
   // route and carries no manual pin. The updater probes that candidate and can
   // pin a later route (or drop the pin entirely), so this is what the walk tries
   // first, not a promise of the written pin. Reuses the already-computed `route`
-  // (the same best route) instead of recomputing it.
-  const autoPin = autoPinApplies(def) ? route?.providerSlug ?? null : null;
-  const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, pinRoute, cacheHitRate) == null);
+  // (the same best route) instead of recomputing it. A non-OpenRouter provider
+  // writes no pin, so it has no candidate.
+  const autoPin = provider === "openrouter" && autoPinApplies(def) ? route?.providerSlug ?? null : null;
+  const missingRequired = def.required.filter((k) => roleMetricValue(eff, k, pinRoute, cacheHitRate, basis.price) == null);
   if (missingRequired.length > 0) reasons.push(`missing required metric(s): ${missingRequired.join(", ")}`);
   if (def.filters?.image && !model.multimodal) reasons.push("role requires image input; model is text-only");
   if (def.providerPin !== undefined && pinRoute === null) reasons.push("no route matches the role's provider pin");
   if (em === null) reasons.push("no standard-tier route satisfies the role's endpoint filters");
-  if (eff.price == null) reasons.push("no billed OpenRouter route");
+  if (basis.price == null) reasons.push("no usable price (no OpenRouter route and no provider price)");
   // maxPriceUsdPerM caps the model's own price basis, never the soft best-route
   // basis (mirrors rankRole): with no hard pin the gate uses the blend price, so
   // the soft basis cannot change eligibility; a hard pin gates its route price.
   const cap = def.filters?.maxPriceUsdPerM ?? 0;
   if (cap > 0) {
-    const capBase = pinRoute !== null ? routeEffectivePrice(pinRoute, cacheHitRate) : eff.price;
-    if (capBase != null && thinkingAdjustedPrice(eff, def, capBase) > cap) reasons.push(`price exceeds the role's maxPriceUsdPerM cap (${cap})`);
+    const capBase = pinRoute !== null ? routeEffectivePrice(pinRoute, cacheHitRate) : basis.price;
+    if (capBase != null && thinkingAdjustedPrice(eff, def, capBase, levels) > cap) reasons.push(`price exceeds the role's maxPriceUsdPerM cap (${cap})`);
   }
   if (reasons.length > 0) return { eligible: false, reasons };
 
@@ -519,10 +564,18 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     priceEff: self.priceEff,
     ownProvider,
     autoPin,
+    provider: self.provider,
+    priceSource: self.priceSource,
+    providerBonus: self.providerBonus,
+    providerLine: `${self.provider} (${PRICE_SOURCE_LABEL[self.priceSource]})`,
+    providerPreferenceLine: `${self.providerBonus > 0 ? "+" : ""}${self.providerBonus} (selection only, not in value)`,
     role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking, cacheHitRate },
     contributions,
-    cost: { priceEff: self.priceEff, billedPrice: route !== null ? routeEffectivePrice(route, cacheHitRate) ?? eff.price : eff.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
-    perTask: profile == null ? null : perTaskPrice(model, def, profile),
+    cost: { priceEff: self.priceEff, billedPrice: route !== null ? routeEffectivePrice(route, cacheHitRate) ?? basis.price : basis.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
+    // The per-task price needs the input/output split, which a non-OpenRouter
+    // provider's offer does not carry (only the 3:1 blend), so it is absent
+    // rather than invented.
+    perTask: profile == null || provider !== "openrouter" ? null : perTaskPrice(model, def, profile),
     gapAbove,
     gapToTop,
     above,

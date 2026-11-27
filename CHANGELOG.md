@@ -8,6 +8,41 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Provider priority: prefer any omp provider, with a soft bonus** — two new
+  settings, `providerPriority` (an ordered list of omp provider ids, global with
+  a per-role override; default `[]`) and `providerBonus` (`0`–`1`, default
+  `0.05`), let the plugin pick models a prioritized provider actually offers,
+  price them on that provider's catalog cost (a `reference` price, or the
+  OpenRouter blend as a labelled `openrouter-proxy` when the provider has no own
+  price), write the effective provider's selector
+  (`<provider>/<catalog-id>[:<level>]` for a non-OpenRouter provider,
+  `openrouter/<catalog-id>[@<slug>]` for the gateway), and build the fallback
+  chain with the same model on its other providers first (omp's `openrouter/*`
+  wildcard where it applies) then the next-best models. The bonus is applied in
+  the **selection comparison only** — `value + providerBonus` in `value` mode,
+  `priceEff × (1 − providerBonus)` in `cheapest` mode — never in `value`/`q`, so
+  the displayed ranking stays honest. Each prioritized non-OpenRouter provider's
+  catalog is refreshed daily through omp (`omp models refresh <provider>` then
+  `omp models ls --json`, cached in `cache/provider-catalog-fetched-data.json`),
+  best-effort with a session-catalog fallback and a note when the provider's
+  `models.yml` entry has no `discovery` block. The explorer's rank table,
+  explain view, preview, Settings panel and role editor, and the CLI report's
+  suggested YAML, surface the effective provider, the price source and the
+  bonus. Opt-in: an empty priority list and a zero bonus leave every selector,
+  chain and ranking byte-identical. (spec #116)
+
+### Changed
+
+- **The CLI report's suggested `modelRoles` follows the provider priority** —
+  `node src/cli/llm-role-rank.ts` reads the plugin settings, so each role's #1
+  is written with the effective provider's selector (`<provider>/<id>` for a
+  prioritized non-OpenRouter provider, `openrouter/<id>` otherwise) and the
+  role's thinking level (`:level`) is appended when the effective provider's
+  catalog row advertises it. Invalid plugin settings now abort the report with
+  the errors on stderr instead of printing a block built on a half-valid lock.
+
 ## [1.6.0] - 2026-10-25
 
 ### Added

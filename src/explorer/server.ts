@@ -96,11 +96,12 @@ export type ExplorerOpts = {
   refresh(): Promise<void>;
   /**
    * The inputs the `as-written` pool ranks with: the omp catalog, the key's
-   * tier, and the account's allowed-providers whitelist (`null` = no whitelist /
-   * harvest failed, which leaves every route in place). Re-derived per call, so
-   * a project's whitelist can never leak into another scope's view.
+   * tier, the account's allowed-providers whitelist (`null` = no whitelist /
+   * harvest failed, which leaves every route in place), and the scope's global
+   * provider priority list (spec #116). Re-derived per call, so a project's
+   * whitelist and priority can never leak into another scope's view.
    */
-  getPoolInputs(): PoolInputs;
+  getPoolInputs(scope: Scope): PoolInputs;
   /**
    * The recorded usage rows the per-task price resolves its token profile from,
    * for the request's active scope — a project scope reads its own
@@ -214,8 +215,8 @@ function activeScope(opts: ExplorerOpts, session: ExplorerSession): Scope {
 /** The dataset the session's pool mode ranks: the raw fetch, or the
  * gated+pruned pool the updater writes from. Applied before ranking, never to
  * the export path (which validates a pin against the raw dataset). */
-function poolRank(opts: ExplorerOpts, session: ExplorerSession, rank: RankData): RankData {
-  return session.poolMode === "as-written" ? asWrittenPool(rank, opts.getPoolInputs()) : rank;
+function poolRank(opts: ExplorerOpts, session: ExplorerSession, rank: RankData, scope: Scope): RankData {
+  return session.poolMode === "as-written" ? asWrittenPool(rank, opts.getPoolInputs(scope)) : rank;
 }
 
 /** The global `features.<id>` flags an edited settings record carries: a flag is
@@ -262,7 +263,7 @@ function bootstrapPayload(opts: ExplorerOpts, session: ExplorerSession, scope: S
   const state = opts.getState(scope);
   // Every count and assessment below describes the pool the user is looking at,
   // so the header's model count matches the table's rows.
-  const rank = poolRank(opts, session, state.rank);
+  const rank = poolRank(opts, session, state.rank, scope);
   // The metric universe the UI may weight: the shipped keys plus any external
   // metric a resolved role weights, with a derived metadata entry for each.
   const external = new Set<string>();
@@ -348,7 +349,7 @@ async function handleRank(req: IncomingMessage, res: ServerResponse, opts: Explo
   if (edited !== undefined && !isRecord(edited)) throw new HttpError(400, "expected { role: string, def: object, settings?: object }");
   const scope = activeScope(opts, session);
   const state = opts.getState(scope);
-  const rank = poolRank(opts, session, state.rank);
+  const rank = poolRank(opts, session, state.rank, scope);
   // The posted def is AUTHORED (flags + explicit keys); expand it with the
   // scope's global flags so the preview matches the resolved baseline
   // (`state.roles[role]`) — otherwise every row's Δ would be a lie. An edited
@@ -403,7 +404,7 @@ async function handleExplain(req: IncomingMessage, res: ServerResponse, opts: Ex
   if (edited !== undefined && !isRecord(edited)) throw new HttpError(400, "expected { role: string, def: object, modelId: string, settings?: object }");
   const scope = activeScope(opts, session);
   const state = opts.getState(scope);
-  const rank = poolRank(opts, session, state.rank);
+  const rank = poolRank(opts, session, state.rank, scope);
   // Same expansion as handleRank: the posted def is authored, the baseline is
   // resolved, so the preview must apply the scope's global flags first — the
   // edited ones when the caller posted them.
@@ -433,7 +434,7 @@ async function handlePreview(req: IncomingMessage, res: ServerResponse, opts: Ex
   // allowed-providers prune, never `poolRank` (which respects the toggle) and
   // never `asWrittenPool` (which would pre-apply the keyed prune the candidate
   // set must apply itself).
-  const pool = opts.getPoolInputs();
+  const pool = opts.getPoolInputs(scope);
   const raw = previewRaw(state.raw, editedSettings, editedRoles);
   const { settings, errors } = resolveSettings(raw);
   const inputs = opts.getPreviewInputs(scope);
@@ -441,6 +442,9 @@ async function handlePreview(req: IncomingMessage, res: ServerResponse, opts: Ex
     settings,
     rank: previewRank(state.rank, pool.allowed),
     eligible: filterCatalog(pool.catalog, pool.tier),
+    // The full catalog (every provider), so a non-OpenRouter candidate resolves
+    // through its provider's rows — `eligible` is OpenRouter-only.
+    catalog: pool.catalog,
     availability: state.availability,
     currentSelectors: inputs.currentSelectors,
     state: inputs.pluginState,

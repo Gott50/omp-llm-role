@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { type KeyAvailability, type ProbeVerdict } from "../src/availability.ts";
+import { enrichCatalogData, type CatalogEntry, type KeyAvailability, type ProbeVerdict } from "../src/availability.ts";
+import { writeProviderCatalogCache } from "../src/provider-catalog.ts";
 import { cardinalMetric, rankedRoutes, rankRole, SUFFIX_LEVELS, thinkingPriceFactor, type Model, type OpenRouterEndpointRecord, type RankData, type RoleDef } from "../src/engine.ts";
 import { startExplorer } from "../src/explorer/boot.ts";
 import { explainModel, inverseCardinal, METRIC_META, perTaskPrice, rankRows } from "../src/explorer/explain.ts";
@@ -30,7 +31,7 @@ function userScopeOpts(lockPath: string, getState: ExplorerOpts["getState"], ext
     getState,
     refresh: async () => {},
     // The default pool: nothing gated, nothing pruned — i.e. the raw dataset.
-    getPoolInputs: () => ({ catalog: [], tier: "billed", allowed: null, availability: NO_AVAILABILITY }),
+    getPoolInputs: () => ({ catalog: [], tier: "billed", allowed: null, availability: NO_AVAILABILITY, providerPriority: [] }),
     // The preview's scope-side inputs: empty by default, so a test that does not
     // exercise the preview needs no fixture.
     getPreviewInputs: () => ({
@@ -1298,7 +1299,7 @@ test("POST /api/pool switches the ranked pool and the bootstrap payload reports 
   const handle = await bootWithState(
     () => PIN_STATE,
     // Only alpha is tier-eligible, so the as-written gate drops beta.
-    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha"]), tier: "billed", allowed: null, availability: NO_AVAILABILITY }) },
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha"]), tier: "billed", allowed: null, availability: NO_AVAILABILITY, providerPriority: [] }) },
   );
   try {
     const before = await getJson(handle.url, "/api/bootstrap");
@@ -1348,7 +1349,7 @@ test("the as-written pool prunes the routes the account cannot use", async () =>
     () => PIN_STATE,
     // The account may only use priceyco, so alpha's cheap route must not lower
     // the price the explorer shows.
-    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["priceyco/fp8"]), availability: NO_AVAILABILITY }) },
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["priceyco/fp8"]), availability: NO_AVAILABILITY, providerPriority: [] }) },
   );
   const priceEffOf = async (id: string): Promise<unknown> => rowOf((await postJson(handle.url, "/api/rank", { role: "tiny", def })).body, id).priceEff;
   try {
@@ -1366,7 +1367,7 @@ test("a null whitelist degrades the as-written pool to the raw dataset", async (
     () => PIN_STATE,
     // The catalog covers both models (so the tier gate drops nothing) and the
     // whitelist harvest failed: no route is pruned.
-    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: null, availability: NO_AVAILABILITY }) },
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: null, availability: NO_AVAILABILITY, providerPriority: [] }) },
   );
   try {
     await postJson(handle.url, "/api/pool", { mode: "as-written" });
@@ -1388,7 +1389,7 @@ test("Export is unaffected by the pool mode", async () => {
   const rank: RankData = { models, fetchedAt: "2026-10-09T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
   const handle = await bootWithState(
     () => ({ rank, roles: DEFAULT_ROLES, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION }),
-    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["cheapco/fp8"]), availability: NO_AVAILABILITY }) },
+    { getPoolInputs: () => ({ catalog: makeCatalog(["alpha", "beta"]), tier: "billed", allowed: new Set(["cheapco/fp8"]), availability: NO_AVAILABILITY, providerPriority: [] }) },
   );
   try {
     await postJson(handle.url, "/api/pool", { mode: "as-written" });
@@ -1667,7 +1668,7 @@ function previewOpts(lockPath: string, over: Partial<ExplorerOpts> = {}): Explor
     {
       // The preview's pool inputs: a real catalog, so the catalog/tier gate
       // inside `previewSelection` has something to resolve against.
-      getPoolInputs: () => ({ catalog: makeCatalog(PREVIEW_MODELS.map((m) => m.id)), tier: "billed", allowed: null, availability: NO_AVAILABILITY }),
+      getPoolInputs: () => ({ catalog: makeCatalog(PREVIEW_MODELS.map((m) => m.id)), tier: "billed", allowed: null, availability: NO_AVAILABILITY, providerPriority: [] }),
       getPreviewInputs: () => ({
         currentSelectors: { previewrole: "openrouter/org/model-b" },
         pluginState: { managedRoles: ["previewrole"], pluginWrittenChainKeys: [], managedDisabledAgents: [] },
@@ -2033,6 +2034,266 @@ test("startExplorer serves the preview from the scope's lock file and config.yml
     // Read-only: neither the lock file nor config.yml changed.
     assert.equal(readFileSync(lockPath, "utf8"), lockBefore);
     assert.equal(readFileSync(join(dir, "config.yml"), "utf8"), configBefore);
+  } finally {
+    await handle.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Provider priority (spec #116, ticket #124): the rank rows' provider fields,
+// the explain provider lines, the preview's provider selector, and the settings
+// payload's new keys.
+// ---------------------------------------------------------------------------
+
+/** A non-OpenRouter provider's catalog rows. The id is `org/<id>` (not
+ * provider-prefixed), so `providerCatalogIdFor` matches the ranking id. A
+ * non-null `cost` makes the provider's price a `reference` basis. */
+function providerCatalog(provider: string, ids: string[], cost: { input: number; output: number } | null = null): CatalogEntry[] {
+  return ids.map((id) => ({
+    provider,
+    id: `org/${id}`,
+    selector: `${provider}/org/${id}`,
+    name: id,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: true,
+    thinking: [],
+    input: ["text"],
+    cost,
+  }));
+}
+
+const PROVIDER_ROLE: RoleDef = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+
+test("rankRows: rows carry the effective provider, price source and bonus", () => {
+  const models = [makeModel("alpha", 80, 1, 100)];
+  const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 3 })];
+  enrichCatalogData(models, catalog);
+  const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
+  const rows = rankRows(def, models, []);
+  assert.equal(rows[0].provider, "flocta");
+  assert.equal(rows[0].priceSource, "reference");
+  assert.equal(rows[0].providerBonus, 0.05);
+  // The provider's reference price is the basis: (3·1 + 3)/4 = 1.5.
+  assert.equal(rows[0].priceEff, 1.5);
+});
+
+test("rankRows: a provider with no own price labels the OpenRouter blend as a proxy", () => {
+  const models = [makeModel("alpha", 80, 1, 100)];
+  const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"])];
+  enrichCatalogData(models, catalog);
+  const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
+  const rows = rankRows(def, models, []);
+  assert.equal(rows[0].provider, "flocta");
+  assert.equal(rows[0].priceSource, "openrouter-proxy");
+  assert.equal(rows[0].priceEff, 1);
+});
+
+test("explainModel: the eligible branch prices on the provider basis and carries the lines", () => {
+  // OpenRouter price 5, flocta offer blend (3·1 + 5)/4 = 2: the explain view must
+  // report the provider's price, not the OpenRouter blend.
+  const models = [makeModel("alpha", 80, 5, 100)];
+  const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 5 })];
+  enrichCatalogData(models, catalog);
+  const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
+  const ex = explainModel(def, models, "alpha");
+  if (!ex.eligible) throw new Error(`unexpected ineligible: ${ex.reasons.join(", ")}`);
+  assert.equal(ex.provider, "flocta");
+  assert.equal(ex.priceSource, "reference");
+  assert.equal(ex.providerBonus, 0.05);
+  assert.equal(ex.priceEff, 2);
+  assert.equal(ex.cost.billedPrice, 2);
+  assert.equal(ex.providerLine, "flocta (reference price)");
+  assert.equal(ex.providerPreferenceLine, "+0.05 (selection only, not in value)");
+  // The value decomposition stays honest: the bonus is never folded into value.
+  assert.ok(Math.abs(ex.value - (ex.q - ex.cost.penalty)) < 1e-12);
+});
+
+test("explainModel: a model with no OpenRouter price but a provider price is eligible", () => {
+  const model = makeModel("alpha", 80, 5, 100);
+  model.price = null;
+  model.metrics.price = null;
+  const catalog = [...makeCatalog(["alpha"]), ...providerCatalog("flocta", ["alpha"], { input: 1, output: 5 })];
+  enrichCatalogData([model], catalog);
+  const def: RoleDef = { ...PROVIDER_ROLE, providerPriority: ["flocta"], providerBonus: 0.05 };
+  const ex = explainModel(def, [model], "alpha");
+  if (!ex.eligible) throw new Error(`unexpected ineligible: ${ex.reasons.join(", ")}`);
+  assert.equal(ex.provider, "flocta");
+  assert.equal(ex.priceSource, "reference");
+  assert.equal(ex.priceEff, 2);
+  assert.equal(ex.cost.billedPrice, 2);
+});
+
+test("rankRows and explainModel: an empty priority list reads openrouter with no bonus", () => {
+  const models = [makeModel("alpha", 80, 1, 100)];
+  enrichCatalogData(models, makeCatalog(["alpha"]));
+  const rows = rankRows(PROVIDER_ROLE, models, []);
+  assert.equal(rows[0].provider, "openrouter");
+  assert.equal(rows[0].priceSource, "openrouter");
+  assert.equal(rows[0].providerBonus, 0);
+  const ex = explainModel(PROVIDER_ROLE, models, "alpha");
+  if (!ex.eligible) throw new Error(`unexpected ineligible: ${ex.reasons.join(", ")}`);
+  assert.equal(ex.providerLine, "openrouter (OpenRouter price)");
+  assert.equal(ex.providerPreferenceLine, "0 (selection only, not in value)");
+});
+
+test("POST /api/preview routes a provider-priority pick to the provider's selector", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-preview-provider-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const catalog = [...makeCatalog(["model-a", "model-b"]), ...providerCatalog("flocta", ["model-a"])];
+  enrichCatalogData(models, catalog);
+  const rank: RankData = { models, fetchedAt: "2026-10-08T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await bootServer(
+    previewOpts(lockPath, {
+      getState: () => ({
+        rank,
+        roles: { previewrole: PREVIEW_ROLE },
+        universe: {},
+        defaults: DEFAULT_ROLES,
+        availability: NO_AVAILABILITY,
+        features: {},
+        selection: NO_SELECTION,
+        settings: PREVIEW_SETTINGS,
+        raw: { roles: { previewrole: PREVIEW_ROLE } },
+      }),
+      getPoolInputs: () => ({ catalog, tier: "billed", allowed: null, availability: NO_AVAILABILITY, providerPriority: ["flocta"] }),
+      getPreviewInputs: () => ({
+        currentSelectors: {},
+        pluginState: { managedRoles: ["previewrole"], pluginWrittenChainKeys: [], managedDisabledAgents: [] },
+        agentPins: [],
+      }),
+    }),
+  );
+  try {
+    const { body } = await postJson(handle.url, "/api/preview", { settings: { providerPriority: "flocta" }, roles: { previewrole: PREVIEW_ROLE } });
+    const decision = decisionOf(body, "previewrole");
+    // The preview resolves the edited global priority into the role and writes
+    // the effective provider's selector — the same `previewSelection` the run uses.
+    assert.equal(decision.to, "flocta/org/model-a");
+  } finally {
+    await handle.close();
+  }
+});
+
+test("the bootstrap settings payload carries the provider priority and bonus", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-settings-provider-"));
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(lockPath, JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: {} }, null, 2));
+  const settings = {
+    authored: { providerPriority: "flocta", providerBonus: 0.1 },
+    resolved: { ...globalSettingsOf(DEFAULT_SETTINGS), providerPriority: ["flocta"], providerBonus: 0.1 },
+    defaults: globalSettingsOf(DEFAULT_SETTINGS),
+  };
+  const handle = await bootServer(
+    userScopeOpts(lockPath, () => ({ rank: PREVIEW_RANK, roles: {}, universe: {}, defaults: DEFAULT_ROLES, availability: NO_AVAILABILITY, features: {}, selection: NO_SELECTION, settings, raw: {} })),
+  );
+  try {
+    const boot = await getJson(handle.url, "/api/bootstrap");
+    assert.ok(isRecord(boot.settings));
+    const resolved = boot.settings.resolved as Record<string, unknown>;
+    assert.deepEqual(resolved.providerPriority, ["flocta"]);
+    assert.equal(resolved.providerBonus, 0.1);
+    const defaults = boot.settings.defaults as Record<string, unknown>;
+    assert.deepEqual(defaults.providerPriority, []);
+    assert.equal(defaults.providerBonus, 0.05);
+  } finally {
+    await handle.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Provider catalog cache (spec #116): the explorer merges the run's daily
+// provider cache into the session catalog, so a model the refresh discovered is
+// visible in the preview without a new session.
+// ---------------------------------------------------------------------------
+
+/** A flocta catalog row for `id` (id `org/<id>`, so the provider join matches). */
+function floctaRow(id: string, cost: { input: number; output: number } | null = { input: 1, output: 5 }): CatalogEntry {
+  return {
+    provider: "flocta",
+    id: `org/${id}`,
+    selector: `flocta/org/${id}`,
+    name: id,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: true,
+    thinking: [],
+    input: ["text"],
+    cost,
+  };
+}
+
+/** Boot the explorer over a temp lock with a provider cache at `cachePath`. */
+async function bootWithProviderCache(dir: string, cachePath: string, rank: RankData): Promise<{ url: string; close: () => Promise<void> }> {
+  const lockPath = join(dir, "omp-plugins.lock.json");
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ plugins: { "omp-llm-role": { enabled: true } }, settings: { "omp-llm-role": { providerPriority: "flocta", roles: { previewrole: PREVIEW_ROLE } } } }, null, 2),
+  );
+  return startExplorer({
+    webDir: join(process.cwd(), "web"),
+    lockPath,
+    cwd: dir,
+    registryDir: dir,
+    agentDir: dir,
+    usageDir: dir,
+    rank,
+    // The session catalog has no flocta row: only the cache supplies it.
+    catalog: makeCatalog(["model-a", "model-b"]),
+    availability: NO_AVAILABILITY,
+    reload: async () => rank,
+    providerCatalogCachePath: cachePath,
+    port: 0,
+    open: false,
+    onLog: () => {},
+  });
+}
+
+test("the explorer merges the daily provider cache into the session catalog", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-provider-cache-"));
+  const cachePath = join(dir, "provider-catalog-fetched-data.json");
+  writeProviderCatalogCache(new Date().toISOString().slice(0, 10), { flocta: [floctaRow("model-a")] }, cachePath);
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const rank: RankData = { models, fetchedAt: "2026-10-08T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await bootWithProviderCache(dir, cachePath, rank);
+  try {
+    const def: RoleDef = { ...PREVIEW_ROLE, providerPriority: ["flocta"] };
+    const rankBody = await postJson(handle.url, "/api/rank", { role: "previewrole", def });
+    const row = rowOf(rankBody.body, "model-a");
+    assert.equal(row.provider, "flocta");
+    assert.equal(row.priceSource, "reference");
+    assert.equal(row.priceEff, 2);
+
+    const explainBody = await postJson(handle.url, "/api/explain", { role: "previewrole", def, modelId: "model-a" });
+    assert.equal(explainBody.body.eligible, true);
+    assert.equal(explainBody.body.provider, "flocta");
+    assert.equal(explainBody.body.priceEff, 2);
+
+    // No `settings` edit: the preview resolves the scope's committed globals
+    // (providerPriority "flocta"), exactly as the run does.
+    const previewBody = await postJson(handle.url, "/api/preview", { roles: { previewrole: PREVIEW_ROLE } });
+    assert.equal(decisionOf(previewBody.body, "previewrole").to, "flocta/org/model-a");
+  } finally {
+    await handle.close();
+  }
+});
+
+test("a stale provider cache leaves the session catalog untouched", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "explorer-provider-cache-stale-"));
+  const cachePath = join(dir, "provider-catalog-fetched-data.json");
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  writeProviderCatalogCache(yesterday, { flocta: [floctaRow("model-a")] }, cachePath);
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const rank: RankData = { models, fetchedAt: "2026-10-08T00:00:00.000Z", source: "test", orMatched: 2, orPriced: 2 };
+  const handle = await bootWithProviderCache(dir, cachePath, rank);
+  try {
+    const def: RoleDef = { ...PREVIEW_ROLE, providerPriority: ["flocta"] };
+    const rankBody = await postJson(handle.url, "/api/rank", { role: "previewrole", def });
+    const row = rowOf(rankBody.body, "model-a");
+    assert.equal(row.provider, "openrouter");
+    assert.equal(row.priceSource, "openrouter");
   } finally {
     await handle.close();
   }

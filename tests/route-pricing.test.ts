@@ -7,6 +7,7 @@ import {
   bestRoute,
   blendOutputPrice,
   cardinalMetric,
+  pickOrder,
   providerPinDrops,
   rankRole,
   rankedRoutes,
@@ -15,6 +16,7 @@ import {
   routeOutputPrice,
   thinkingPriceFactor,
   type OpenRouterEndpointRecord,
+  type Ranked,
   type RoleDef,
 } from "../src/engine.ts";
 import { resolveSettings } from "../src/settings.ts";
@@ -593,4 +595,27 @@ test("a pin matching no route preserves the role's existing chain", async () => 
   const doc = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as { retry: { fallbackChains: Record<string, string[]> } };
   // The pinned chain key is referenced, not pruned.
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@cerebras"], ["openrouter/org/model-b@cerebras"]);
+});
+
+// --- provider bonus in the cheapest-mode order (#116) ------------------------
+
+function rankedRow(id: string, priceEff: number, q: number, providerBonus = 0): Ranked {
+  return {
+    model: makeModel(id, 0, priceEff, 50),
+    value: q - priceEff,
+    q,
+    priceEff,
+    parts: {},
+    provider: providerBonus > 0 ? "flocta" : "openrouter",
+    providerBonus,
+    priceSource: providerBonus > 0 ? "reference" : "openrouter",
+  };
+}
+
+test("pickOrder: a provider bonus discounts the bar-clearing price order", () => {
+  const preferred = rankedRow("preferred", 1.0, 0.5, 0.05); // effective 0.95
+  const other = rankedRow("other", 0.98, 0.5, 0); // effective 0.98
+  assert.ok(pickOrder(preferred, other) < 0); // 0.95 < 0.98: the preferred model sorts first
+  // With no bonus the honest price order wins.
+  assert.ok(pickOrder({ ...preferred, providerBonus: 0 }, other) > 0); // 1.0 > 0.98
 });

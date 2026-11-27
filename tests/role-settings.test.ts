@@ -187,3 +187,45 @@ test("writeRoleSettings dryRun validates the global half and writes nothing", ()
   assert.equal(bad.ok, false);
   assert.equal(readFileSync(lockPath, "utf8"), seed);
 });
+
+test("mergeSettings writes a role's provider priority and bonus as flat keys that resolve", () => {
+  const merged = mergeSettings(
+    { settings: {} },
+    { roles: { slow: { ...DEFAULT_ROLES.slow, providerPriority: ["flocta", "openrouter"], providerBonus: 0.1 } } },
+  );
+  assert.ok("lock" in merged);
+  if (!("lock" in merged)) return;
+  const plugin = pluginOf(merged.lock);
+  assert.equal(plugin["roles.slow.providerPriority"], "flocta, openrouter");
+  assert.equal(plugin["roles.slow.providerBonus"], 0.1);
+  const { settings, errors } = resolveSettings(plugin);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(settings.roles.slow.providerPriority, ["flocta", "openrouter"]);
+  assert.equal(settings.roles.slow.providerBonus, 0.1);
+});
+
+test("mergeSettings writes an authored empty provider priority as \"\" so it overrides the global", () => {
+  const merged = mergeSettings(
+    { settings: { [PLUGIN]: { providerPriority: "flocta" } } },
+    { roles: { slow: { ...DEFAULT_ROLES.slow, providerPriority: [] } } },
+  );
+  assert.ok("lock" in merged);
+  if (!("lock" in merged)) return;
+  const plugin = pluginOf(merged.lock);
+  assert.equal(plugin["roles.slow.providerPriority"], "");
+  const { settings, errors } = resolveSettings(plugin);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(settings.roles.slow.providerPriority, []);
+});
+
+test("mergeSettings leaves an absent provider key unwritten and removes a stale one", () => {
+  const merged = mergeSettings(
+    { settings: { [PLUGIN]: { "roles.slow.providerPriority": "flocta", "roles.slow.providerBonus": 0.2 } } },
+    { roles: { slow: DEFAULT_ROLES.slow } },
+  );
+  assert.ok("lock" in merged);
+  if (!("lock" in merged)) return;
+  const plugin = pluginOf(merged.lock);
+  assert.equal(plugin["roles.slow.providerPriority"], undefined);
+  assert.equal(plugin["roles.slow.providerBonus"], undefined);
+});

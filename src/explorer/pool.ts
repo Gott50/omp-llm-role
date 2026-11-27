@@ -17,28 +17,39 @@
  *    not kept-and-marked: the pool's contract is "the pool the updater writes
  *    from", so its leader must be the model the updater would pick. An inactive
  *    keyed catalog (`active: false`) leaves the pool byte-identical to the
- *    two-filter result.
+ *    two-filter result. The prune is OpenRouter-only: a model whose effective
+ *    provider is a prioritized non-OpenRouter provider is not key-blocked (the
+ *    keyed set describes the OpenRouter key, not the provider's catalog).
+ *
+ * Provider priority (spec #116): the catalog/tier gate keeps a model when it
+ * resolves on OpenRouter OR on any prioritized provider, so a provider-only
+ * model stays in the pool. An empty priority list leaves the pool byte-identical
+ * to the pre-#116 result.
  *
  * Pure: the input `RankData` and its models are never mutated. The fetch
  * metadata (`fetchedAt`, `source`, `orMatched`, `orPriced`) describes the fetch,
  * not the pool, and is carried through unchanged.
  */
 
-import { filterCatalog, pruneRoutesToAllowed, resolveVariant, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
+import { filterCatalog, pruneRoutesToAllowed, resolveProviderVariant, resolveVariant, type CatalogEntry, type KeyAvailability, type Tier } from "../availability.ts";
 import type { RankData } from "../engine.ts";
+import { effectiveProvider, providerOffersFor, providerOrder } from "../provider-priority.ts";
 
 /** Which dataset the explorer ranks: the raw fetch, or the pool the updater writes from. */
 export type PoolMode = "raw" | "as-written";
 
 /** The inputs the as-written pool needs beyond the ranking data: the omp catalog,
  * the key's tier, the account's allowed-providers whitelist (`null` = no
- * whitelist / harvest failed), and the keyed-catalog availability (the blocked
- * set, or the availability record). */
+ * whitelist / harvest failed), the keyed-catalog availability (the blocked set,
+ * or the availability record), and the global provider priority list (empty =
+ * OpenRouter only). */
 export type PoolInputs = {
   catalog: CatalogEntry[];
   tier: Tier;
   allowed: ReadonlySet<string> | null;
   availability: KeyAvailability;
+  /** The scope's global `providerPriority` (spec #116). Empty = today's pool. */
+  providerPriority: string[];
 };
 
 /** The as-written pool: `rank` with the catalog/tier gate, the
@@ -47,10 +58,29 @@ export type PoolInputs = {
 export function asWrittenPool(rank: RankData, inputs: PoolInputs): RankData {
   const tier = inputs.tier;
   const eligible = filterCatalog(inputs.catalog, tier);
-  const gated = tier === "none" ? [] : rank.models.filter((m) => resolveVariant(m.id, eligible, tier) !== null);
+  const order = providerOrder(inputs.providerPriority);
+  const t: "billed" | "free" = tier === "free" ? "free" : "billed";
+  // The gate keeps a model that resolves on OpenRouter OR on any prioritized
+  // provider; an empty list leaves only the OpenRouter arm, today's behavior.
+  const gated = tier === "none"
+    ? []
+    : rank.models.filter(
+        (m) =>
+          resolveVariant(m.id, eligible, t) !== null ||
+          order.some((p) => p !== "openrouter" && resolveProviderVariant(m.id, p, inputs.catalog, t) !== null),
+      );
   const allowed = inputs.allowed;
   const routed = pruneRoutesToAllowed(gated, allowed).models;
   const availability = inputs.availability;
-  const models = availability.active ? routed.filter((m) => !availability.blocked.has(m.id)) : routed;
+  // The keyed prune is OpenRouter-only: a model whose effective provider is a
+  // prioritized non-OpenRouter provider is not key-blocked. The offers are
+  // derived from the catalog on a copy, so the input models are never mutated.
+  const models = availability.active
+    ? routed.filter(
+        (m) =>
+          effectiveProvider({ ...m, providerOffers: providerOffersFor(m, inputs.catalog, order) }, order) !== "openrouter" ||
+          !availability.blocked.has(m.id),
+      )
+    : routed;
   return { ...rank, models };
 }

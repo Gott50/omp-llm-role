@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { catalogFromOmpModelsJson, currentRankingId, rankingIdOf, resolveVariant, type CatalogEntry } from "../src/availability.ts";
+import { catalogFromOmpModelsJson, currentRankingId, rankingIdOf, resolveProviderVariant, resolveVariant, type CatalogEntry } from "../src/availability.ts";
 
 function entry(id: string): CatalogEntry {
   return {
@@ -96,4 +96,65 @@ test("catalogFromOmpModelsJson tolerates malformed rows and defaults fields", ()
   assert.deepEqual(parsed[1].cost, { input: 1, output: 2 });
   assert.equal(catalogFromOmpModelsJson(null).length, 0);
   assert.equal(catalogFromOmpModelsJson({}).length, 0);
+});
+// ---------------------------------------------------------------------------
+// resolveProviderVariant — provider-scoped variant resolution
+// ---------------------------------------------------------------------------
+
+function providerEntry(provider: string, id: string): CatalogEntry {
+  return {
+    provider,
+    id,
+    selector: `${provider}/${id}`,
+    name: id,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: false,
+    thinking: [],
+    input: ["text"],
+    cost: null,
+  };
+}
+
+const providerCatalog = (provider: string, ids: string[]) => ids.map((id) => providerEntry(provider, id));
+
+test("resolveProviderVariant resolves a non-OpenRouter provider's exact row", () => {
+  const got = resolveProviderVariant("deepseek-v4.1-flash", "flocta", providerCatalog("flocta", ["deepseek-v4.1-flash"]), "billed");
+  assert.equal(got, "deepseek-v4.1-flash");
+});
+
+test("resolveProviderVariant matches a dated model id to the provider's undated row", () => {
+  const got = resolveProviderVariant("deepseek-v4.1-flash-1017", "flocta", providerCatalog("flocta", ["deepseek-v4.1-flash"]), "billed");
+  assert.equal(got, "deepseek-v4.1-flash");
+});
+
+test("resolveProviderVariant matches an undated model id to the provider's newest dated row", () => {
+  const got = resolveProviderVariant(
+    "deepseek-v4.1-flash",
+    "flocta",
+    providerCatalog("flocta", ["deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1103"]),
+    "billed",
+  );
+  assert.equal(got, "deepseek-v4.1-flash-1103");
+});
+
+test("resolveProviderVariant falls back to the provider's ~org alias row", () => {
+  const got = resolveProviderVariant("deepseek-v4.1-flash", "flocta", providerCatalog("flocta", ["~deepseek/deepseek-v4.1-flash-latest"]), "billed");
+  assert.equal(got, "~deepseek/deepseek-v4.1-flash-latest");
+});
+
+test("resolveProviderVariant returns null when the provider has no row", () => {
+  assert.equal(resolveProviderVariant("deepseek-v4.1-flash", "flocta", providerCatalog("flocta", ["other-model"]), "billed"), null);
+  assert.equal(resolveProviderVariant("deepseek-v4.1-flash", "flocta", providerCatalog("openrouter", ["deepseek-v4.1-flash"]), "billed"), null);
+});
+
+test("resolveProviderVariant excludes the provider's auto pseudo-model", () => {
+  assert.equal(resolveProviderVariant("auto", "flocta", providerCatalog("flocta", ["auto"]), "billed"), null);
+});
+
+test("resolveProviderVariant delegates OpenRouter to resolveVariant (tier rules intact)", () => {
+  const cat = catalog(["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-flash:free"]);
+  assert.equal(resolveProviderVariant("deepseek-v4-flash", "openrouter", cat, "billed"), resolveVariant("deepseek-v4-flash", cat, "billed"));
+  assert.equal(resolveProviderVariant("deepseek-v4-flash", "openrouter", cat, "billed"), "deepseek/deepseek-v4-flash");
+  assert.equal(resolveProviderVariant("deepseek-v4-flash", "openrouter", cat, "free"), resolveVariant("deepseek-v4-flash", cat, "free"));
 });

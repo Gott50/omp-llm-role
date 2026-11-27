@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildModels, cardinalMetric, rankRole } from "../src/engine.ts";
+import { buildModels, cardinalMetric, rankRole, roleLambda, type RoleDef } from "../src/engine.ts";
 import { METRIC_META } from "../src/explorer/explain.ts";
 import { makeModel, makeRow } from "./helpers.ts";
 
@@ -119,4 +119,65 @@ test("rankRole: a new index metric is scored through the affine transform", () =
   assert.equal(ranked[0].model.id, "a");
   assert.equal(ranked[0].parts.index_legal, 1);
   assert.equal(ranked[1].parts.index_legal, 0.25);
+});
+
+// --- provider priority: effective provider, price basis and price source (#116) ---
+
+const PROVIDER_ROLE: RoleDef = {
+  description: "",
+  weights: { general: 0.5, price: 0.5 },
+  required: ["general", "price"],
+  providerPriority: ["flocta"],
+  providerBonus: 0.05,
+};
+
+test("rankRole: a provider offer prices the model on the offer and labels the source", () => {
+  const base = makeModel("m", 40, 5, 100); // OpenRouter blend price 5
+  const offered = { ...base, providerOffers: { flocta: { catalogId: "m", price: 2, thinking: [] } } };
+  const [r] = rankRole(PROVIDER_ROLE, [offered]);
+  assert.equal(r.provider, "flocta");
+  assert.equal(r.providerBonus, 0.05);
+  assert.equal(r.priceSource, "reference");
+  assert.equal(r.priceEff, 2);
+  // The bonus is a selection preference, never part of the honest value.
+  assert.equal(r.value, r.q - roleLambda(PROVIDER_ROLE) * 2);
+  // q and parts are identical to the empty-list run: the bonus never touches them.
+  const [control] = rankRole({ ...PROVIDER_ROLE, providerPriority: [] }, [offered]);
+  assert.equal(r.q, control.q);
+  assert.deepEqual(r.parts, control.parts);
+  assert.equal(control.provider, "openrouter");
+  assert.equal(control.providerBonus, 0);
+  assert.equal(control.priceSource, "openrouter");
+  assert.equal(control.priceEff, 5);
+});
+
+test("rankRole: a provider with no own price uses the OpenRouter blend as a labelled proxy", () => {
+  const m = { ...makeModel("m", 40, 5, 100), providerOffers: { flocta: { catalogId: "m", price: null, thinking: [] } } };
+  const [r] = rankRole(PROVIDER_ROLE, [m]);
+  assert.equal(r.provider, "flocta");
+  assert.equal(r.providerBonus, 0.05);
+  assert.equal(r.priceSource, "openrouter-proxy");
+  assert.equal(r.priceEff, 5); // the OpenRouter blend
+});
+
+test("rankRole: a model offered by no listed provider stays on OpenRouter with no bonus", () => {
+  const [r] = rankRole(PROVIDER_ROLE, [makeModel("m", 40, 5, 100)]);
+  assert.equal(r.provider, "openrouter");
+  assert.equal(r.providerBonus, 0);
+  assert.equal(r.priceSource, "openrouter");
+  assert.equal(r.priceEff, 5);
+});
+
+test("rankRole: an empty priority list is byte-identical to the pre-#116 ranking", () => {
+  const def: RoleDef = { description: "", weights: { general: 0.5, price: 0.5 }, required: ["general", "price"] };
+  const models = [makeModel("a", 40, 5, 100), makeModel("b", 80, 1, 50)];
+  const ranked = rankRole(def, models);
+  for (const r of ranked) {
+    assert.equal(r.provider, "openrouter");
+    assert.equal(r.providerBonus, 0);
+    assert.equal(r.priceSource, "openrouter");
+    assert.equal(r.priceEff, r.model.price);
+    assert.equal(r.value, r.q - roleLambda(def) * r.priceEff);
+  }
+  assert.deepEqual(ranked.map((r) => r.model.id), ["b", "a"]); // the honest value order
 });

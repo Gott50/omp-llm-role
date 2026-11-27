@@ -336,6 +336,62 @@ none is routable is different: that is the **dropped pin** above — still no pi
 but recorded (`pinDropped`). With the capability off the written config is
 byte-identical to before.
 
+## Provider priority: selectors, chains and settings (spec #116)
+
+The write path's view of the provider priority (the math is scoring.md,
+*Provider priority*; the catalog source is data-sources.md, *omp catalog —
+provider availability*).
+
+**The non-OpenRouter selector.** A candidate whose effective provider is not
+`openrouter` is written as
+
+```
+<provider>/<catalog-id>[:<level>]
+```
+
+with **no** `@<slug>` — the provider **is** the route, so the OpenRouter pin and
+the auto-pin do not apply (the route probe never runs for it). The thinking
+suffix is appended only when that provider's own catalog row advertises the
+level (or the level is a meta level), never another provider's list. An
+OpenRouter candidate keeps today's form
+`openrouter/<catalog-id>[@<slug>][:<level>]`. The chain key is the selector minus
+its trailing `:level`, as today.
+
+**The chain values.** The primary's cross-provider entries are the chosen model
+on its other offering providers, in priority order, excluding the chosen
+provider:
+
+- `openrouter/*[:<level>]` — omp's "keep the current model id and try it through
+  this provider" wildcard — when the model's OpenRouter catalog id equals the
+  chosen provider's catalog id;
+- the enumerated `openrouter/<catalog-id>[:<level>]` when the OpenRouter id
+  differs (no `@<slug>` — the cross-provider entry is not pinned);
+- `<provider>/<catalog-id>[:<level>]` for a non-OpenRouter provider, with that
+  provider's own thinking level.
+
+The next-best candidates then follow on their **effective** providers (the
+OpenRouter auto-pin expansion is unchanged for an OpenRouter primary). The
+`openrouter/*` wildcard is a chain **value**, not a key: the pruner's key
+ownership (`state.pluginWrittenChainKeys`) is unchanged, so the wildcard is
+never pruned as a stale key and never claimed as one.
+
+**The settings.** `providerPriority` (global, ordered omp provider ids; default
+`[]`) and `providerBonus` (global, `[0, 1]`; default `0.05`), each overridable
+per role (`roles.<role>.providerPriority` / `roles.<role>.providerBonus`). The
+flat lock-file form of the priority is a **comma-separated string**
+(`providerPriority: "flocta, openrouter"`, the `required` precedent); the reader
+accepts an array too. `resolveSettings` fills each role's effective values from
+the global when the role does not set them (authored-wins), and the global values
+stay on the resolved settings for the explorer's Settings panel. Validation: the
+priority is an array of non-empty strings without `@` or `:` (the selector
+delimiters); the bonus is a finite number in `[0, 1]`. A malformed value is an
+error (the run aborts, no write). `mergeSettings` writes the per-role keys as
+`roles.<name>.providerPriority` (comma-joined) and `roles.<name>.providerBonus`.
+
+**The cache.** The daily provider-catalog cache is
+`cache/provider-catalog-fetched-data.json` (gitignored, not shipped) — see
+data-sources.md, *omp catalog — provider availability*.
+
 ## The selection decision (spec #103)
 
 The per-role selection step (`decide` in `src/selection.ts`, called by
@@ -346,8 +402,10 @@ rule: `selection` (`"value"` default, or
 overrides the global. The rule and its math are in scoring.md, *Selection rule —
 the cheapest model above the bar*; this section is the write path's view.
 
-`"value"` mode (the default) is unchanged: the pool leader is the value leader
-and the hysteresis ladder is `switchMargin`-first. `"cheapest"` mode replaces the
+`"value"` mode (the default) is unchanged apart from the provider bonus: the
+challenger is the **effective-value leader** (`value + providerBonus`) and the
+hysteresis ladder is `switchMargin`-first on the effective values; with a zero
+bonus it reduces to the value leader. `"cheapest"` mode replaces the
 objective with the cheapest candidate at or above `qualityFloor × anchor.q`
 (anchor = the pool's highest-`q` candidate). The decision table itself lives
 there (a fact has one home); the write-path-specific facts are:

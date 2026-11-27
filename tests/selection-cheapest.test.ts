@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
 import type { KeyAvailability, ProbeVerdict } from "../src/availability.ts";
-import { barSelection, rankRole, type Model, type OpenRouterEndpointRecord, type Ranked } from "../src/engine.ts";
+import { barSelection, pickOrder, rankRole, type Model, type OpenRouterEndpointRecord, type Ranked } from "../src/engine.ts";
+import { cheapestOrder, decide, ladderInputs } from "../src/selection.ts";
 import { DEFAULT_ROLES, DEFAULT_SETTINGS } from "../src/settings.ts";
 import { runUpdater, type Deps, type RunResult } from "../src/updater.ts";
 import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
@@ -423,4 +424,55 @@ test("barSelection: never mutates the pool", () => {
   const before = pool.map((r) => ({ ...r }));
   barSelection(pool, 0.9);
   assert.deepEqual(pool, before);
+});
+
+// --- the provider discount (spec #116) --------------------------------------
+// The discount lives in `pickOrder` (`priceEff × (1 − providerBonus)`), so
+// `cheapestOrder` applies it exactly once. These pin the external ordering and
+// the same-model provider switch, not an internal helper.
+
+/** A `Ranked` row carrying the fields the cheapest order reads. */
+function providerRow(id: string, q: number, priceEff: number, provider: string, providerBonus = 0): Ranked {
+  return {
+    model: makeModel(id, 0, priceEff, 100),
+    value: q - priceEff,
+    q,
+    priceEff,
+    parts: {},
+    provider,
+    providerBonus,
+    priceSource: provider === "openrouter" ? "openrouter" : "reference",
+  };
+}
+
+test("the provider discount is applied once in pickOrder, not squared", () => {
+  // A: $10 with a 5% bonus -> effective $9.50. B: $9.30, no bonus.
+  // Single discount: B (9.30) beats A (9.50). Squared (9.025): A would win.
+  const a = providerRow("a", 1.0, 10, "flocta", 0.05);
+  const b = providerRow("b", 1.0, 9.3, "openrouter", 0);
+  assert.ok(pickOrder(b, a) < 0);
+  assert.ok(pickOrder(a, b) > 0);
+  const order = cheapestOrder([{ ranked: a, catalogId: "org/a" }, { ranked: b, catalogId: "org/b" }], 0);
+  assert.deepEqual(order.map((c) => c.ranked.model.id), ["b", "a"]);
+});
+
+test("a same-model provider change adopts the pick in cheapest mode", () => {
+  const incumbent = { ranked: providerRow("model-a", 1.0, 10, "openrouter", 0), catalogId: "org/model-a" };
+  const pick = { ranked: providerRow("model-a", 1.0, 10, "flocta", 0.05), catalogId: "org/model-a" };
+  const inputs = ladderInputs({ mode: "cheapest", settings: DEFAULT_SETTINGS, pool: [pick], currentEntry: incumbent, ordered: [pick], pick });
+  assert.ok(inputs);
+  assert.ok(inputs.currentEntry);
+  // The model is still bar-clearing, but the pick routes it through a different
+  // provider, so the incumbent is not kept.
+  assert.equal(inputs.switched(inputs.currentEntry), true);
+  const d = decide({ currentSelector: "openrouter/org/model-a", currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
+  assert.equal(d.reason, "switched");
+  assert.equal(d.chosen.ranked.provider, "flocta");
+});
+
+test("a zero bonus leaves the cheapest order byte-identical", () => {
+  const rows = [providerRow("a", 1.0, 10, "flocta", 0), providerRow("b", 1.0, 9.3, "openrouter", 0), providerRow("c", 1.0, 9.3, "other", 0)];
+  const order = cheapestOrder(rows.map((r) => ({ ranked: r, catalogId: `org/${r.model.id}` })), 0);
+  // Honest price order, ties by id ascending.
+  assert.deepEqual(order.map((c) => c.ranked.model.id), ["b", "c", "a"]);
 });

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import type { ProbeVerdict } from "../src/availability.ts";
+import type { CatalogEntry, ProbeVerdict } from "../src/availability.ts";
 import type { Model, OpenRouterEndpointRecord } from "../src/engine.ts";
 import { rankedRoutes } from "../src/engine.ts";
 import { resolveSettings } from "../src/settings.ts";
 import { ROUTE_PROBE_BUDGET, runUpdater } from "../src/updater.ts";
-import { fakeDeps, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
+import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
 
 // Auto-pin (issue #61, spec #58; expanded by #69): when a role's expanded def
 // has `preferOwnProvider === true` and no manual `providerPin`, the updater
@@ -697,4 +697,229 @@ test("two blocked routes sharing a provider slug are recorded once", async () =>
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.deepEqual(d.routeBlockedSlugs, ["shared", "exp"]);
+});
+
+// ---------------------------------------------------------------------------
+// Provider priority (spec #116, ticket #123): the daily provider catalog
+// refresh, the provider-aware selector and the cross-provider chain.
+// ---------------------------------------------------------------------------
+
+/** A non-OpenRouter catalog row: `provider`'s offer of `id`. */
+function providerRow(provider: string, id: string, cost: { input: number; output: number } | null = null): CatalogEntry {
+  return {
+    provider,
+    id,
+    selector: `${provider}/${id}`,
+    name: id,
+    contextWindow: 200000,
+    maxTokens: 8192,
+    reasoning: true,
+    thinking: [],
+    input: ["text"],
+    cost,
+  };
+}
+
+/** Fresh models per test: `enrichCatalogData` mutates the ranking rows in
+ * place (it attaches `providerOffers`), so a shared fixture would leak one
+ * test's provider offers into the next. */
+function providerModels(): Model[] {
+  return [
+    routed("model-a", 90, 1, 100, ["cheap", "mid", "exp"]),
+    routed("model-b", 80, 5, 60, ["b1", "mid", "b3"]),
+    routed("model-c", 70, 10, 30, ["c1", "mid", "c3"]),
+  ];
+}
+
+/** The provider-priority fixture: the session catalog carries the OpenRouter
+ * rows plus a `flocta` row for `model-a`, and the fresh read returns the same
+ * row. The cache path is per-test, so parallel test files never share it. */
+function providerDeps(models: Model[], dir: string, overrides: Parameters<typeof fakeDeps>[2] = {}) {
+  const flocta = providerRow("flocta", "org/model-a");
+  return fakeDeps(models, onlyDefault({ providerPriority: "flocta" }), {
+    getCatalog: async () => [...makeCatalog(models.map((m) => m.id)), flocta],
+    getProviderCatalog: async () => [flocta],
+    refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+    ...overrides,
+  });
+}
+
+test("provider priority writes the provider's selector and a cross-provider chain", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const result = await runInTempDir(dir, () => runUpdater("manual", providerDeps(providerModels(), dir), { force: true }));
+  assert.equal(result.aborted, undefined);
+  const config = readConfig(dir);
+  assert.equal(config.modelRoles.default, "flocta/org/model-a:auto");
+  // The chosen model on OpenRouter first (the wildcard keeps the model id),
+  // then the next-best models in value order.
+  assert.deepEqual(config.retry.fallbackChains["flocta/org/model-a"], [
+    "openrouter/*:auto",
+    "openrouter/org/model-b:auto",
+    "openrouter/org/model-c:auto",
+  ]);
+});
+
+test("the provider catalog refreshes once per UTC day", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  let refreshes = 0;
+  const deps = providerDeps(providerModels(), dir, {
+    refreshProviderCatalog: async (provider) => {
+      refreshes++;
+      return { provider, ok: true };
+    },
+  });
+  await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(refreshes, 1);
+});
+
+test("a model only in the fresh provider rows is selectable", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const models = providerModels();
+  const flocta = providerRow("flocta", "org/model-a");
+  // The session catalog has no flocta row; only the fresh read does.
+  const deps = fakeDeps(models, onlyDefault({ providerPriority: "flocta" }), {
+    getCatalog: async () => makeCatalog(models.map((m) => m.id)),
+    getProviderCatalog: async () => [flocta],
+    refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  assert.equal(readConfig(dir).modelRoles.default, "flocta/org/model-a:auto");
+});
+
+test("a failed provider catalog read degrades to the session catalog with a note", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const models = providerModels();
+  const notified: string[] = [];
+  const deps = fakeDeps(models, onlyDefault({ providerPriority: "flocta" }), {
+    getCatalog: async () => makeCatalog(models.map((m) => m.id)),
+    getProviderCatalog: async () => null,
+    refreshProviderCatalog: async (provider) => ({ provider, ok: false, reason: "provider flocta not found" }),
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+    notify: (lines) => notified.push(...lines),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
+  assert.ok(notified.some((l) => l.includes("@flocta: catalog refresh failed (provider flocta not found) — using the session catalog")));
+});
+
+test("a static provider is noted with the discovery snippet", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  writeFileSync(join(dir, "models.yml"), ["providers:", "  flocta:", "    baseUrl: https://example.test/v1", ""].join("\n"));
+  const notified: string[] = [];
+  const deps = providerDeps(providerModels(), dir, { notify: (lines) => notified.push(...lines) });
+  await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.ok(notified.some((l) => l.includes("@flocta: catalog is static — add discovery: { type: openai-models-list } to its models.yml entry")));
+});
+
+test("a provider with no catalog rows is noted and not used", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const models = providerModels();
+  const notified: string[] = [];
+  const deps = fakeDeps(models, onlyDefault({ providerPriority: "flocta" }), {
+    getCatalog: async () => makeCatalog(models.map((m) => m.id)),
+    getProviderCatalog: async () => [],
+    refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+    notify: (lines) => notified.push(...lines),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
+  assert.ok(notified.some((l) => l.includes("@flocta: no catalog rows — the provider is not used")));
+});
+
+test("a provider pre-seed does not mark another role's OpenRouter candidate clean", async () => {
+  // The flocta row and the OpenRouter row share the catalog id `org/model-a`.
+  // The default role's flocta candidate is catalog-verified (never probed); the
+  // smol role's OpenRouter candidate is a different candidate and must still be
+  // probed — a bare verdict key would let the pre-seed mark it clean.
+  const dir = setupAgentDir("other: 1\n");
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const flocta = providerRow("flocta", "org/model-a");
+  const probed: string[] = [];
+  const deps = fakeDeps(models, {
+    roles: {
+      default: { providerPriority: ["flocta"] },
+      smol: { providerPriority: [] },
+    },
+  }, {
+    getCatalog: async () => [...makeCatalog(models.map((m) => m.id)), flocta],
+    getProviderCatalog: async () => [flocta],
+    refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+    probeModel: async (_token, id) => {
+      probed.push(id);
+      return id === "org/model-a" ? "blocked" : "ok";
+    },
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.decisions.find((d) => d.role === "default")?.to, "flocta/org/model-a:auto");
+  assert.ok(probed.includes("org/model-a"), `smol's OpenRouter candidate was not probed: ${probed.join(", ")}`);
+  const smol = result.decisions.find((d) => d.role === "smol");
+  assert.ok(smol);
+  assert.ok(smol.to.startsWith("openrouter/org/model-b"), smol.to);
+});
+
+test("an empty provider priority list never refreshes or writes the cache", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  const cachePath = join(dir, "provider-catalog-cache.json");
+  let refreshes = 0;
+  const deps = fakeDeps(providerModels(), onlyDefault(), {
+    refreshProviderCatalog: async (provider) => {
+      refreshes++;
+      return { provider, ok: true };
+    },
+    getProviderCatalog: async () => [],
+    providerCatalogCachePath: cachePath,
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  assert.equal(refreshes, 0);
+  assert.equal(existsSync(cachePath), false);
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
+});
+
+test("a provider change is a normal switch subject to the margin (US 29)", async () => {
+  // The incumbent is `openrouter/org/model-a`; the priority makes model-a's
+  // effective provider flocta. A bonus inside the margin keeps the incumbent on
+  // OpenRouter; a bonus outside it switches to flocta. Pre-fix, the pool row
+  // (model-a on flocta) was the incumbent, so `kept-eligible` rewrote the
+  // selector with no margin check.
+  const config = 'modelRoles:\n  default: "openrouter/org/model-a"\n';
+  const inside = setupAgentDir(config);
+  const kept = await runInTempDir(inside, () =>
+    runUpdater("manual", providerDeps(providerModels(), inside, { getSettings: async () => onlyDefault({ providerPriority: "flocta", providerBonus: 0.01 }) }), { force: true }),
+  );
+  assert.equal(kept.aborted, undefined);
+  assert.equal(kept.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
+  assert.equal(readConfig(inside).modelRoles.default, "openrouter/org/model-a:auto");
+
+  const outside = setupAgentDir(config);
+  const switched = await runInTempDir(outside, () =>
+    runUpdater("manual", providerDeps(providerModels(), outside, { getSettings: async () => onlyDefault({ providerPriority: "flocta", providerBonus: 0.05 }) }), { force: true }),
+  );
+  assert.equal(switched.aborted, undefined);
+  assert.equal(switched.decisions.find((d) => d.role === "default")?.reason, "switched");
+  assert.equal(readConfig(outside).modelRoles.default, "flocta/org/model-a:auto");
+});
+
+test("a provider catalog cache write failure does not abort the run", async () => {
+  const dir = setupAgentDir("other: 1\n");
+  // A file where the cache's parent directory would be makes the write throw.
+  writeFileSync(join(dir, "blocker"), "");
+  const notified: string[] = [];
+  const deps = providerDeps(providerModels(), dir, {
+    providerCatalogCachePath: join(dir, "blocker", "provider-catalog-cache.json"),
+    notify: (lines) => notified.push(...lines),
+  });
+  const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
+  assert.equal(result.aborted, undefined);
+  // The fresh rows are still used for this run.
+  assert.equal(readConfig(dir).modelRoles.default, "flocta/org/model-a:auto");
+  assert.ok(notified.some((l) => l.includes("provider catalog cache write failed")));
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { paretoFrontier, rankRole, thinkingPriceFactor, type RoleDef } from "../src/engine.ts";
-import { enrichThinkingLevels, type CatalogEntry } from "../src/availability.ts";
+import { paretoFrontier, rankRole, thinkingAdjustedPrice, thinkingPriceFactor, type RoleDef } from "../src/engine.ts";
+import { enrichCatalogData, type CatalogEntry } from "../src/availability.ts";
 import { resolveSettings } from "../src/settings.ts";
 import { makeModel } from "./helpers.ts";
 
@@ -79,13 +79,26 @@ test("without catalog data the OR flag gates (standalone ranking fallback)", () 
   assert.ok(Math.abs(thinker.priceEff - thinker.model.price * thinkingPriceFactor("max")) < 1e-9);
 });
 
-test("enrichThinkingLevels joins by ranking id and leaves unmatched models alone", () => {
+test("enrichCatalogData joins by ranking id and leaves unmatched models alone", () => {
   const catalog: CatalogEntry[] = [
     { provider: "openrouter", id: "z-ai/glm-5.3", selector: "openrouter/z-ai/glm-5.3", name: "GLM", contextWindow: null, maxTokens: null, reasoning: true, thinking: ["low", "high", "max"], input: [], cost: null },
     { provider: "openrouter", id: "~z-ai/glm-latest", selector: "openrouter/~z-ai/glm-latest", name: "GLM", contextWindow: null, maxTokens: null, reasoning: true, thinking: ["low"], input: [], cost: null },
   ];
   const models = [makeModel("glm-5.3", 90, 4, 50, true), makeModel("unknown-model", 80, 1, 50, true)];
-  enrichThinkingLevels(models, catalog);
+  enrichCatalogData(models, catalog);
   assert.deepEqual(models[0].thinkingLevels, ["low", "high", "max"]); // first non-empty wins
   assert.equal(models[1].thinkingLevels, undefined); // no catalog match: OR flag fallback
+});
+
+test("thinkingAdjustedPrice honors an explicit provider level list", () => {
+  const m = makeModel("m", 90, 4, 50, true);
+  const def: RoleDef = { ...ROLE, thinking: "high" };
+  const factor = thinkingPriceFactor("high");
+  // A level the provider advertises applies the factor.
+  assert.equal(thinkingAdjustedPrice(m, def, 4, ["low", "high"]), 4 * factor);
+  // A level it does not advertise does not.
+  assert.equal(thinkingAdjustedPrice(m, def, 4, ["low"]), 4);
+  // A meta level always applies, whatever the provider advertises.
+  const metaDef: RoleDef = { ...ROLE, thinking: "auto" };
+  assert.equal(thinkingAdjustedPrice(m, metaDef, 4, ["low"]), 4 * thinkingPriceFactor("auto"));
 });

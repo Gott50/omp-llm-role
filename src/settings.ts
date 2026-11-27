@@ -256,6 +256,19 @@ export type ResolvedSettings = {
    * mode.
    */
   qualityFloor: number;
+  /**
+   * Ordered omp provider ids to prefer (the first path segment of a selector,
+   * `openrouter` included). Empty (default) = OpenRouter only, today's
+   * behaviour. A role's own `providerPriority` overrides it (authored-wins).
+   */
+  providerPriority: string[];
+  /**
+   * Soft provider preference in [0, 1] (default 0.05): the bonus for the
+   * provider at index `i` is `providerBonus / (i + 1)`. Applied in the
+   * selection comparison, never in the ranking's `value`. A role's own
+   * `providerBonus` overrides it (authored-wins).
+   */
+  providerBonus: number;
   roles: Record<string, RoleDef>;
   activateDefaultOnEmptySession: boolean;
   /** Opt-in reporting of unexpected plugin errors as GitHub issues on the
@@ -279,6 +292,8 @@ export const DEFAULT_SETTINGS: ResolvedSettings = {
   fallbackQualityFloor: 0.9,
   selection: "value",
   qualityFloor: 0.9,
+  providerPriority: [],
+  providerBonus: 0.05,
   roles: DEFAULT_ROLES,
   activateDefaultOnEmptySession: true,
   errorReporting: "off",
@@ -301,6 +316,8 @@ export type GlobalSettings = {
   fallbackQualityFloor: number;
   selection: SelectionMode;
   qualityFloor: number;
+  providerPriority: string[];
+  providerBonus: number;
   activateDefaultOnEmptySession: boolean;
   errorReporting: "off" | "ask" | "auto";
   tokenProfile: TokenProfile | null;
@@ -318,6 +335,8 @@ export function globalSettingsOf(settings: ResolvedSettings): GlobalSettings {
     fallbackQualityFloor: settings.fallbackQualityFloor,
     selection: settings.selection,
     qualityFloor: settings.qualityFloor,
+    providerPriority: [...settings.providerPriority],
+    providerBonus: settings.providerBonus,
     activateDefaultOnEmptySession: settings.activateDefaultOnEmptySession,
     errorReporting: settings.errorReporting,
     tokenProfile: settings.tokenProfile === null ? null : { ...settings.tokenProfile },
@@ -398,6 +417,19 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       type: "number",
       description: "In cheapest mode, the fraction of the pool's highest-q model's quality a cheaper candidate must retain (0 disables; inert in value mode)",
       default: DEFAULT_SETTINGS.qualityFloor,
+      min: 0,
+      max: 1,
+      step: 0.001,
+    },
+    providerPriority: {
+      type: "string",
+      description: "Comma-separated omp provider ids to prefer, in order (empty = OpenRouter only)",
+      default: "",
+    },
+    providerBonus: {
+      type: "number",
+      description: "Soft provider preference (0–1): bonus/(position+1) in value mode, a price-fraction discount in cheapest mode",
+      default: DEFAULT_SETTINGS.providerBonus,
       min: 0,
       max: 1,
       step: 0.001,
@@ -516,6 +548,19 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
       type: "number",
       description: `Quality floor for ${name} in cheapest mode (overrides the global qualityFloor)`,
       default: def.qualityFloor ?? DEFAULT_SETTINGS.qualityFloor,
+      min: 0,
+      max: 1,
+      step: 0.001,
+    };
+    schema[`${p}.providerPriority`] = {
+      type: "string",
+      description: `Comma-separated omp provider ids the ${name} role prefers, in order (empty = the global providerPriority)`,
+      default: "",
+    };
+    schema[`${p}.providerBonus`] = {
+      type: "number",
+      description: `Soft provider preference (0–1) for the ${name} role (overrides the global providerBonus)`,
+      default: DEFAULT_SETTINGS.providerBonus,
       min: 0,
       max: 1,
       step: 0.001,
@@ -658,6 +703,61 @@ function mergeRawSettings(raw: Record<string, unknown>): { merged: ResolvedSetti
 }
 
 /**
+ * Coerce a `providerPriority` value to a trimmed, empty-dropped provider-id
+ * list. The flat lock-file form is a comma-separated string (the `required`
+ * precedent); an array of strings is accepted too. Returns `null` when the
+ * value is neither form — the caller reports the error.
+ */
+function coerceProviderPriority(value: unknown): string[] | null {
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+  if (Array.isArray(value) && value.every((v) => typeof v === "string")) return [...value];
+  return null;
+}
+
+/**
+ * Validate a `providerPriority` value in place: coerce it to a provider-id
+ * list and report one error per malformed entry. `prefix` is `""` for the
+ * global key and `role <name>: ` for a per-role override. A malformed value
+ * resets the field to `[]` so the resolved settings stay usable.
+ */
+function validateProviderPriority(target: Record<string, unknown>, prefix: string, errors: string[]): void {
+  const raw = target.providerPriority;
+  // Absent = unset: the caller fills it from the global (or the shipped default).
+  if (raw === undefined) return;
+  const list = coerceProviderPriority(raw);
+  if (list === null) {
+    errors.push(`${prefix}providerPriority: must be a comma-separated string or an array of provider ids, got ${JSON.stringify(raw)}`);
+    target.providerPriority = [];
+    return;
+  }
+  for (const id of list) {
+    if (id.length === 0 || id.includes("@") || id.includes(":")) {
+      errors.push(`${prefix}providerPriority: provider id ${JSON.stringify(id)} must be a non-empty string without "@" or ":"`);
+    }
+  }
+  target.providerPriority = list;
+}
+
+/**
+ * Validate a `providerBonus` value in place: a finite number in [0, 1]. A
+ * malformed value is reported and reset to the shipped default.
+ */
+function validateProviderBonus(target: Record<string, unknown>, prefix: string, errors: string[]): void {
+  const v = target.providerBonus;
+  // Absent = unset: the caller fills it from the global (or the shipped default).
+  if (v === undefined) return;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1) {
+    errors.push(`${prefix}providerBonus: must be a number in [0, 1], got ${JSON.stringify(v)}`);
+    target.providerBonus = DEFAULT_SETTINGS.providerBonus;
+  }
+}
+
+/**
  * Deep-merge the raw settings map over the shipped defaults and validate the
  * result. Roles whose resolved `weights` is null are dropped (explicit
  * opt-out). Never mutates the defaults. One error string per violation; an empty
@@ -695,6 +795,8 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
   if (typeof merged.qualityFloor !== "number" || !Number.isFinite(merged.qualityFloor) || merged.qualityFloor < 0 || merged.qualityFloor > 1) {
     errors.push(`qualityFloor: must be a number in [0, 1], got ${JSON.stringify(merged.qualityFloor)}`);
   }
+  validateProviderPriority(merged as unknown as Record<string, unknown>, "", errors);
+  validateProviderBonus(merged as unknown as Record<string, unknown>, "", errors);
 
   // The per-task token profile: null (no profile), or a record whose two counts
   // are finite numbers >= 0. One error string per violation.
@@ -856,6 +958,13 @@ export function resolveSettings(raw: Record<string, unknown>): { settings: Resol
       errors.push(`role ${name}: preferOwnProvider must be a boolean, got ${JSON.stringify(rdef.preferOwnProvider)}`);
     }
     if (rdef.description === undefined) rdef.description = "";
+    // Provider priority/bonus: the same forms and rules as the global keys,
+    // then the authored-wins fill from the global (the `expandFeatures`
+    // pattern) — a role that does not set them follows the global.
+    validateProviderPriority(rdef as unknown as Record<string, unknown>, `role ${name}: `, errors);
+    validateProviderBonus(rdef as unknown as Record<string, unknown>, `role ${name}: `, errors);
+    rdef.providerPriority ??= [...merged.providerPriority];
+    rdef.providerBonus ??= merged.providerBonus;
     // The resolved def is the EFFECTIVE def: the authored def with the enabled
     // flags' recommended knobs filled in (explicit keys win; `features` stripped).
     merged.roles[name] = expandFeatures(rdef, merged.features);

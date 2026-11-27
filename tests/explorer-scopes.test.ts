@@ -584,6 +584,8 @@ test("readScopeRoles returns the scope's authored, resolved and default global s
     fallbackQualityFloor: 0.9,
     selection: "value",
     qualityFloor: 0.9,
+    providerPriority: [],
+    providerBonus: 0.05,
     activateDefaultOnEmptySession: true,
     errorReporting: "off",
     tokenProfile: null,
@@ -591,7 +593,7 @@ test("readScopeRoles returns the scope's authored, resolved and default global s
   });
   // `raw` is the merged map the updater reads, roles included.
   assert.equal(raw.switchMargin, 0.05);
-  assert.deepEqual(raw.roles, { userrole: USER_ROLE });
+  assert.deepEqual(raw.roles, { userrole: { ...USER_ROLE, providerPriority: [], providerBonus: 0.05 } });
   // The existing fields are unchanged: `roles` is the RESOLVED map (the shipped
   // roles that are enabled by default, plus the authored role), and the authored
   // def survives verbatim.
@@ -760,4 +762,37 @@ test("a project scope's preview reads the project's state, config.yml and agents
       await handle.close();
     }
   });
+});
+
+// --- provider priority (spec #116, ticket #124) ------------------------------
+
+test("readScopeRoles resolves the authored provider priority and bonus into the roles", () => {
+  const root = tempDir("explorer-scope-provider-");
+  const lockPath = join(root, "omp-plugins.lock.json");
+  writeLockWithGlobals(lockPath, { providerPriority: "flocta,openrouter", providerBonus: 0.1 }, { userrole: USER_ROLE });
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { settings, roles } = readScopeRoles(scope, lockPath);
+  // The Settings panel reads the resolved global keys.
+  assert.deepEqual(settings.resolved.providerPriority, ["flocta", "openrouter"]);
+  assert.equal(settings.resolved.providerBonus, 0.1);
+  // A role that does not set them inherits the global (authored-wins fill).
+  assert.deepEqual(roles.userrole.providerPriority, ["flocta", "openrouter"]);
+  assert.equal(roles.userrole.providerBonus, 0.1);
+});
+
+test("readScopeRoles fills the role editor's provider defaults on the authored defs", () => {
+  const root = tempDir("explorer-scope-universe-provider-");
+  const lockPath = join(root, "omp-plugins.lock.json");
+  writeLock(lockPath, { userrole: USER_ROLE });
+  const scope: Scope = { id: "user", label: "user-level", kind: "user", lockPath, present: true };
+  const { universe } = readScopeRoles(scope, lockPath);
+  // The authored def lacks the provider keys; the editor payload fills the
+  // shipped defaults so the inputs always have a value to render.
+  assert.deepEqual(universe.userrole.def.providerPriority, []);
+  assert.equal(universe.userrole.def.providerBonus, 0.05);
+  // A shipped role's def is filled too, and the shared DEFAULT_ROLES object is
+  // never mutated by the fill.
+  assert.deepEqual(universe.default.def.providerPriority, []);
+  assert.equal(universe.default.def.providerBonus, 0.05);
+  assert.equal(DEFAULT_ROLES.default.providerPriority, undefined);
 });

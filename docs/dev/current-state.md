@@ -1,4 +1,4 @@
-# Current state (2026-10-25)
+# Current state (2026-11-27)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
@@ -6,17 +6,43 @@ per-issue work log below. It is refreshed by
 regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
-ranking numbers below are the 2026-10-25 measurement (regenerated at the 1.6.0
-cut). The pool moved 416 → 408 models and eight leaders moved (`default`,
-`smol`, `slow`, `vision`, `commit`, `tiny`, `task`, `designer`; `plan` and
-`advisor` held) because the daily caches moved, not the code: the ranking CLI
-is unchanged since the 2026-10-19 measurement, which was itself byte-identical
-to the 2026-10-18 one apart from the report's date line — the input-price blend
-basis #21, the #17/#18/#19/#20 wave, the #34–#40 focus-axis/capability-flag
-work, spec #81's explorer surfaces, and spec #103's opt-in selection rule (the
-ranking CLI does not apply `selection`). The provider-pin numbers are the
-2026-10-11 measurement (spec #71; see the top bullet). Neither is re-derived on
-read.
+ranking numbers below are the 2026-11-27 measurement (regenerated for spec #116).
+The pool moved 408 → 456 models because the daily caches moved, not the code.
+Spec #116 leaves the **ranking table** byte-identical for an empty priority list
+(the honest value ranking is unchanged); the **suggested `modelRoles` block**
+changed: it now uses the effective provider's selector, appends the role's
+thinking level (`:level`) when the effective provider's catalog row advertises
+it, and picks the first catalog-resolvable model per role (matching the plugin's
+candidate building) — so the leaders below are the suggested selectors, not
+necessarily the raw #1. The provider-pin numbers are the 2026-10-11 measurement
+(spec #71; see the top bullet). Neither is re-derived on read.
+
+- Provider priority (2026-11-27, spec #116): an opt-in soft preference for any
+  omp provider. Two settings — `providerPriority` (an ordered list of omp
+  provider ids, global with a per-role override; default `[]`) and
+  `providerBonus` (`[0, 1]`, default `0.05`) — make the plugin pick models the
+  prioritized provider actually offers, price them on that provider's catalog
+  cost (a `reference` price, or the OpenRouter blend as a labelled
+  `openrouter-proxy` when the provider has no own price), write the effective
+  provider's selector (`<provider>/<catalog-id>[:<level>]` for a non-OpenRouter
+  provider, `openrouter/<catalog-id>[@<slug>]` for the gateway), and build the
+  fallback chain with the same model on its other providers first (omp's
+  `openrouter/*` wildcard where it applies) then the next-best models. The
+  bonus is applied in the **selection comparison only** (`value + providerBonus`
+  in value mode, `priceEff × (1 − providerBonus)` in cheapest mode), never in
+  `value`/`q`, so the displayed ranking stays honest. Each prioritized
+  non-OpenRouter provider's catalog is refreshed daily through omp
+  (`omp models refresh <provider>` + `omp models ls --json`, cached in
+  `cache/provider-catalog-fetched-data.json`), best-effort with a
+  session-catalog fallback. The explorer's rank/explain/preview and the CLI
+  report surface the effective provider, the price source and the bonus, and the
+  Settings panel and role editor expose the new keys. **The default install's
+  ranking is byte-identical** — an empty priority list and a zero bonus leave
+  every model's effective provider `openrouter`, the bonus `0` and every
+  selector, chain and ranking unchanged — and the report was regenerated for
+  spec #116: **456 models, 152 with OpenRouter throughput, 151 priced**; the
+  per-role eligible counts and leaders are below and in
+  `docs/llm-role-rankings.md`.
 
 - Release 1.6.0 (2026-10-25, cut `82b2a29`, tag `v1.6.0`): the spec #109 explorer
   settings editor and decision preview, and the spec #103 opt-in cheapest-model
@@ -893,18 +919,23 @@ read.
   0.663, margin 0.039 > `switchMargin`), because the incumbent has no Design
   Arena data and takes the neutral fill while MiMo carries a measured 0.97.
   The other nine roles are untouched (only `designer` weights `website`).
-- 408 llm-stats models; OpenRouter matched 144/408 (throughput), 144 priced (the
-  2026-10-20 snapshot read 151/416 — the daily cache moved, not the code; the
-  #34–#40 axes and flags leave every ranking byte-identical until a flag is
-  turned on).
-- Eligible per role: 137 (vision 71, designer 84, image-input filter).
-- Value-ranking leaders (this report, thinking-adjusted prices; the *ranking*
-  leaders, before the account's provider whitelist drops the blocked ones):
-  `default` DeepSeek-V4.1-Flash (0.811), `smol` Muse Spark 1.3 (0.767),
-  `slow` Muse Spark 1.3 (0.842), `vision` Kimi K3 (0.731), `plan` Muse Spark 1.3
-  (0.809), `commit` Muse Spark 1.3 (0.811), `tiny` Muse Spark 1.3 (0.853),
-  `task` DeepSeek-V4.1-Flash (0.757), `advisor` Muse Spark 1.3 (0.834),
-  `designer` Muse Spark 1.3 (0.810).
+- 456 llm-stats models; OpenRouter matched 152/456 (throughput), 151 priced (the
+  2026-11-27 snapshot; the daily cache moved, not the code — the #34–#40 axes
+  and flags leave every ranking byte-identical until a flag is turned on).
+- Eligible per role: 144 (vision 83, designer 100, image-input filter).
+- Value-ranking leaders (this report's suggested `modelRoles`: the first
+  catalog-resolvable model per role at thinking-adjusted prices; the raw ranking
+  leader may differ when it has no OpenRouter catalog row): `default`
+  `openrouter/moonshotai/kimi-k3.1-pro:auto`,
+  `smol` `openrouter/reflection/beam-1.0-501b-a23b:off`, `slow`
+  `openrouter/moonshotai/kimi-k3.1-pro:high`, `vision`
+  `openrouter/moonshotai/kimi-k3.1-pro:auto`, `plan`
+  `openrouter/reflection/beam-1.0-501b-a23b:auto`, `commit`
+  `openrouter/reflection/beam-1.0-501b-a23b:off`, `tiny`
+  `openrouter/reflection/beam-1.0-501b-a23b:off`, `task`
+  `openrouter/deepseek/deepseek-v4.1-flash-1017:auto`, `advisor`
+  `openrouter/reflection/beam-1.0-501b-a23b:auto`, `designer`
+  `openrouter/deepseek/deepseek-v4.1-flash-1017:auto`.
 - Thinking-adjusted pricing landed (2026-09-27): the suffix table moved into
   `DEFAULT_ROLES` as a per-role `thinking` field, and the price axis scales by
   the level's factor for thinking-capable models — `slow` (`:max`, ×7.86)

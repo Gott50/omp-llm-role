@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse as parseYaml } from "yaml";
-import { rankRole } from "../src/engine.ts";
+import { rankRole, type Ranked } from "../src/engine.ts";
+import type { CatalogEntry } from "../src/availability.ts";
+import { decide, incumbentOnProvider, ladderInputs } from "../src/selection.ts";
 import { DEFAULT_ROLES, DEFAULT_SETTINGS } from "../src/settings.ts";
 import { runUpdater } from "../src/updater.ts";
 import { fakeDeps, makeCatalog, makeModel, runInTempDir, setupAgentDir } from "./helpers.ts";
@@ -368,4 +370,164 @@ test("day gate: second same-day run without force is a silent no-op", async () =
   const second = await runInTempDir(dir, () => runUpdater("session-start", deps));
   assert.deepEqual(second.decisions, []);
   assert.equal(second.wrote, false);
+});
+// ---------------------------------------------------------------------------
+// Spec #116: the provider bonus in the value-mode ladder, and a provider change
+// on the same model as a normal switch. Driven through the exported ladder
+// (`ladderInputs` + `decide`) with hand-built ranked rows, so the assertion is
+// the decision the module makes, not an internal helper.
+// ---------------------------------------------------------------------------
+
+/** A `Ranked` row carrying the fields the ladder reads. `q` is `value + priceEff`
+ * (λ = 1) so the row is internally consistent. */
+function rankedRow(id: string, value: number, priceEff: number, provider: string, providerBonus = 0): Ranked {
+  return {
+    model: makeModel(id, 0, priceEff, 100),
+    value,
+    q: value + priceEff,
+    priceEff,
+    parts: {},
+    provider,
+    providerBonus,
+    priceSource: provider === "openrouter" ? "openrouter" : "reference",
+  };
+}
+
+/** The value-mode ladder over `pool` (challenger first), with `currentId` as the
+ * incumbent. */
+function valueLadder(pool: Ranked[], currentId: string, settings = DEFAULT_SETTINGS) {
+  const candidates = pool.map((r) => ({ ranked: r, catalogId: `org/${r.model.id}` }));
+  const currentEntry = candidates.find((c) => c.ranked.model.id === currentId) ?? null;
+  const inputs = ladderInputs({ mode: "value", settings, pool: candidates, currentEntry, ordered: [], pick: null });
+  if (inputs === null) throw new Error("no ladder inputs");
+  return inputs;
+}
+
+test("a provider change on the same model is a switch subject to the margin", () => {
+  // The margin itself: the challenger's 0.05 bonus lifts its effective value
+  // (1.05) over the incumbent's (1.02) by 0.03, clearing the 0.02 margin.
+  const challenger = { ranked: rankedRow("model-a", 1.0, 1, "flocta", 0.05), catalogId: "org/model-a" };
+  const incumbent = { ranked: rankedRow("model-b", 1.02, 5, "openrouter", 0), catalogId: "org/model-b" };
+  const inputs = valueLadder([challenger.ranked, incumbent.ranked], "model-b");
+  assert.ok(inputs.currentEntry);
+  assert.equal(inputs.switched(inputs.currentEntry), true);
+  // A 0.1 margin keeps the same pair.
+  const wide = valueLadder([challenger.ranked, incumbent.ranked], "model-b", { ...DEFAULT_SETTINGS, switchMargin: 0.1 });
+  assert.ok(wide.currentEntry);
+  assert.equal(wide.switched(wide.currentEntry), false);
+  // The same model on a different provider is not kept-eligible: it is a normal
+  // switch, so the margin arms decide.
+  const sameModel = { ranked: rankedRow("model-a", 1.0, 1, "openrouter", 0), catalogId: "org/model-a" };
+  const switched = decide({ currentSelector: "openrouter/org/model-a", currentEntry: sameModel, challenger, switched: () => true, costEscape: () => false });
+  assert.equal(switched.reason, "switched");
+  const kept = decide({ currentSelector: "openrouter/org/model-a", currentEntry: sameModel, challenger, switched: () => false, costEscape: () => false });
+  assert.equal(kept.reason, "kept-margin");
+  // Same model on the same provider stays kept-eligible.
+  const sameProvider = decide({
+    currentSelector: "openrouter/org/model-a",
+    currentEntry: sameModel,
+    challenger: { ...challenger, ranked: rankedRow("model-a", 1.0, 1, "openrouter", 0) },
+    switched: () => true,
+    costEscape: () => false,
+  });
+  assert.equal(sameProvider.reason, "kept-eligible");
+});
+
+test("a bonus that flips the effective-value leader adopts the challenger", () => {
+  // The incumbent leads on honest value (1.02 vs 1.00), so without a bonus the
+  // challenger is inside the margin and kept.
+  const plain = valueLadder([rankedRow("model-a", 1.0, 1, "flocta", 0), rankedRow("model-b", 1.02, 5, "openrouter", 0)], "model-b");
+  assert.ok(plain.currentEntry);
+  assert.equal(plain.switched(plain.currentEntry), false);
+  // The challenger's 0.05 bonus lifts its effective value to 1.05, clearing the
+  // 0.02 margin -> switched.
+  const inputs = valueLadder([rankedRow("model-a", 1.0, 1, "flocta", 0.05), rankedRow("model-b", 1.02, 5, "openrouter", 0)], "model-b");
+  assert.ok(inputs.currentEntry);
+  assert.equal(inputs.switched(inputs.currentEntry), true);
+  const d = decide({ currentSelector: "openrouter/org/model-b", currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
+  assert.equal(d.reason, "switched");
+  assert.equal(d.chosen.ranked.model.id, "model-a");
+});
+
+test("the incumbent's own bonus counts in the margin", () => {
+  // Challenger effective 1.05 (1.00 + 0.05); incumbent effective 1.04
+  // (1.02 + 0.02) -> the 0.01 gap is inside the 0.02 margin, so the incumbent is
+  // kept. Without the incumbent's bonus (1.02) the gap is 0.03 -> switched.
+  const challenger = rankedRow("model-a", 1.0, 1, "flocta", 0.05);
+  const boosted = valueLadder([challenger, rankedRow("model-b", 1.02, 5, "other", 0.02)], "model-b");
+  assert.ok(boosted.currentEntry);
+  assert.equal(boosted.switched(boosted.currentEntry), false);
+  const plain = valueLadder([challenger, rankedRow("model-b", 1.02, 5, "other", 0)], "model-b");
+  assert.ok(plain.currentEntry);
+  assert.equal(plain.switched(plain.currentEntry), true);
+});
+
+test("the effective-value leader is the challenger, not the honest value leader", () => {
+  // A leads on honest value (1.00 vs 0.98); B's 0.05 bonus lifts its effective
+  // value to 1.03, so B is the challenger and is adopted.
+  const a = rankedRow("model-a", 1.0, 1, "openrouter", 0);
+  const b = rankedRow("model-b", 0.98, 1, "flocta", 0.05);
+  const inputs = valueLadder([a, b], "model-a");
+  assert.equal(inputs.challenger.ranked.model.id, "model-b");
+  assert.ok(inputs.currentEntry);
+  assert.equal(inputs.switched(inputs.currentEntry), true);
+  const d = decide({ currentSelector: "openrouter/org/model-a", currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
+  assert.equal(d.reason, "switched");
+  assert.equal(d.chosen.ranked.model.id, "model-b");
+});
+
+test("with a zero bonus the honest value leader stays the challenger", () => {
+  const a = rankedRow("model-a", 1.0, 1, "openrouter", 0);
+  const b = rankedRow("model-b", 0.98, 1, "flocta", 0);
+  const inputs = valueLadder([a, b], "model-a");
+  assert.equal(inputs.challenger.ranked.model.id, "model-a");
+  assert.ok(inputs.currentEntry);
+  assert.equal(inputs.switched(inputs.currentEntry), false);
+  const d = decide({ currentSelector: "openrouter/org/model-a", currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
+  assert.equal(d.reason, "kept-eligible");
+});
+
+test("an effective-value lead inside the margin keeps the incumbent", () => {
+  // B's effective value (1.03) leads A's (1.00) by 0.03, inside a 0.1 margin.
+  const a = rankedRow("model-a", 1.0, 1, "openrouter", 0);
+  const b = rankedRow("model-b", 0.98, 1, "flocta", 0.05);
+  const inputs = valueLadder([a, b], "model-a", { ...DEFAULT_SETTINGS, switchMargin: 0.1 });
+  assert.equal(inputs.challenger.ranked.model.id, "model-b");
+  assert.ok(inputs.currentEntry);
+  assert.equal(inputs.switched(inputs.currentEntry), false);
+  const d = decide({ currentSelector: "openrouter/org/model-a", currentEntry: inputs.currentEntry, challenger: inputs.challenger, switched: inputs.switched, costEscape: inputs.costEscape });
+  assert.equal(d.reason, "kept-margin");
+});
+
+test("an empty provider priority and a zero bonus are byte-identical to no provider settings", async () => {
+  const plain = await writeRun(MODELS, OVERRIDE_CONFIG, { roles: ONLY_DEFAULT });
+  const explicit = await writeRun(MODELS, OVERRIDE_CONFIG, { roles: ONLY_DEFAULT, providerPriority: [], providerBonus: 0 });
+  assert.equal(explicit.text, plain.text);
+  assert.deepEqual(explicit.chains, plain.chains);
+  assert.equal(explicit.result.decisions[0].reason, plain.result.decisions[0].reason);
+});
+
+/** A non-OpenRouter catalog row: `provider`'s offer of `id`. */
+function providerRow(provider: string, id: string): CatalogEntry {
+  return { provider, id: `org/${id}`, selector: `${provider}/org/${id}`, name: id, contextWindow: 200000, maxTokens: 8192, reasoning: true, thinking: [], input: ["text"], cost: null };
+}
+
+test("incumbentOnProvider applies the role's real index bonus, not the forced index-0 bonus", () => {
+  const model = makeModel("model-a", 90, 1, 100);
+  model.providerOffers = {
+    flocta: { catalogId: "org/model-a", price: 1, thinking: [] },
+    other: { catalogId: "org/model-a", price: 1, thinking: [] },
+    third: { catalogId: "org/model-a", price: 1, thinking: [] },
+  };
+  const catalog = [...makeCatalog(["model-a"]), providerRow("flocta", "model-a"), providerRow("other", "model-a"), providerRow("third", "model-a")];
+  const def = { ...DEFAULT_ROLES.default, providerPriority: ["flocta", "other"], providerBonus: 0.1 };
+  // `other` is index 1 in the role's order -> bonus/2, not the forced index-0 bonus.
+  const second = incumbentOnProvider(model, def, "other", catalog, "billed");
+  assert.ok(second);
+  assert.equal(second.ranked.provider, "other");
+  assert.equal(second.ranked.providerBonus, 0.05);
+  // A provider absent from the role's list gets no bonus.
+  const unlisted = incumbentOnProvider(model, def, "third", catalog, "billed");
+  assert.ok(unlisted);
+  assert.equal(unlisted.ranked.providerBonus, 0);
 });

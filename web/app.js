@@ -9,6 +9,11 @@ const state = {
   universe: {},
   effective: {},
   defs: {},
+  // The bootstrap's RESOLVED role defs (enabled roles only). The universe def is
+  // filled with the shipped provider defaults (spec #116), so authorship of the
+  // provider keys is read from the resolved def against the global, not from the
+  // filled universe def.
+  resolvedRoles: {},
   defaults: {},
   metrics: [],
   metricMeta: {},
@@ -190,7 +195,7 @@ function resolvedFromFlat(flat) {
       if (node[parts[i]] === null || typeof node[parts[i]] !== "object") node[parts[i]] = {};
       node = node[parts[i]];
     }
-    node[parts[parts.length - 1]] = value;
+    node[parts[parts.length - 1]] = key === "providerPriority" ? providerList(value) : value;
   }
   return out;
 }
@@ -198,7 +203,65 @@ function resolvedFromFlat(flat) {
 function fmtDefault(value) {
   if (value === undefined || value === null) return "—";
   if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) return value.length === 0 ? "—" : value.join(", ");
   return String(value);
+}
+
+/** Coerce a `providerPriority` value to a provider-id list: the lock file's flat
+ * form is a comma-separated string, the resolved form an array. Mirrors the
+ * server's `coerceProviderPriority` so the panel and the run agree. */
+function providerList(value) {
+  if (Array.isArray(value)) return value.filter((v) => typeof v === "string");
+  if (typeof value === "string") return value.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  return [];
+}
+
+/** The edited global provider priority: the working copy's key, else the shipped
+ * default. `setGlobal` deletes a cleared key, so an absent key is the default,
+ * not the committed value. */
+function effectiveGlobalPriority() {
+  return providerList("providerPriority" in state.settingsEdited ? state.settingsEdited.providerPriority : defaultOf("providerPriority"));
+}
+
+/** The edited global provider bonus: the working copy's key, else the shipped
+ * default. A non-number (a half-typed field) falls back to the default. */
+function effectiveGlobalBonus() {
+  const value = "providerBonus" in state.settingsEdited ? state.settingsEdited.providerBonus : defaultOf("providerBonus");
+  return typeof value === "number" && Number.isFinite(value) ? value : defaultOf("providerBonus");
+}
+
+/** The universe def is filled with the shipped provider defaults (spec #116), so
+ * an inherit-equal value would look authored to the server. Strip it, so the
+ * preview's `resolveSettings` fills the global and the editor's badge is honest.
+ *
+ * Authorship is read from the RESOLVED def (`state.resolvedRoles[name]`), not the
+ * filled universe def: a role inherits when its resolved value equals the global
+ * (a role that authors the same value is indistinguishable and harmless). A
+ * disabled role has no resolved def, so the shipped-default fill is the signal. */
+function stripInheritedProviderKeys(def, name) {
+  const resolved = state.resolvedRoles?.[name];
+  const globalPriority = providerList(state.settingsResolved?.providerPriority);
+  const globalBonus = state.settingsResolved?.providerBonus;
+  if (resolved) {
+    if (JSON.stringify(providerList(resolved.providerPriority)) === JSON.stringify(globalPriority)) delete def.providerPriority;
+    if (resolved.providerBonus === globalBonus) delete def.providerBonus;
+    return;
+  }
+  if (Array.isArray(def.providerPriority) && def.providerPriority.length === 0) delete def.providerPriority;
+  if (def.providerBonus !== undefined && def.providerBonus === state.settingsDefaults?.providerBonus) delete def.providerBonus;
+}
+
+/** The def the rank/explain endpoints need: the AUTHORED def with the provider
+ * keys resolved from the edited global. Those endpoints treat the posted def as
+ * authored and do not merge the global, so an absent key must be filled here or
+ * the global priority would be inert. After the bootstrap strip, a present key
+ * is authored (an authored `[]` is a real opt-out), so only an absent key
+ * inherits. */
+function resolvedDefForRank(def) {
+  const out = { ...def };
+  if (!("providerPriority" in def)) out.providerPriority = effectiveGlobalPriority();
+  if (!("providerBonus" in def)) out.providerBonus = effectiveGlobalBonus();
+  return out;
 }
 
 /** Set (or clear) one global key on the working copy. A value equal to the
@@ -217,6 +280,18 @@ function settingsDirty() {
 /** The server's own validation, mirrored so the panel can show the error as you
  * type. Returns null for a valid value (or a key with no range). */
 function validateGlobal(key, value) {
+  // The provider priority is a list, not a number: mirror the server's
+  // `coerceProviderPriority` + per-entry check (non-empty, no `@`/`:`).
+  if (key === "providerPriority") {
+    const list = Array.isArray(value) ? value : typeof value === "string" ? providerList(value) : null;
+    if (list === null) return key + ": must be a comma-separated string or an array of provider ids, got " + JSON.stringify(value);
+    for (const id of list) {
+      if (typeof id !== "string" || id.length === 0 || id.includes("@") || id.includes(":")) {
+        return key + ": provider id " + JSON.stringify(id) + " must be a non-empty string without \"@\" or \":\"";
+      }
+    }
+    return null;
+  }
   const range = GLOBAL_RANGES[key];
   if (!range) return null;
   if (typeof value !== "number" || !Number.isFinite(value)) return key + ": must be a number";
@@ -310,6 +385,10 @@ const TIPS = {
   focusCrossSource: "Cross-source: the zeroeval per-entry price/context compared against the plugin's own price/context for the models carrying the metric (the median relative divergence, within a 0.5 tolerance). The speed figure is informational only (rps vs tok/s). An annotation, never a gate — it never feeds the 1/price² blend; unknown means no model joined or the payload carried none of the four fields.",
   imageFilter: "Require image input (filters.image) — the gate that shrinks the vision role's eligible set.",
   providerPin: "Hard provider pin: the OpenRouter provider slug this role's requests are routed to (a tiered slug like deepinfra/fp8 is accepted verbatim). Setting it opts the role out of the automatic best-route pin; empty = default OpenRouter routing.",
+  provider: "Effective provider: the first prioritized provider that offers the model, else openrouter. The marker names the price source — ·ref = omp's reference hydration of the model's list price (not the provider's own rate); ·proxy = the OpenRouter blend used because the provider has no own price.",
+  providerBonus: "Soft provider preference: applied in the selection comparison only — a value-unit nudge in value mode, a price-fraction discount in cheapest mode. Never folded into value or q.",
+  providerPriority: "Ordered omp provider ids the role prefers (comma-separated). Empty = inherit the global list. The first listed provider that offers a model is its effective provider.",
+  providerDerived: "derived = this value comes from the global provider setting, not from an explicit key in the role. Set the field to make it authored.",
   autoPin: "Automatic provider pin (candidate): this model's best route by the role's value-for-money score — the first route the updater's daily run tries. The updater probes that route with a one-token request bound to it (provider: { only: [slug] }) and skips to the next route when OpenRouter does not serve it, dropping the pin entirely (bare selector, OpenRouter's own routing) when none is routable — so the pin that gets written can be a later route, or absent.",
   features: "Opt-in capability presets (issue #40). Each flag applies the plugin's recommended settings for that capability to this role; an explicit knob value always wins. Export writes the flag, not the expanded values, so a future change to the recommendation keeps reaching the role.",
   featureState: "inherit = use the global flag (features.<id> in the lock file); on/off = a per-role override (roles.<role>.features.<id>) that beats the global in either direction.",
@@ -361,6 +440,8 @@ const GLOBAL_TIPS = {
   fallbackQualityFloor: "Quality floor for a cheaper-or-equal fallback: the fraction of the chosen model's quality it must retain (0 disables).",
   selection: "Model selection rule: value (best value) or cheapest (the cheapest model clearing qualityFloor).",
   qualityFloor: "In cheapest mode, the fraction of the pool's highest-q model's quality a cheaper candidate must retain (0 disables; inert in value mode).",
+  providerPriority: "Ordered omp provider ids the plugin prefers, comma-separated (e.g. flocta, openrouter). Empty = no preference (today's behavior).",
+  providerBonus: "Soft provider preference (0–1): a value-unit nudge in value mode, a price-fraction discount in cheapest mode. 0 disables the pick preference.",
   activateDefaultOnEmptySession: "Reapply the new default selector to an empty session's active model. No visual impact.",
   errorReporting: "File unexpected plugin errors as GitHub issues (off, ask, auto). No visual impact.",
   "tokenProfile.inputTokens": "Input tokens per task for the per-task price (used when the role has no recorded usage).",
@@ -376,6 +457,7 @@ const GLOBAL_RANGES = {
   fallbackChainDepth: { min: 0, step: 1, integer: true },
   fallbackQualityFloor: { min: 0, max: 1, step: 0.001 },
   qualityFloor: { min: 0, max: 1, step: 0.001 },
+  providerBonus: { min: 0, max: 1, step: 0.001 },
   "tokenProfile.inputTokens": { min: 0, step: 1 },
   "tokenProfile.outputTokens": { min: 0, step: 1 },
 };
@@ -614,7 +696,7 @@ async function recompute() {
   if (!state.role) return;
   let data;
   try {
-    data = await api("/api/rank", { role: state.role, def: state.defs[state.role], settings: state.settingsEdited });
+    data = await api("/api/rank", { role: state.role, def: resolvedDefForRank(state.defs[state.role]), settings: state.settingsEdited });
   } catch (err) {
     state.errors = [err.message];
     renderErrors();
@@ -769,6 +851,48 @@ function keyBadge(key) {
   return el("span", { class: "badge " + state_, "data-tip": keyTip(state_), text: state_ });
 }
 
+/** Compact price-source marker for the provider column (spec #116): the
+ * provider's own price and the gateway's blend need no marker; a reference
+ * price and the OpenRouter proxy do, because they are not the provider's rate. */
+const PRICE_SOURCE_MARK = { openrouter: "", provider: "", reference: "·ref", "openrouter-proxy": "·proxy" };
+
+/** The provider-preference term, trimmed to 3 decimals: a decayed bonus
+ * (`providerBonus / (index + 1)`, e.g. 0.05/3) would otherwise print a 17-digit
+ * float in a compact cell. */
+function fmtBonus(value) {
+  return Number(value.toFixed(3));
+}
+
+/** The provider cell's text: the effective provider, the price-source marker,
+ * and the soft preference term when non-zero (spec #116). A zero bonus renders
+ * exactly as before. */
+function providerCellText(row) {
+  const mark = PRICE_SOURCE_MARK[row.priceSource] || "";
+  const bonus = row.providerBonus > 0 ? " +" + fmtBonus(row.providerBonus) : "";
+  return row.provider + mark + bonus;
+}
+
+/** The provider column's tooltip: the effective provider, what the price basis
+ * actually is, and — when the row carries a preference — how the term applies in
+ * the active selection mode. The server owns the source and the mode; the client
+ * only explains them. */
+function providerTip(row) {
+  const source = row.priceSource;
+  let text;
+  if (source === "reference") text = "provider " + row.provider + " — reference price: omp's hydration of the model's list price, not the provider's own rate";
+  else if (source === "openrouter-proxy") text = "provider " + row.provider + " — OpenRouter proxy: the provider has no own price, so the OpenRouter blend is used as a labelled proxy";
+  else if (source === "provider") text = "provider " + row.provider + " — the provider's own catalog price";
+  else text = "provider " + row.provider + " — OpenRouter price: the model's own standard-route blend (3:1 in:out)";
+  if (row.providerBonus > 0) {
+    const mode = state.selection?.mode;
+    const term = mode === "cheapest"
+      ? "the provider preference is a price-fraction discount on the bar-clearing order"
+      : "the provider preference is a value-unit nudge applied in the selection comparison only (never in the honest value)";
+    text += " · +" + fmtBonus(row.providerBonus) + " — " + term;
+  }
+  return text;
+}
+
 function renderTable() {
   const table = document.getElementById("table");
   table.textContent = "";
@@ -779,6 +903,7 @@ function renderTable() {
       el("th", { "data-tip": TIPS.frontier, text: "★" }),
       el("th", { text: "model" }),
       el("th", { text: "org" }),
+      el("th", { "data-tip": TIPS.provider, text: "provider" }),
       el("th", { "data-tip": TIPS.key, text: "key" }),
       el("th", { class: "num", "data-tip": TIPS.value, text: "value" }),
       el("th", { class: "num", "data-tip": TIPS.q, text: "q" }),
@@ -811,6 +936,7 @@ function renderTable() {
         el("td", { class: "star", text: r.frontier ? "★" : "" }),
         el("td", { class: "model", text: r.name }),
         el("td", { class: "org", text: r.org }),
+        el("td", { class: "provider", "data-tip": providerTip(r), text: providerCellText(r) }),
         el("td", { class: "key" }, keyBadge(r.key)),
         el("td", { class: "num", text: fmt(r.value, 3) }),
         el("td", { class: "num", text: fmt(r.q, 3) }),
@@ -897,7 +1023,7 @@ function selectModel(id) {
 
 async function loadExplain(id) {
   try {
-    state.explain = await api("/api/explain", { role: state.role, def: state.defs[state.role], modelId: id, settings: state.settingsEdited });
+    state.explain = await api("/api/explain", { role: state.role, def: resolvedDefForRank(state.defs[state.role]), modelId: id, settings: state.settingsEdited });
   } catch (err) {
     state.explain = { eligible: false, reasons: [err.message] };
   }
@@ -993,6 +1119,10 @@ function renderExplain() {
   const cacheNote = ex.role.cacheHitRate > 0 ? " · cache " + ex.role.cacheHitRate : "";
   const ownNote = ex.ownProvider ? " · best route" : "";
   panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × " + thinkNote + ")" : " (" + thinkNote + ")") + cacheNote + ownNote + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
+  // The provider basis (spec #116): the server's own lines, never recomputed
+  // here, so the panel cannot drift from the ranking.
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.provider, text: "provider: " + ex.providerLine }));
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.providerBonus, text: "provider preference: " + ex.providerPreferenceLine }));
 
   // The per-task price breakdown: display-only, so it sits apart from the
   // ranking's cost line. A muted note when no token profile resolved (never a
@@ -1410,6 +1540,59 @@ function endpointFilterField(def, spec) {
   return cell;
 }
 
+/** The role's authored provider priority (spec #116): a comma-separated text
+ * input. Empty = inherit the global list. The bootstrap strip removes an
+ * inherited key, so a PRESENT key is authored (an authored `[]` is a real
+ * opt-out); a non-empty global marks an absent key derived. */
+function providerPriorityField(def) {
+  const global = effectiveGlobalPriority();
+  const authored = providerList(def.providerPriority);
+  const isAuthored = "providerPriority" in def;
+  const derived = !isAuthored && global.length > 0;
+  const cell = el("span", { class: "knob endpoint-filter" + (derived ? " derived" : "") });
+  const input = el("input", { type: "text", class: "knob-input provider-input", "data-tip": TIPS.providerPriority, value: authored.join(", "), placeholder: global.length ? global.join(", ") : "e.g. flocta, openrouter" });
+  input.addEventListener("change", () => {
+    const list = providerList(input.value);
+    if (list.length === 0) delete def.providerPriority;
+    else def.providerPriority = list;
+    renderEditor();
+    renderRoles();
+    scheduleRecompute();
+  });
+  cell.append(input);
+  cell.append(el("span", { class: "knob-name", text: "providerPriority" }));
+  const badge = derived ? "derived " + global.join(", ") : isAuthored ? "authored" : "—";
+  cell.append(el("span", { class: "knob-badge " + (derived ? "derived" : isAuthored ? "authored" : "none"), "data-tip": TIPS.providerDerived, text: badge }));
+  return cell;
+}
+
+/** The role's authored provider bonus (spec #116): a number input. Empty =
+ * inherit the global. The bootstrap strip removes an inherited key, so a
+ * PRESENT key is authored; a non-default global marks an absent key derived. */
+function providerBonusField(def) {
+  const shipped = state.settingsDefaults?.providerBonus;
+  const global = effectiveGlobalBonus();
+  const authored = "providerBonus" in def ? def.providerBonus : undefined;
+  const derived = authored === undefined && global !== undefined && global !== shipped;
+  const cell = el("span", { class: "knob endpoint-filter" + (derived ? " derived" : "") });
+  const input = el("input", { type: "number", min: "0", max: "1", step: "0.001", class: "knob-input", "data-tip": TIPS.providerBonus, placeholder: global === undefined ? "—" : String(global) });
+  if (authored !== undefined) input.value = String(authored);
+  input.addEventListener("input", () => {
+    if (input.value === "") delete def.providerBonus;
+    else def.providerBonus = Number(input.value);
+    scheduleRecompute();
+  });
+  input.addEventListener("change", () => {
+    renderEditor();
+    renderRoles();
+  });
+  cell.append(input);
+  cell.append(el("span", { class: "knob-name", text: "providerBonus" }));
+  const badge = derived ? "derived " + global : authored !== undefined ? "authored" : "—";
+  cell.append(el("span", { class: "knob-badge " + (derived ? "derived" : authored !== undefined ? "authored" : "none"), "data-tip": TIPS.providerDerived, text: badge }));
+  return cell;
+}
+
 /** The per-role Features panel: one tri-state control per capability (inherit /
  * on / off) writing `def.features[id]`, the recommended bundle, and the
  * individual knobs the bundle fills, each marked derived or authored. */
@@ -1606,6 +1789,12 @@ function renderEditor() {
   });
   panel.append(el("div", { class: "row-controls" }, [pin]));
 
+  panel.append(el("h3", { "data-tip": TIPS.providerPriority, text: "Provider priority" }));
+  const providerFields = el("div", { class: "endpoint-filters" });
+  providerFields.append(providerPriorityField(def));
+  providerFields.append(providerBonusField(def));
+  panel.append(providerFields);
+
   renderFeatures(panel);
 
   panel.append(el("h3", { "data-tip": TIPS.thinking, text: "Thinking level" }));
@@ -1704,6 +1893,13 @@ function globalFields() {
       out.push({ key, kind: "enum", values: ["off", "ask", "auto"], label: key, tip: GLOBAL_TIPS.errorReporting, noImpact: true });
       continue;
     }
+    // The priority is an ARRAY in the resolved/default shapes but a flat
+    // comma-separated string in the lock file; the generic type switch would
+    // render it as a number input, so it gets its own text kind.
+    if (key === "providerPriority") {
+      out.push({ key, kind: "text", label: key, tip: GLOBAL_TIPS.providerPriority });
+      continue;
+    }
     const def = state.settingsDefaults[key];
     out.push({ key, kind: typeof def === "boolean" ? "boolean" : "number", label: key, tip: GLOBAL_TIPS[key] || null, noImpact: key === "activateDefaultOnEmptySession" });
   }
@@ -1741,6 +1937,22 @@ function globalField(field) {
     input.addEventListener("change", () => {
       setGlobal(key, input.value);
       commit();
+    });
+  } else if (field.kind === "text") {
+    // A list setting (providerPriority): the resolved/default shape is an array,
+    // the lock file's flat form a comma-separated string. Show the joined list;
+    // store the raw string (the server accepts the flat form) and let a cleared
+    // field delete the key (the setGlobal default-clearing rule).
+    input = el("input", { type: "text", class: "setting-input" });
+    const value = current();
+    input.value = Array.isArray(value) ? value.join(", ") : value === undefined || value === null ? "" : String(value);
+    input.addEventListener("input", () => {
+      setGlobal(key, input.value);
+      commit();
+    });
+    input.addEventListener("change", () => {
+      renderSettings();
+      renderExportState();
     });
   } else {
     const range = GLOBAL_RANGES[key] || {};
@@ -1868,7 +2080,10 @@ function renderSettings() {
 function onGlobalEdit(key) {
   state.exportMessage = "";
   renderExportState();
-  if (key && key.startsWith("features.")) renderEditor();
+  // A capability flag changes the per-role expansion; the provider globals
+  // change the role editor's derived badges and placeholders. Rebuild it so
+  // both move with the re-ranked table.
+  if (key && (key.startsWith("features.") || key === "providerPriority" || key === "providerBonus")) renderEditor();
   scheduleRecompute();
 }
 
@@ -2005,6 +2220,7 @@ function applyBootstrap(data) {
   state.poolMode = data.poolMode || "raw";
   state.tokenProfile = data.tokenProfile ?? null;
   state.universe = data.universe;
+  state.resolvedRoles = data.roles || {};
   state.effective = {};
   for (const [name, entry] of Object.entries(state.universe)) state.effective[name] = entry.def;
   state.defs = structuredClone(state.effective);
@@ -2025,6 +2241,13 @@ function applyBootstrap(data) {
   state.settingsResolved = settings.resolved || null;
   state.settingsDefaults = settings.defaults || null;
   state.settingsEdited = structuredClone(state.settingsAuthored);
+  // The universe def is filled with the shipped provider defaults (spec #116);
+  // strip an inherit-equal value so the preview's resolveSettings fills the
+  // global and the editor's authored/derived badge is honest.
+  for (const name of Object.keys(state.defs)) {
+    stripInheritedProviderKeys(state.defs[name], name);
+    stripInheritedProviderKeys(state.effective[name], name);
+  }
   state.preview = null;
   state.previewErrors = [];
   state.rows = [];
