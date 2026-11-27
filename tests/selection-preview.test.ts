@@ -444,3 +444,16 @@ test("a none tier resolves no candidate even with a full catalog", () => {
   assert.deepEqual(p.decisions, []);
   assert.deepEqual(p.skipped, [{ role: "default", reason: "no eligible candidate" }]);
 });
+
+test("a non-OpenRouter candidate is not pruned by the OpenRouter keyed set", () => {
+  // `model-a` is blocked on OpenRouter, but its effective provider is flocta, so
+  // the OpenRouter keyed prune must not drop it: the role is still decided and
+  // the decision's key-blocked count is 0.
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60)];
+  const catalog = [...makeCatalog(["model-a", "model-b"]), ...providerCatalog("flocta", ["model-a"])];
+  enrichThinkingLevels(models, catalog);
+  const p = preview(onlyDefault({ providerPriority: "flocta" }), { models, catalog, availability: availability(["model-a"], ["model-b"]) });
+  assert.equal(p.decisions.length, 1);
+  assert.equal(p.decisions[0].to, "flocta/org/model-a:auto");
+  assert.equal(p.decisions[0].keyBlockedCount, 0);
+});

@@ -607,7 +607,12 @@ export function previewSelection(input: {
     }
     const currentSelector = currentSelectors[role] ?? null;
     const currentId = currentSelector === null ? null : currentRankingId(currentSelector, new Set(eligible.map((c) => c.provider)));
-    const keyBlocked = (c: Candidate) => availability.active && availability.blocked.has(c.ranked.model.id);
+    // The keyed-catalog prune is OpenRouter-only: `availability.blocked` is the
+    // OpenRouter keyed set, so a model offered by a non-OpenRouter provider must
+    // not be pruned by it (the run gates the same predicate on the effective
+    // provider).
+    const keyBlocked = (c: Candidate) =>
+      (c.ranked.provider ?? "openrouter") === "openrouter" && availability.active && availability.blocked.has(c.ranked.model.id);
     const keyBlockedCount = candidates.filter(keyBlocked).length;
     // Probe-optimistic: every candidate in the pre-walk set is clean, so the
     // walk's window is the prefix of the walk order its stop condition admits
