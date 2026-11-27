@@ -15,12 +15,33 @@ const css = readFileSync(join(process.cwd(), "web", "style.css"), "utf8");
 test("the rank table shows the effective provider and the price-source marker", () => {
   // The column header and the per-row cell.
   assert.match(app, /text: "provider" \}\)/, "the rank table has a provider column header");
-  assert.match(app, /text: r\.provider \+ \(PRICE_SOURCE_MARK\[r\.priceSource\] \|\| ""\)/);
+  assert.match(app, /text: providerCellText\(r\)/);
   // Only the two non-obvious sources are marked: a reference price and the proxy.
   assert.match(app, /const PRICE_SOURCE_MARK = \{ openrouter: "", provider: "", reference: "·ref", "openrouter-proxy": "·proxy" \}/);
   // The tooltip names the source in words, so the marker is not the only signal.
   assert.match(app, /reference price: omp's hydration of the model's list price, not the provider's own rate/);
   assert.match(app, /OpenRouter proxy: the provider has no own price, so the OpenRouter blend is used as a labelled proxy/);
+});
+
+test("the rank table's provider cell renders the preference term when non-zero", () => {
+  // The cell text is provider + price-source marker + the bonus term; a zero
+  // bonus adds nothing, so the empty-priority table is unchanged.
+  assert.match(app, /function providerCellText\(row\)/);
+  assert.match(app, /const mark = PRICE_SOURCE_MARK\[row\.priceSource\] \|\| ""/);
+  // A decayed bonus (0.05/3) is trimmed to 3 decimals, not a 17-digit float.
+  assert.match(app, /function fmtBonus\(value\) \{\s*\n\s*return Number\(value\.toFixed\(3\)\);/);
+  assert.match(app, /const bonus = row\.providerBonus > 0 \? " \+" \+ fmtBonus\(row\.providerBonus\) : ""/);
+  assert.match(app, /return row\.provider \+ mark \+ bonus/);
+});
+
+test("the provider tooltip explains the preference term in the active mode", () => {
+  // The mode comes from the rank payload's selection block, not a client guess.
+  assert.match(app, /const mode = state\.selection\?\.mode/);
+  assert.match(app, /mode === "cheapest"/);
+  assert.match(app, /the provider preference is a price-fraction discount on the bar-clearing order/);
+  assert.match(app, /the provider preference is a value-unit nudge applied in the selection comparison only \(never in the honest value\)/);
+  // The term is appended only when the row carries a preference.
+  assert.match(app, /if \(row\.providerBonus > 0\) \{/);
 });
 
 test("the explain view shows the provider bonus as its own line", () => {
