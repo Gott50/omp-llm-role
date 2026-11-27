@@ -133,9 +133,24 @@ export function readScopeRoles(scope: Scope, userLockPath: string): { roles: Rec
     ? readPluginSettingsMap({ global: scope.lockPath, project: null })
     : readPluginSettingsMap({ global: userLockPath, project: scope.lockPath });
   const { settings, errors } = resolveSettings(raw);
+  // The role editor edits the AUTHORED def, and `roleUniverse`'s merge half does
+  // not fill the provider keys (only `resolveSettings` does). Fill the shipped
+  // defaults on a clone, so the editor always has a value to render and the
+  // shared `DEFAULT_ROLES` objects are never mutated.
+  const universe = roleUniverse(raw, settings.roles);
+  for (const [name, entry] of Object.entries(universe)) {
+    universe[name] = {
+      ...entry,
+      def: {
+        ...entry.def,
+        providerPriority: entry.def.providerPriority ?? [],
+        providerBonus: entry.def.providerBonus ?? DEFAULT_SETTINGS.providerBonus,
+      },
+    };
+  }
   return {
     roles: settings.roles,
-    universe: roleUniverse(raw, settings.roles),
+    universe,
     features: settings.features,
     selection: { mode: settings.selection, qualityFloor: settings.qualityFloor },
     settings: {

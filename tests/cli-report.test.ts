@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { enrichThinkingLevels, type CatalogEntry } from "../src/availability.ts";
 import { computeRankings, type Model, type RoleDef } from "../src/engine.ts";
 import { formatModelRolesYaml } from "../src/cli/llm-role-rank.ts";
@@ -157,4 +157,17 @@ test("invalid plugin settings abort the report with the errors on stderr", () =>
   assert.equal(res.status, 1);
   assert.match(res.stderr, /^omp-llm-role settings invalid:\n {2}providerPriority: /m);
   assert.equal(res.stdout, "");
+});
+
+test("importing the CLI module has no side effects: no live fetch, no omp spawn", () => {
+  // The report module used to call `main()` at import time, so importing it from
+  // this test ran a live ranking fetch and `omp models ls`. The entry guard keeps
+  // the import pure; a regression would print the report (or hang on the network).
+  const cli = pathToFileURL(join(import.meta.dirname, "..", "src", "cli", "llm-role-rank.ts")).href;
+  const out = execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e", `await import(${JSON.stringify(cli)});`],
+    { encoding: "utf8", timeout: 20_000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  assert.equal(out, "");
 });

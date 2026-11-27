@@ -1,4 +1,4 @@
-# Current state (2026-10-25)
+# Current state (2026-11-27)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
@@ -17,6 +17,32 @@ work, spec #81's explorer surfaces, and spec #103's opt-in selection rule (the
 ranking CLI does not apply `selection`). The provider-pin numbers are the
 2026-10-11 measurement (spec #71; see the top bullet). Neither is re-derived on
 read.
+
+- Provider priority (2026-11-27, spec #116): an opt-in soft preference for any
+  omp provider. Two settings — `providerPriority` (an ordered list of omp
+  provider ids, global with a per-role override; default `[]`) and
+  `providerBonus` (`[0, 1]`, default `0.05`) — make the plugin pick models the
+  prioritized provider actually offers, price them on that provider's catalog
+  cost (a `reference` price, or the OpenRouter blend as a labelled
+  `openrouter-proxy` when the provider has no own price), write the effective
+  provider's selector (`<provider>/<catalog-id>[:<level>]` for a non-OpenRouter
+  provider, `openrouter/<catalog-id>[@<slug>]` for the gateway), and build the
+  fallback chain with the same model on its other providers first (omp's
+  `openrouter/*` wildcard where it applies) then the next-best models. The
+  bonus is applied in the **selection comparison only** (`value + providerBonus`
+  in value mode, `priceEff × (1 − providerBonus)` in cheapest mode), never in
+  `value`/`q`, so the displayed ranking stays honest. Each prioritized
+  non-OpenRouter provider's catalog is refreshed daily through omp
+  (`omp models refresh <provider>` + `omp models ls --json`, cached in
+  `cache/provider-catalog-fetched-data.json`), best-effort with a
+  session-catalog fallback. The explorer's rank/explain/preview and the CLI
+  report surface the effective provider, the price source and the bonus, and the
+  Settings panel and role editor expose the new keys. **The default install's
+  ranking is byte-identical** — an empty priority list and a zero bonus leave
+  every model's effective provider `openrouter`, the bonus `0` and every
+  selector, chain and ranking unchanged — so the matched/priced/eligible counts
+  and per-role leaders below are still the 2026-10-25 measurement; the report
+  was not regenerated (it needs a live fetch, and the spec does not ask for it).
 
 - Release 1.6.0 (2026-10-25, cut `82b2a29`, tag `v1.6.0`): the spec #109 explorer
   settings editor and decision preview, and the spec #103 opt-in cheapest-model

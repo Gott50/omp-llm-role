@@ -8,7 +8,7 @@ import { DEFAULT_ROLES, resolveSettings, type ResolvedSettings } from "../src/se
 import { discoverAgentPins, type AgentPin } from "../src/agent-pins.ts";
 import { parseConfig } from "../src/config-edit.ts";
 import { previewSelection, type SelectionPreview } from "../src/selection.ts";
-import { runUpdater, type Decision, type DecisionReason, type RunResult } from "../src/updater.ts";
+import { runUpdater, type Decision, type DecisionReason, type Deps, type RunResult } from "../src/updater.ts";
 import { fakeDeps, makeCatalog, makeModel, NO_FILTER_AVAILABILITY, runInTempDir, setupAgentDir } from "./helpers.ts";
 
 // Spec #109 / ticket #110: the pure decision module. Every assertion here is
@@ -303,9 +303,17 @@ test("RunResult.patch is absent on an abort", async () => {
 type StateFixture = { managedRoles?: string[]; pluginWrittenChainKeys?: string[]; managedDisabledAgents?: string[] };
 
 /** A real dry run and a preview on the same fixture, in the same agent dir, with
- * the same harvested agent pins. */
-async function agreement(raw: Record<string, unknown>, models: Model[], configText: string, state: StateFixture = {}) {
-  const catalog = makeCatalog(models.map((m) => m.id));
+ * the same harvested agent pins. `opts.catalog` is the full catalog (every
+ * provider) for a provider-priority fixture; `opts.deps` overrides the fake
+ * deps (the provider catalog seams). */
+async function agreement(
+  raw: Record<string, unknown>,
+  models: Model[],
+  configText: string,
+  state: StateFixture = {},
+  opts: { catalog?: CatalogEntry[]; deps?: Partial<Deps> } = {},
+) {
+  const catalog = opts.catalog ?? makeCatalog(models.map((m) => m.id));
   const rank: RankData = { models, fetchedAt: "2026-09-22T00:00:00.000Z", source: "test", orMatched: models.length, orPriced: models.length };
   // One shared `RankData`, enriched once before either call: `runUpdater` enriches
   // in place, so a preview run first on unenriched models would diverge on the
@@ -317,6 +325,9 @@ async function agreement(raw: Record<string, unknown>, models: Model[], configTe
     getCatalog: async () => catalog,
     probeModel: async () => "ok",
     probeRoute: async () => "ok",
+    // Per-test cache path: the provider refresh must never touch the repo cache.
+    providerCatalogCachePath: join(dir, "provider-catalog-cache.json"),
+    ...opts.deps,
   });
   return runInTempDir(dir, async () => {
     const result = await runUpdater("manual", deps, { force: true, dryRun: true });
@@ -324,6 +335,7 @@ async function agreement(raw: Record<string, unknown>, models: Model[], configTe
       settings: resolved(raw),
       rank,
       eligible: filterCatalog(catalog, "billed"),
+      catalog,
       availability: NO_FILTER_AVAILABILITY,
       currentSelectors: parseConfig(readFileSync(join(dir, "config.yml"), "utf8")).modelRoles,
       state: {
@@ -456,4 +468,59 @@ test("a non-OpenRouter candidate is not pruned by the OpenRouter keyed set", () 
   assert.equal(p.decisions.length, 1);
   assert.equal(p.decisions[0].to, "flocta/org/model-a:auto");
   assert.equal(p.decisions[0].keyBlockedCount, 0);
+});
+
+// Spec #116: the preview and the run share the provider-priority decision, so
+// they cannot drift on the selector or the cross-provider chain.
+test("agreement: the preview matches a real dry run under a provider priority", async () => {
+  // Fresh models: `enrichThinkingLevels` mutates the ranking rows in place.
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
+  const flocta = providerCatalog("flocta", ["model-a"]);
+  const catalog = [...makeCatalog(models.map((m) => m.id)), ...flocta];
+  const raw = onlyDefault({ providerPriority: "flocta" });
+  const { result, preview } = await agreement(raw, models, "other: 1\n", {}, {
+    catalog,
+    deps: {
+      getProviderCatalog: async () => flocta,
+      refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    },
+  });
+  assertAgrees(result, preview);
+  assert.equal(preview.decisions[0].to, "flocta/org/model-a:auto");
+  // The chosen model on OpenRouter first (the wildcard keeps the model id),
+  // then the next-best models in value order.
+  assert.deepEqual(preview.chains["flocta/org/model-a"], [
+    "openrouter/*:auto",
+    "openrouter/org/model-b:auto",
+    "openrouter/org/model-c:auto",
+  ]);
+});
+
+test("agreement: a provider bonus promotes a lower-value model and bestValue follows the challenger", async () => {
+  // model-a is the honest value leader; model-b is offered by the prioritized
+  // provider, so its bonus makes it the effective-value leader. The decision's
+  // `bestValue` must be the challenger's honest value (not the value walk's
+  // leader), and the preview must agree.
+  const models = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 88, 1, 100)];
+  const flocta = providerCatalog("flocta", ["model-b"]);
+  const catalog = [...makeCatalog(models.map((m) => m.id)), ...flocta];
+  const raw = onlyDefault({ providerPriority: "flocta" });
+  const { result, preview } = await agreement(raw, models, "other: 1\n", {}, {
+    catalog,
+    deps: {
+      getProviderCatalog: async () => flocta,
+      refreshProviderCatalog: async (provider) => ({ provider, ok: true }),
+    },
+  });
+  assertAgrees(result, preview);
+  const ranked = rankRole(resolved(raw).roles.default, models);
+  const modelA = ranked.find((r) => r.model.id === "model-a");
+  const modelB = ranked.find((r) => r.model.id === "model-b");
+  assert.ok(modelA && modelB);
+  // The bonus flips the effective leader: model-b's honest value is lower.
+  assert.ok(modelB.value < modelA.value);
+  assert.ok(modelB.value + (modelB.providerBonus ?? 0) > modelA.value + (modelA.providerBonus ?? 0));
+  assert.equal(result.decisions[0].to, "flocta/org/model-b:auto");
+  assert.equal(result.decisions[0].bestValue, modelB.value);
+  assert.equal(preview.decisions[0].bestValue, modelB.value);
 });
