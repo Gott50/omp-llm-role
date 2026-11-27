@@ -60,6 +60,12 @@ omp plugin install omp-llm-role@gott50-plugins
   model's display is unchanged, and the suffix is display-only: it rides the
   model object's `name`, so attribution, usage recording and model comparison
   are unaffected.
+- **Provider catalog refresh.** When a provider priority is set, the day's run
+  also refreshes each prioritized non-OpenRouter provider's catalog through omp
+  (`omp models refresh <provider>` then `omp models ls --json`), once per UTC
+  day, and uses the fresh list for that run. It is best-effort: a failed refresh
+  or read falls back to the session catalog with a note, and a provider with no
+  `discovery` block is noted with the snippet to add.
 - **Surgical writes.** Only managed role lines, managed chain keys, and the
   plugin-managed `task.disabledAgents` names change; comments, blank lines and
   unknown keys stay byte-identical, and a no-change run writes nothing.
@@ -140,6 +146,8 @@ Global knobs:
 | `errorReporting` | `off` | Opt-in reporting of **unexpected** plugin errors as GitHub issues on `Gott50/omp-llm-role`; one of `off`, `ask`, `auto` (see below) |
 | `selection` | `value` | Model selection rule: `value` picks the best-value model (today's behaviour); `cheapest` picks the cheapest model that clears `qualityFloor`. Opt-in — an upgrade changes nothing until you ask |
 | `qualityFloor` | `0.9` | In `cheapest` mode, the fraction of the pool's best model's quality a cheaper candidate must retain; `0` disables the bar, `1` requires the anchor's exact `q`. Inert in `"value"` mode |
+| `providerPriority` | `[]` (empty) | Ordered omp provider ids the plugin prefers (comma-separated in the lock file, e.g. `"flocta, openrouter"`). The first listed provider that offers a model is its **effective provider**; empty = no preference (today's behaviour) |
+| `providerBonus` | `0.05` | Soft provider preference (`0`–`1`): a value-unit nudge in `value` mode, a price-fraction discount in `cheapest` mode. Applied in the selection comparison only, never in `value`/`q`; `0` disables the pick preference (the chain still follows the priority order) |
 
 Per-role knobs (`roles.<name>.*`):
 
@@ -161,6 +169,8 @@ Per-role knobs (`roles.<name>.*`):
 | `lambda` | derived | Explicit λ ($ per quality point) override |
 | `selection` | global | Per-role selection rule (`value`/`cheapest`); overrides the global `selection` |
 | `qualityFloor` | global | Per-role quality floor for `cheapest` mode; overrides the global `qualityFloor` |
+| `providerPriority` | global | Per-role provider order (comma-separated omp provider ids); overrides the global `providerPriority` |
+| `providerBonus` | global | Per-role provider bonus (`0`–`1`); overrides the global `providerBonus` |
 | `locked` | `false` | Leave the role alone: rank it but never rewrite its selector or chain (explorer toggle) |
 
 **Capability flags** (`features.<id>` global, `roles.<role>.features.<id>` per
@@ -205,6 +215,37 @@ The flags are settable from every role-authoring surface: `--feature <id,...>`
 explorer's Features panel. An
 unknown flag id or a non-boolean value aborts the run with the offending key and
 no write.
+
+**Provider priority (`providerPriority` / `providerBonus`).** An opt-in soft
+preference for any omp provider — including OpenRouter — so the plugin picks
+models that provider actually offers, writes selectors that route to it, and
+falls back to the other providers. Set the ordered list globally (or per role)
+and tune the bonus; the first listed provider that offers a model is its
+**effective provider**, and the bonus decays by position
+(`providerBonus / (index + 1)`). The plugin writes
+`<provider>/<model-id>[:<level>]` for a non-OpenRouter provider (no `@<slug>` —
+the provider is the route) and `openrouter/<model-id>[@<slug>]` for the gateway.
+The bonus is applied in the **selection comparison only** — a value-unit nudge
+in `value` mode, a price-fraction discount in `cheapest` mode — so the displayed
+value ranking stays honest and a much better model elsewhere can still win. The
+fallback chain carries the same model on its other providers first (omp's
+`provider/*` wildcard where it applies), then the next-best models, so a
+provider outage fails over without changing the model. A non-OpenRouter pick is
+**not probe-verified** (the probe walk is OpenRouter-only); the chain's
+OpenRouter entries are the runtime safety net. The default is an empty list and
+a zero-effect bonus, so an upgrade changes nothing until you set it.
+
+*One-time setup for a custom provider.* Add
+`discovery: { type: openai-models-list }` to the provider's `models.yml` entry;
+the plugin never writes `models.yml`, but it notes the exact snippet when the
+block is absent. After that, the daily run refreshes the provider's catalog
+through omp (`omp models refresh <provider>` then `omp models ls --json`, cached
+per UTC day) and uses the fresh list for availability and metadata; a failed
+refresh degrades to the session catalog. *Price caveat:* the catalog cost is
+omp's **reference hydration** of the model's list price, not the provider's own
+rate — with `discovery: openai-models-list` the cost is zero/unknown, so the
+OpenRouter blend is used as a labelled proxy. For the provider's exact rate, add
+`modelOverrides` with `cost` to its `models.yml` entry.
 
 **Error reporting (`errorReporting`).** This knob ships **`off`** — installing
 or upgrading the plugin never starts uploading anything. When something
