@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { enrichThinkingLevels, type CatalogEntry } from "../src/availability.ts";
 import { computeRankings, type Model, type RoleDef } from "../src/engine.ts";
@@ -140,4 +142,17 @@ test("a role whose #1 has no catalog match keeps the comment placeholder", () =>
   const roles: Record<string, RoleDef> = { default: DEFAULT_ROLES.default };
   const yaml = formatModelRolesYaml(computeRankings(models(), roles), roles, []);
   assert.match(yaml, /^ {2}default: # no catalog match for model-a$/m);
+});
+
+test("importing the CLI module has no side effects: no live fetch, no omp spawn", () => {
+  // The report module used to call `main()` at import time, so importing it from
+  // this test ran a live ranking fetch and `omp models ls`. The entry guard keeps
+  // the import pure; a regression would print the report (or hang on the network).
+  const cli = pathToFileURL(join(import.meta.dirname, "..", "src", "cli", "llm-role-rank.ts")).href;
+  const out = execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e", `await import(${JSON.stringify(cli)});`],
+    { encoding: "utf8", timeout: 20_000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  assert.equal(out, "");
 });
