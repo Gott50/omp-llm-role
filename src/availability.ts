@@ -9,6 +9,7 @@
  */
 import { isRecord } from "./guards.ts";
 import type { Model } from "./engine.ts";
+import { providerCatalogIdFor, providerOffersFor, providerOrder } from "./provider-priority.ts";
 
 export type CatalogEntry = {
   provider: string;
@@ -361,14 +362,20 @@ export function splitThinkingSuffix(selector: string): { base: string; level: st
 }
 
 /** Identity of a configured selector for hysteresis/chain keys: drop `:level`,
- * `openrouter/`, and a trailing `@<slug>` provider pin, then rankingIdOf. A
- * tiered pin (`@deepinfra/fp8`) is dropped whole — everything from the last `@`. */
-export function currentRankingId(selector: string): string {
+ * a trailing `@<slug>` provider pin, and the provider prefix, then rankingIdOf.
+ * A tiered pin (`@deepinfra/fp8`) is dropped whole — everything from the last
+ * `@`. The first path segment is stripped when it is `openrouter` or a member of
+ * `knownProviders` (the catalog's provider ids); an unknown prefix is kept, so a
+ * hand-written bare selector is not misparsed. `knownProviders` absent = the
+ * historical `openrouter/`-only rule. */
+export function currentRankingId(selector: string, knownProviders?: ReadonlySet<string>): string {
   const { base } = splitThinkingSuffix(selector);
-  const unprefixed = base.startsWith("openrouter/") ? base.slice("openrouter/".length) : base;
-  const at = unprefixed.lastIndexOf("@");
-  const unpinned = at !== -1 ? unprefixed.slice(0, at) : unprefixed;
-  return rankingIdOf(unpinned);
+  const at = base.lastIndexOf("@");
+  const unpinned = at !== -1 ? base.slice(0, at) : base;
+  const slash = unpinned.indexOf("/");
+  const first = slash === -1 ? null : unpinned.slice(0, slash);
+  const strip = first !== null && (first === "openrouter" || (knownProviders?.has(first) ?? false));
+  return rankingIdOf(strip ? unpinned.slice(slash + 1) : unpinned);
 }
 
 // "Newest dated" = trailing -MMDD or -YYYYMMDD (max numeric wins; ties lexicographic).
@@ -400,21 +407,51 @@ export function resolveVariant(rankingId: string, candidates: CatalogEntry[], ti
   return minLex.id; // newest dated (equal dates) or ~org/…-latest alias — last resort
 }
 
+/**
+ * Provider-scoped variant resolution: the concrete catalog id a ranking row
+ * resolves to on `provider`. OpenRouter keeps the tier/keyed rules of
+ * `resolveVariant`; any other provider is gated by its catalog membership
+ * (the daily snapshot) through the provider-scoped variant chain — no tier
+ * rules. Null when the provider does not offer the model.
+ */
+export function resolveProviderVariant(
+  rankingId: string,
+  provider: string,
+  catalog: readonly CatalogEntry[],
+  tier: "billed" | "free",
+): string | null {
+  if (provider === "openrouter") return resolveVariant(rankingId, catalog as CatalogEntry[], tier);
+  return providerCatalogIdFor(rankingId, provider, catalog);
+}
 
-/** Set each model's omp catalog `thinking[]` (per-model level list) by the
- * ranking-id join (`rankingIdOf`). Models without a catalog match keep
+/** Attach the omp catalog's per-model data to the ranking rows: the
+ * provider-scoped `thinking[]` level list and the per-provider offers.
+ *
+ * Thinking: only OpenRouter rows may set `thinkingLevels` (first non-empty list
+ * by ranking id), so a non-OpenRouter provider's capability list never lands in
+ * an `openrouter/...` selector. Models without an OpenRouter match keep
  * `thinkingLevels` undefined — the ranking falls back to the OR
- * `supports_reasoning` flag for them; a matched model with an empty list is
- * priced bare even when OR advertises `supports_reasoning`. */
+ * `supports_reasoning` flag; a matched model with an empty list is priced bare
+ * even when OR advertises `supports_reasoning`.
+ *
+ * Offers: every non-OpenRouter provider present in the catalog contributes its
+ * offer (`catalogId`, 3:1 price or null, its own thinking list) to
+ * `providerOffers`. The map is role-independent (all catalog providers, not a
+ * role's priority list), so one enrichment serves every role. Undefined when no
+ * non-OpenRouter provider offers the model. */
 export function enrichThinkingLevels(models: Model[], catalog: CatalogEntry[]): void {
   const byRankingId = new Map<string, string[]>();
   for (const c of catalog) {
+    if (c.provider !== "openrouter") continue;
     const rid = rankingIdOf(c.id);
     if (c.thinking.length > 0 && !byRankingId.has(rid)) byRankingId.set(rid, c.thinking);
   }
+  const order = providerOrder(catalog.map((c) => c.provider));
   for (const m of models) {
     const levels = byRankingId.get(m.id);
     if (levels) m.thinkingLevels = levels;
+    const offers = providerOffersFor(m, catalog, order);
+    if (Object.keys(offers).length > 0) m.providerOffers = offers;
   }
 }
 
