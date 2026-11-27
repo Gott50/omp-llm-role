@@ -134,12 +134,14 @@ The omp extension injects the production `Deps`; tests inject fakes.
    provider with the fresh ones. A failed refresh or read degrades to the session
    catalog with a note; the fresh rows are cached in
    `cache/provider-catalog-fetched-data.json` (data-sources.md, *omp catalog —
-   provider availability*). The merged catalog is what the tier gate, the
-   enrichment and the ranking see.
+   provider availability*). The merged catalog is what
+   `filterCatalog(mergedCatalog, tier)` narrows and what the enrichment and the
+   ranking see.
 6. **Catalog + probe.** `deps.getCatalog()` → `filterCatalog(catalog, tier)`;
-   `enrichThinkingLevels(rank.models, catalog)` — which now also attaches each
-   model's `providerOffers` (the per-provider catalog id, price and thinking
-   list) and scopes the thinking levels to the effective provider's row.
+   `enrichThinkingLevels(rank.models, catalog)` — which keeps `thinkingLevels`
+   OpenRouter-only and attaches each model's `providerOffers` (the per-provider
+   catalog id, price and thinking list) for every non-OpenRouter catalog
+   provider; `rankRole` later picks the effective provider's list.
    **Whitelist prune.** The updater then harvests the account's
    allowed-providers privacy whitelist once per run
    (`deps.getAllowedProviders ? deps.getAllowedProviders(token, canaryModelId)

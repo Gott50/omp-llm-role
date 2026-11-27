@@ -423,8 +423,10 @@ passing.
     UTC day, `writeProviderCatalogCache` sorted keys), `providerCatalogCachePath`,
     and `providerDiscovery` (a `discovery` block → `"discovery"`, a static entry →
     `"static"`, an absent file/provider → `"unknown"`). The enrichment
-    (`provider-enrichment.test.ts`): `enrichThinkingLevels` attaches
-    `providerOffers` and scopes `thinkingLevels` to the effective provider's row.
+    (`provider-enrichment.test.ts`): `enrichThinkingLevels` keeps
+    `thinkingLevels` OpenRouter-only and attaches `providerOffers` for every
+    non-OpenRouter catalog provider; `rankRole` picks the effective provider's
+    list.
     The CLI report (`cli-report.test.ts`): the suggested YAML uses the effective
     provider's selector (`<provider>/<catalog-id>` for a non-OpenRouter provider,
     `openrouter/<catalog-id>` for the gateway) and the module's entry guard

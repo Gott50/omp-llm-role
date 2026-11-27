@@ -325,7 +325,11 @@ in `rankRole`, the selection in `src/selection.ts`.
   `effectiveValue = value + providerBonus` (the incumbent's own bonus included)
   under the existing `switchMargin`, so a provider change is a **normal switch**
   subject to the margin and the plugin does not churn on a small bonus. The
-  challenger is the effective-value leader.
+  challenger is the plain **value leader** (`rankRole` sorts by `value` only and
+  the ladder takes `pool[0]`); the bonus shifts only the
+  `switched`/`cheaperInsideMargin` margin comparison — a preferred value leader
+  clears the margin sooner, a preferred incumbent resists — so it cannot promote
+  a lower-value preferred model.
 - **Cheapest mode — the price discount.** The value bonus is inert (the pick is
   the cheapest bar-clearing candidate). The preference is a price-fraction
   discount on the preferred provider's candidates for the bar-clearing order:
