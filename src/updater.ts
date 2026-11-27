@@ -636,7 +636,7 @@ export async function runUpdater(trigger: Trigger, deps: Deps, opts?: { force?: 
         value: chosen.ranked.value,
         // Value mode's challenger is the effective-value leader; cheapest mode's
         // challenger is the pick, so the log keeps the value walk's leader there
-        // for comparability (matches `previewSelection`).
+        // for comparability. Mirrors `previewSelection`.
         bestValue: mode === "value" ? inputs.challenger.ranked.value : best.ranked.value,
         currentValue: inputs.currentEntry?.ranked.value ?? null,
         blocked: blockedForRole,

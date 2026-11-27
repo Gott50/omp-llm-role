@@ -30,6 +30,8 @@ the extension's `/refresh-roles`, `/explore-roles` and `/create-agent`.
 | `src/settings.ts` | Shipped defaults and the settings merge/validate path. Exports `DEFAULT_ROLES`, `DEFAULT_SETTINGS`, `SHIPPED_AGENTS`, `KNOWN_METRICS`, `isKnownMetric` (a shipped key or an external `<ns>:<local>`), `PLUGIN_SETTINGS_PATH`, `ACTIVATE_DEFAULT_KEY`, `deriveSettingsSchema`, `readPluginSettingsMap`, `resolveSettings`, `roleUniverse`, `globalSettingsOf` (the global, non-`roles.` projection of `ResolvedSettings`), `deepMergeInto`, `findProjectAnchor`, `projectLockPath`, and the `ResolvedSettings`/`GlobalSettings`/`PluginSettingSchema`/`UniverseEntry`/`RoleKind` types. `ResolvedSettings` carries `tokenProfile` (`{ inputTokens, outputTokens } | null`, default `null`) — the user-set per-task token profile the explorer's per-task price falls back to when a role has no recorded usage; validated to finite numbers ≥ 0, schema rows `tokenProfile.inputTokens`/`tokenProfile.outputTokens`. `readPluginSettingsMap` merges the project lock file (`projectLockPath(cwd)` = `<cwd>/.omp/plugins/omp-plugins.lock.json`, omp's project dir with **no walk-up**) over the user-level one; `findProjectAnchor` (the walk-up `.omp`/`.git` anchor) is kept only for the `/project-roles` divergence warning. |
 | `src/agent-pins.ts` | Agent → pinned-role derivation. Exports `parseAgentPin` (first `@<role>` in the `model:` frontmatter) and `discoverAgentPins` (scans the shipped, user and project agent dirs; project > user > plugin). Drives the `task.disabledAgents` sync. |
 | `src/availability.ts` | Key tier gate, catalog filter, variant resolution, the model probe, the auto-pin's route probe, the keyed-catalog availability primitive, and the allowed-providers whitelist harvest. The keyed source is the Bearer-authenticated `GET /api/v1/models` (the account setting "Filter the model catalog for API keys" makes it a per-key allowlist; set membership is the only signal), shared by the explorer and the updater's companion fast path. Exports `fetchKeyMeta`, `tierGate`, `filterCatalog`, `rankingIdOf`, `currentRankingId`, `resolveVariant`, `enrichThinkingLevels`, `probeModel`, `probeRoute` (the same one-token completion plus `provider: { only: [slug] }` — the auto-pin's routability gate; spec #90), `fetchAllowedProviders`, `providerAllowed`, `pruneRoutesToAllowed` (the one whitelist prune the updater, the as-written pool and the preview share), `computeKeyAvailability`, `fetchKeyAvailability`, `catalogFromOmpModelsJson`, `THINKING_LEVELS`, and the `CatalogEntry`/`KeyMeta`/`Tier`/`ProbeVerdict`/`KeyAvailability` types. |
+| `src/provider-priority.ts` | The provider vocabulary (spec #116), pure (no I/O): the provider of a selector (`providerOf`), the deduped order with `openrouter` last (`providerOrder`), the per-model offers (`providerOffersFor`), the effective provider (`effectiveProvider`), the positional bonus (`providerBonusFor`), the price basis and its source (`priceBasisFor`), the provider-scoped catalog id (`providerCatalogIdFor`), and the chain's cross-provider order (`chainProviderOrder`). Exports the `ProviderOffer`/`PriceSource` types. Imports `availability.ts`/`engine.ts` for **types only** (a runtime import would close a cycle — `availability.ts` calls into this module). |
+| `src/provider-catalog.ts` | The omp subprocess seams and the daily provider-catalog cache (spec #116): `refreshProviderCatalog` (`omp models refresh <provider>`), `getProviderCatalog` (`omp models ls --json`, filtered to the provider), `readProviderCatalogCache`/`writeProviderCatalogCache` (`cache/provider-catalog-fetched-data.json`, fresh while the UTC day), `providerCatalogCachePath`, and `providerDiscovery` (a line-oriented `models.yml` scan — no runtime YAML dependency). Every seam is best-effort and never throws. |
 | `src/config-edit.ts` | Surgical line-oriented YAML patch for `modelRoles` + `retry.fallbackChains` + `task.disabledAgents`, plus the atomic writer. Exports `parseConfig`, `patchConfig`, `writeConfigAtomic`, `ConfigEditError`, and the `ConfigPatch` type. No runtime YAML dependency. |
 | `src/state.ts` | State/history/lock files under the agent dir, and agent-dir resolution. Exports `agentDir`, `loadState`, `saveState`, `appendHistory`, `acquireLock`, `releaseLock`, `freshState`, and the `PluginState` type (which carries `managedDisabledAgents` — the `task.disabledAgents` names the plugin added). |
 | `src/usage-ledger.ts` | The per-role usage ledger (spec #81): an append-only jsonl file (`llm-role-usage.jsonl`, cap `USAGE_LEDGER_CAP = 2000` rows) beside the plugin's other state, one row per assistant turn. Exports `UsageRow`, `TokenProfile`, `USAGE_LEDGER_FILE`, `USAGE_LEDGER_CAP`, `appendUsageRow` (best-effort, never throws), `readUsageRows` (tolerant: missing/malformed → `[]`), `roleTokenProfile` (the role's median per-turn input/output counts via `agent-create.ts`'s `quantile` — the repo's one quantile convention — or `null`), and `resolveTokenProfile` (recorded usage → the `tokenProfile` setting → `null`). The caller owns the dir; the extension records into `resolveProjectDir() ?? agentDir()`, the explorer reads the active scope's dir. |
@@ -93,7 +95,10 @@ ignored), or after stripping a trailing `-latest`. Among the matches,
 ranking id) → **newest dated id** (max trailing `-MMDD`/date suffix) → **bare
 id** → `~org/…-latest` alias (last resort — a valid selector beats no update).
 Never `:batch`; `:free` only on the free-tier branch of the tier gate. Ties
-break lexicographically. The emitted selector is always `openrouter/<catalogId>`.
+break lexicographically. The emitted selector is `openrouter/<catalogId>` for
+the OpenRouter gateway; a candidate whose effective provider is a prioritized
+non-OpenRouter provider is written `<provider>/<catalogId>` instead (spec #116;
+writes-and-state.md, *Provider priority: selectors, chains and settings*).
 
 ## Data flow
 
@@ -120,8 +125,23 @@ The omp extension injects the production `Deps`; tests inject fakes.
 4. **Tier gate.** `deps.getToken()` → `deps.getKeyMeta?.(token) ??
    fetchKeyMeta(token)` → `tierGate` → `"billed" | "free" | "none"`; `"none"`
    aborts.
-5. **Catalog + probe.** `deps.getCatalog()` → `filterCatalog(catalog, tier)`;
-   `enrichThinkingLevels(rank.models, catalog)`.
+5. **Provider catalog refresh.** For each prioritized non-OpenRouter provider
+   (the global `providerPriority` plus every role's override), the run refreshes
+   the provider's catalog once per UTC day — a best-effort
+   `omp models refresh <provider>` then `omp models ls --json` filtered to the
+   provider (`providerMergedCatalog` in `src/updater.ts`, seams in
+   `src/provider-catalog.ts`) — and replaces the session catalog's rows for that
+   provider with the fresh ones. A failed refresh or read degrades to the session
+   catalog with a note; the fresh rows are cached in
+   `cache/provider-catalog-fetched-data.json` (data-sources.md, *omp catalog —
+   provider availability*). The merged catalog is what
+   `filterCatalog(mergedCatalog, tier)` narrows and what the enrichment and the
+   ranking see.
+6. **Catalog + probe.** `deps.getCatalog()` → `filterCatalog(catalog, tier)`;
+   `enrichThinkingLevels(rank.models, catalog)` — which keeps `thinkingLevels`
+   OpenRouter-only and attaches each model's `providerOffers` (the per-provider
+   catalog id, price and thinking list) for every non-OpenRouter catalog
+   provider; `rankRole` later picks the effective provider's list.
    **Whitelist prune.** The updater then harvests the account's
    allowed-providers privacy whitelist once per run
    (`deps.getAllowedProviders ? deps.getAllowedProviders(token, canaryModelId)
@@ -144,7 +164,7 @@ The omp extension injects the production `Deps`; tests inject fakes.
    other failure (5xx, timeout, unknown model) counts as usable and stays in
    omp's runtime-fallback domain. Blocked candidates are excluded and recorded on
    the decision.
-6. **Selection + hysteresis.** The six-arm ladder is `decide(...)` in
+7. **Selection + hysteresis.** The six-arm ladder is `decide(...)` in
    `src/selection.ts` (the same function the explorer's preview calls):
    `no-current` → adopt; ineligible current →
    `adopted`; best beats current by the run's **effective margin** → `switched`;
@@ -168,7 +188,15 @@ The omp extension injects the production `Deps`; tests inject fakes.
    consulted; `priceSwitchFraction` (default `0.5`) is the only margin, and `0`
    disables the cost-side switch. The rule and its decision table are in
    scoring.md, *Selection rule — the cheapest model above the bar*.
-7. **Route pin (auto-pin).** With the `providerPinning` capability on and no
+   **Provider priority (spec #116).** The ladder compares **effective** values
+   (`value + providerBonus`) in value mode, and `pickOrder` compares
+   `priceEff × (1 − providerBonus)` in cheapest mode, so a provider change is a
+   normal switch under the same margin. The candidate's effective provider
+   decides the selector: `openrouter/<catalog-id>[@<slug>][:<level>]` for the
+   gateway, `<provider>/<catalog-id>[:<level>]` for a non-OpenRouter provider
+   (scoring.md, *Provider priority*; writes-and-state.md, *Provider priority:
+   selectors, chains and settings*).
+8. **Route pin (auto-pin).** With the `providerPinning` capability on and no
    manual `providerPin`, the chosen model's `rankedRoutes` order is walked and
    each candidate is probed with `probeRoute` (a one-token completion bound to
    the slug; optional seam `deps.probeRoute?`, DI like `probeModel`); the first
@@ -181,10 +209,10 @@ The omp extension injects the production `Deps`; tests inject fakes.
    candidate route. Contract:
    [`writes-and-state.md`](writes-and-state.md), *The provider-pin
    auto-configuration*.
-8. **Suffix.** Append `roles.<role>.thinking` only when the chosen catalog row's
+9. **Suffix.** Append `roles.<role>.thinking` only when the chosen catalog row's
    `thinking[]` includes the level (meta levels `off`/`auto` need only a
    non-empty list).
-9. **Chains.** `buildChains(...)` in `src/selection.ts` (shared with the
+10. **Chains.** `buildChains(...)` in `src/selection.ts` (shared with the
    preview) computes, for every managed role, `chainUpserts` (bare key → the next
    `fallbackChainDepth` fallback models drawn from the role's ranked candidate
    list below the chosen model — the cheaper-or-equal candidates that retain at
@@ -195,13 +223,19 @@ The omp extension injects the production `Deps`; tests inject fakes.
    unprobed candidate stays eligible, so the chain can reach a cheaper-or-equal
    model below the probe window (writes-and-state.md, *Which models are
    chained*). A key claimed by more than one role stays level-free.
-10. **Config patch.** `writePatch` acquires the refresh lock, reads `config.yml`,
+   **Provider priority (spec #116).** The primary's cross-provider entries come
+   first — the chosen model on its other offering providers, in priority order,
+   `openrouter/*` (the wildcard value) or the enumerated `openrouter/<id>`, then
+   `<provider>/<catalog-id>` — and the next-best candidates follow on their
+   effective providers (writes-and-state.md, *Provider priority: selectors,
+   chains and settings*).
+11. **Config patch.** `writePatch` acquires the refresh lock, reads `config.yml`,
     `patchConfig` (surgical, self-checked), `writeConfigAtomic` (mtime-guarded
     tmp+rename, 3 conflict retries). Zero changes → no write, no mtime change.
-11. **State + history.** `saveState` (day gate, managed roles, last selectors,
+12. **State + history.** `saveState` (day gate, managed roles, last selectors,
     plugin-written chain keys, managed `task.disabledAgents` names, previous
     `modelRoles` snapshot) and `appendHistory` (one row per completed run).
-12. **Live-session coupling.** When `default` actually changed and
+13. **Live-session coupling.** When `default` actually changed and
     `activateDefaultOnEmptySession` is set, `deps.applySessionModel?.(selector,
     previous)` hands the new selector to the host (extension only).
 
