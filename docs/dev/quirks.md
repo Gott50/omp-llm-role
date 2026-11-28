@@ -125,10 +125,15 @@ things that only bite someone changing or debugging the code.
   the floor rule — a gateway that answers `medium` as `high` runs the alias —
   but the plugin's catalog row carries only the level list, not the effortMap,
   so a model with an effortMap can be priced at the pin while omp runs the
-  alias. (b) omp's loop assumes the advertised list is sorted ascending (it
-  breaks at the first level above the pin), while the plugin takes the true max
-  at or below the pin, so an unsorted list can differ. The plugin's own
-  `thinking[]` rows are sorted, so (b) is latent.
+  alias. The data is not reachable today: `omp models ls --json` serializes
+  only `thinking.efforts` (`getSupportedEfforts`), never the map, and the
+  plugin reads no other omp source. On the 2026-11-28 catalog 0 of 475 rows
+  expose an effortMap, and the only non-empty maps in omp's internal cache are
+  identity (`{"max":"max"}` on the three Kimi K3 rows), so the divergence is
+  latent with a zero blast radius. (b) omp's loop assumes the advertised list
+  is sorted ascending (it breaks at the first level above the pin), while the
+  plugin takes the true max at or below the pin, so an unsorted list can
+  differ. The plugin's own `thinking[]` rows are sorted, so (b) is latent.
 
 ## Benchmark sources
 
