@@ -124,7 +124,8 @@ alone, and other `task.disabledAgents` entries and their order are preserved.
 Settings live in `~/.omp/plugins/omp-plugins.lock.json` →
 `settings["omp-llm-role"]`, deep-merged over the shipped defaults. The plugin
 also exposes the whole shipped surface in omp's **`/settings` → Plugins →
-*omp-llm-role*** tab (booleans as toggles, `thinking` as a picker, `required` as
+*omp-llm-role*** tab (booleans as toggles, `thinking` as a picker of the seven
+concrete levels, `required` as
 a comma-separated string); an edit there takes effect on the next
 `/refresh-roles` (or the next day-gated session start). The explorer's
 **Settings panel** edits the global knobs below (and the capability flags) with
@@ -165,7 +166,7 @@ Per-role knobs (`roles.<name>.*`):
 | `filters.minOutputTokens` | `0` (off) | Drop routes whose endpoint output ceiling is below this (tokens) |
 | `filters.maxPriceUsdPerM` | `0` (off) | Drop a model whose thinking-adjusted blend exceeds this ($/M) |
 | `filters.preferredMinThroughput` | `0` (off) | Prefer routes at or above this output throughput (tok/s); a below-floor route is deprioritized, not dropped (the soft floor the `providerPinning` preset sets to 50) |
-| `thinking` | shipped level | Thinking level appended to the selector (`off`…`max`, `auto`) |
+| `thinking` | shipped level | Thinking level pinned on the role and appended to the selector (`off`…`max`; `auto` is not a role level). The level a model actually runs is the pin **clamped** to the model's advertised range (the largest level at or below the pin, else the model's lowest; a non-thinking model runs `off`), and the written selector always carries that effective level. A legacy `auto` in a lock file resolves to `medium` |
 | `providerPin` | `""` (unset) | Pin the role's requests to one OpenRouter provider route (`@<slug>`, may be tiered like `deepinfra/fp8`). The role is then priced and gated by that route — its billed price and p50 throughput, not the `1/price²` blend — and a model with no matching route is ineligible. A manual pin **overrides** the automatic pin the `providerPinning` capability would write |
 | `cacheHitRate` | `0` (off) | Assumed cache-hit rate (0–1) for the role's input tokens; each route's effective input price becomes `h·cacheRead + (1−h)·input` before the 3:1 billed blend and the thinking factor. The `1/price²` weight basis stays the **listed** input price (the router's sort key), so a cheap cache on a lightly-weighted route cannot dominate; a route with no cache-read price keeps its full input price. `0`/absent = off (byte-identical ranking) |
 | `lambda` | derived | Explicit λ ($ per quality point) override |
@@ -281,7 +282,8 @@ reported. In project mode the project lock file's value applies.
 **Validation.** A run aborts (notify, no write) on: a weight ≤ 0, or a role's
 weights not summing to 1.0 ± 0.01; a `required` entry or a weighted metric
 outside the known-metric set; a `thinking` level outside
-`off|minimal|low|medium|high|xhigh|max|auto`; `switchMargin`/`priceSwitchFraction`
+`off|minimal|low|medium|high|xhigh|max` (a legacy `auto` is mapped to `medium`
+before validation); `switchMargin`/`priceSwitchFraction`
 outside `[0, 1]`; a non-boolean `enabled`; a `cacheHitRate` outside `[0, 1]`; a
 `selection` outside `value|cheapest`; a non-finite or out-of-range
 `qualityFloor` (never silently clamped); a
@@ -615,8 +617,8 @@ the distance from your current weight — so you can see whether your price
 posture binds (a small bump flips the pick) or is slack. It is absent when no
 cheaper challenger exists. The **thinking level** table shows which model wins
 at each level, with the level's price factor — the factor multiplies the price
-axis, so it penalizes expensive models more, which is why `auto` favours the
-cheap model. Both readouts are computed on the pool you are viewing. In
+axis, so it penalizes expensive models more, which is why a higher level favours
+the cheap model. Both readouts are computed on the pool you are viewing. In
 `cheapest` mode `weights.price` no longer decides the primary choice — the bar
 does — but it still shapes the value ranking (this panel's value column and the
 history's `value` fields) and the fallback chain's ordering.

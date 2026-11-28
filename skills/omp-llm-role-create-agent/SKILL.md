@@ -131,8 +131,10 @@ Rules of thumb:
   (it can only understate an unmeasured model's writing).
 - Check differentiation: if the role's leader equals `default`'s, the role adds nothing —
   raise the distinctive metric or drop the role.
-- `thinking` must be a level the pool actually supports; `off`/`auto` are meta levels
-  (always appended).
+- `thinking` is a concrete level (`off`…`max`); `auto` is not a role level. The
+  level a model actually runs is the pin clamped to that model's advertised range
+  (the largest level at or below the pin, else the model's lowest; a non-thinking
+  model runs `off`), and the written selector always carries that effective level.
 
 ## 3. Write the role
 
@@ -143,7 +145,7 @@ def with the plugin's own validated path:
 ```sh
 node <plugin>/src/cli/create-role.ts --name <name> \
   --weights general=0.30,code=0.20,price=0.25,throughput=0.25 \
-  --required general,price,throughput --thinking auto \
+  --required general,price,throughput --thinking medium \
   --description "<one-line purpose>"
 ```
 

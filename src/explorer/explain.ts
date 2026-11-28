@@ -15,7 +15,7 @@
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { type KeyAvailability } from "../availability.ts";
 import { cachedSourceInfo, sourceForMetric, type SourceDeclaration } from "../benchmark-sources.ts";
-import { autoPinApplies, BENCHMARK_CHANCE, blendOutputPrice, blendRoutePool, CAPABILITY_FILL, cardinalMetric, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, routeInputPrice, routeOutputPrice, routePassesEndpointFilters, thinkingAdjustedPrice, type BarSelection, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
+import { autoPinApplies, BENCHMARK_CHANCE, blendOutputPrice, blendRoutePool, CAPABILITY_FILL, cardinalMetric, effectiveThinkingLevel, endpointFilteredModel, paretoFrontier, pinnedRoute, rankRole, roleLambda, roleMetricValue, roleRoute, routeEffectivePrice, routeInputPrice, routeOutputPrice, routePassesEndpointFilters, thinkingAdjustedPrice, type BarSelection, type Model, type OpenRouterEndpointRecord, type Ranked, type RoleDef, type SuffixLevel } from "../engine.ts";
 import { effectiveProvider, priceBasisFor, providerOrder, type PriceSource } from "../provider-priority.ts";
 import { KNOWN_METRICS } from "../settings.ts";
 import { type TokenProfile } from "../usage-ledger.ts";
@@ -250,6 +250,10 @@ export type RankRow = {
   /** the model's effective provider (spec #116): the first prioritized provider
    * that offers it, else `openrouter`. */
   provider: string;
+  /** the effective (clamped) thinking level this row is priced at: the role's
+   * pin clamped to the model's advertised range (`effectiveThinkingLevel`), or
+   * `off` for a non-thinking model. `off` for a bare role too (no pin). */
+  thinking: SuffixLevel;
   /** where `priceEff` came from: the gateway blend, a provider reference price,
    * or the OpenRouter blend as a labelled proxy. */
   priceSource: PriceSource;
@@ -311,6 +315,12 @@ export function rankRows(def: RoleDef, models: Model[], baseline: Ranked[], avai
       perTask: profile == null || r.provider !== "openrouter" ? null : perTaskPrice(r.model, def, profile)?.total ?? null,
       excludedByBar: good !== null && !good.has(r.model.id),
       provider: r.provider,
+      // The same provider-scoped level list `rankRole` priced on: a
+      // non-OpenRouter provider's own offer, never another provider's.
+      thinking:
+        def.thinking === undefined
+          ? "off"
+          : effectiveThinkingLevel(def.thinking, r.provider === "openrouter" ? r.model.thinkingLevels : r.model.providerOffers?.[r.provider]?.thinking, r.model.thinking),
       priceSource: r.priceSource,
       providerBonus: r.providerBonus,
     };
@@ -399,7 +409,7 @@ export type Explanation =
       providerLine: string;
       /** the provider-preference line, e.g. `+0.05 (selection only, not in value)`. */
       providerPreferenceLine: string;
-      role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; cacheHitRate: number };
+      role: { name: string; lambda: number; derivedLambda: number; wPrice: number; qW: number; thinking: SuffixLevel | undefined; effectiveThinking: SuffixLevel | undefined; cacheHitRate: number };
       contributions: Contribution[];
       cost: { priceEff: number; billedPrice: number; lambda: number; penalty: number; q: number; value: number };
       /** the per-task price breakdown under the role's token profile, or null
@@ -569,7 +579,7 @@ export function explainModel(def: RoleDef, models: Model[], modelId: string, rol
     providerBonus: self.providerBonus,
     providerLine: `${self.provider} (${PRICE_SOURCE_LABEL[self.priceSource]})`,
     providerPreferenceLine: `${self.providerBonus > 0 ? "+" : ""}${self.providerBonus} (selection only, not in value)`,
-    role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking, cacheHitRate },
+    role: { name: roleName, lambda, derivedLambda, wPrice, qW, thinking: def.thinking, effectiveThinking: def.thinking === undefined ? undefined : effectiveThinkingLevel(def.thinking, levels, model.thinking), cacheHitRate },
     contributions,
     cost: { priceEff: self.priceEff, billedPrice: route !== null ? routeEffectivePrice(route, cacheHitRate) ?? basis.price : basis.price, lambda, penalty: lambda * self.priceEff, q: self.q, value: self.value },
     // The per-task price needs the input/output split, which a non-OpenRouter

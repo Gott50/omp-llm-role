@@ -1,21 +1,47 @@
-# Current state (2026-11-27)
+# Current state (2026-11-28)
 
 Dated snapshot of the ranking and the landed work as of the date in the heading —
 matched/priced/eligible counts, per-role leaders, the open defects, and the
 per-issue work log below. It is refreshed by
-regenerating the report (`node src/cli/llm-role-rank.ts --out docs/llm-role-rankings.md`) and
+regenerating the report (`node src/cli/llm-role-rank.ts --all --out docs/llm-role-rankings.md`) and
 copying the new numbers here; release prose belongs in
 [`../../CHANGELOG.md`](../../CHANGELOG.md), not in this file. The model-level
-ranking numbers below are the 2026-11-27 measurement (regenerated for spec #116).
-The pool moved 408 → 456 models because the daily caches moved, not the code.
-Spec #116 leaves the **ranking table** byte-identical for an empty priority list
-(the honest value ranking is unchanged); the **suggested `modelRoles` block**
-changed: it now uses the effective provider's selector, appends the role's
-thinking level (`:level`) when the effective provider's catalog row advertises
-it, and picks the first catalog-resolvable model per role (matching the plugin's
-candidate building) — so the leaders below are the suggested selectors, not
-necessarily the raw #1. The provider-pin numbers are the 2026-10-11 measurement
-(spec #71; see the top bullet). Neither is re-derived on read.
+ranking numbers below are the 2026-11-28 measurement (regenerated for spec #128).
+The pool held at 456 models; the daily caches moved the OpenRouter join —
+throughput 152 → 151 and priced 151 → 150 — and the eligible count 144 → 143 for
+the eight non-vision roles (vision 83 and designer 100 unchanged), not the code.
+Spec #128 pins every role to a concrete thinking level and prices each model at
+the level it will actually run (the pin clamped to the model's advertised
+range), so the **ranking table** moved for the `medium`-pinned roles and the
+**suggested `modelRoles` block** now always carries the effective level. The
+provider-priority numbers are the 2026-11-27 measurement (spec #116) and the
+provider-pin numbers the 2026-10-11 measurement (spec #71; see the top bullet).
+Neither is re-derived on read.
+
+- Thinking pin (2026-11-28, spec #128): every role now carries a concrete
+  thinking level — `auto` is removed from the role vocabulary (it is a meta
+  level omp decides per turn, so it cannot be pinned). The shipped `auto` roles
+  (`default`, `vision`, `plan`, `task`, `advisor`, `designer`) become `medium`
+  (the same 1.5 token overhead, so the price factor is preserved); `slow` stays
+  `high` and `smol`/`commit`/`tiny` stay `off`. The level a model actually runs
+  is the role's pin **clamped** to the model's advertised range by the one pure
+  seam `effectiveThinkingLevel` (mirroring omp's `clampThinkingLevelForModel`:
+  the largest level at or below the pin, else the model's lowest; a non-thinking
+  model runs `off`), and the ranking prices that level, the written selector
+  carries it, and a single-claim fallback chain carries each target's own
+  effective level. A legacy `auto` in a lock file resolves to `medium`, and a
+  role that omits `thinking` resolves to `medium`. The explorer's model table
+  gains a `thinking` column and the explain panel shows the pin and the
+  effective level. The report was regenerated for spec #128: **456 models, 151
+  with OpenRouter throughput, 150 priced**; the per-role eligible counts and
+  leaders are below and in `docs/llm-role-rankings.md`. The clamp moved **no**
+  leader this run: it changes the *pricing* of the `medium`/`high` roles (each
+  model priced at the level it will actually run) without changing their
+  leaders. Three leaders did move — `smol`, `commit` and `tiny` now lead with
+  Beam 1.0 — but those roles are `off`-pinned (`thinkingPriceFactor("off") = 1`),
+  so the clamp cannot move them: the moves are the 2026-11-28 cache refresh
+  (throughput 152 → 151, priced 151 → 150, eligible 144 → 143), not the code.
+  `default`, `slow`, `vision`, `plan`, `task`, `advisor` and `designer` held.
 
 - Provider priority (2026-11-27, spec #116): an opt-in soft preference for any
   omp provider. Two settings — `providerPriority` (an ordered list of omp

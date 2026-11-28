@@ -56,7 +56,7 @@ test("keyed catalog: key-blocked candidates are pruned from the walk, best allow
   assert.ok(d);
   // The 13th-ranked (only allowed) model is adopted; the 12 blocked ones never
   // consume the probe budget, so the walk reaches it.
-  assert.equal(d.to, "openrouter/org/model-13:auto");
+  assert.equal(d.to, "openrouter/org/model-13:off");
   assert.equal(d.availabilitySource, "keyed-catalog");
   assert.equal(d.keyBlockedCount, 12);
   assert.deepEqual(probed, []);
@@ -76,7 +76,7 @@ test("keyed catalog: only candidates in neither catalog are probed", async () =>
   assert.deepEqual(probed, ["org/model-c"]);
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.equal(d.to, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
   assert.equal(d.availabilitySource, "keyed-catalog");
   assert.equal(d.keyBlockedCount, 1);
 });
@@ -112,7 +112,7 @@ test("no-filter and unavailable degrade to the probe walk unchanged", async () =
     const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
     const d = result.decisions.find((x) => x.role === "default");
     assert.ok(d);
-    assert.equal(d.to, "openrouter/org/model-a:auto");
+    assert.equal(d.to, "openrouter/org/model-a:off");
     assert.equal(d.availabilitySource, "probe");
     assert.equal(d.keyBlockedCount, 0);
     // The full candidate list is probed, exactly as before the keyed catalog.

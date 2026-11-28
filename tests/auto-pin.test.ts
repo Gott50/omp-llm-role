@@ -85,7 +85,7 @@ test("the capability on writes the best route as the selector's @<slug>", async 
   const deps = fakeDeps(MODELS, onlyDefault({ roles: { default: { preferOwnProvider: true } } }));
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@cheap:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@cheap:off");
 });
 
 test("the providerPinning feature flag enables the auto-pin", async () => {
@@ -93,7 +93,7 @@ test("the providerPinning feature flag enables the auto-pin", async () => {
   const deps = fakeDeps(MODELS, onlyDefault({ features: { providerPinning: true } }));
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@cheap:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@cheap:off");
 });
 
 test("the capability off writes a bare selector", async () => {
@@ -102,8 +102,8 @@ test("the capability off writes a bare selector", async () => {
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   const doc = readConfig(dir);
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:auto");
-  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b:auto", "openrouter/org/model-c:auto"]);
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:off");
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b:off", "openrouter/org/model-c:off"]);
 });
 
 // --- manual pin wins ---------------------------------------------------------
@@ -114,15 +114,15 @@ test("a manual providerPin wins and the selector carries the manual slug", async
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   const doc = readConfig(dir);
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@mid:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@mid:off");
   // The manual pin is hard: every chain value carries it, not the auto route.
-  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@mid"], ["openrouter/org/model-b@mid:auto", "openrouter/org/model-c@mid:auto"]);
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@mid"], ["openrouter/org/model-b@mid:off", "openrouter/org/model-c@mid:off"]);
 });
 
 // --- locked / disabled -------------------------------------------------------
 
 test("a locked role's selector is untouched", async () => {
-  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-b:auto\n", {
+  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-b:medium\n", {
     lastRunDay: null,
     managedRoles: [],
     roleLastSelector: {},
@@ -132,11 +132,12 @@ test("a locked role's selector is untouched", async () => {
   const deps = fakeDeps(MODELS, onlyDefault({ roles: { default: { locked: true, preferOwnProvider: true } } }));
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-b:auto");
+  // A locked role is untouched: the incumbent selector survives verbatim.
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-b:medium");
 });
 
 test("a disabled role is not pinned", async () => {
-  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-b:auto\n", {
+  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-b:medium\n", {
     lastRunDay: null,
     managedRoles: [],
     roleLastSelector: {},
@@ -146,7 +147,8 @@ test("a disabled role is not pinned", async () => {
   const deps = fakeDeps(MODELS, onlyDefault({ roles: { default: { enabled: false, preferOwnProvider: true } } }));
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-b:auto");
+  // A disabled role is not managed: the incumbent selector survives verbatim.
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-b:medium");
 });
 
 // --- no candidate route ------------------------------------------------------
@@ -163,8 +165,8 @@ test("a chosen model with no candidate route keeps default routing", async () =>
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   const doc = readConfig(dir);
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:auto");
-  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b:auto", "openrouter/org/model-c:auto"]);
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:off");
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b:off", "openrouter/org/model-c:off"]);
 });
 
 // --- chain shape -------------------------------------------------------------
@@ -175,21 +177,21 @@ test("the chain has the exact 8-value shape at depth 2", async () => {
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   const doc = readConfig(dir);
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cheap:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cheap:off");
   const chain = doc.retry.fallbackChains["openrouter/org/model-a@cheap"];
   // Every gate-passing route: the primary's non-pinned routes, then each
   // fallback model's routes. The fixture's models have 3 routes each, so the
   // count is unchanged (2 + 3 + 3 = 8) — the rule is "all gate-passing routes",
   // not "top-3".
   assert.deepEqual(chain, [
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-b@mid:auto",
-    "openrouter/org/model-b@b3:auto",
-    "openrouter/org/model-c@c1:auto",
-    "openrouter/org/model-c@mid:auto",
-    "openrouter/org/model-c@c3:auto",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-b@mid:off",
+    "openrouter/org/model-b@b3:off",
+    "openrouter/org/model-c@c1:off",
+    "openrouter/org/model-c@mid:off",
+    "openrouter/org/model-c@c3:off",
   ]);
   assert.equal(chain.length, 8);
 });
@@ -206,10 +208,10 @@ test("a model with only one candidate route contributes only that route", async 
   assert.equal(result.aborted, undefined);
   const doc = readConfig(dir);
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@cheap"], [
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-c@c1:auto",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-c@c1:off",
   ]);
 });
 
@@ -225,16 +227,16 @@ test("a model with more than three gate-passing routes contributes all of them",
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   const doc = readConfig(dir);
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@a1:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@a1:off");
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@a1"], [
-    "openrouter/org/model-a@a2:auto",
-    "openrouter/org/model-a@a3:auto",
-    "openrouter/org/model-a@a4:auto",
-    "openrouter/org/model-a@a5:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-b@b2:auto",
-    "openrouter/org/model-b@b3:auto",
-    "openrouter/org/model-b@b4:auto",
+    "openrouter/org/model-a@a2:off",
+    "openrouter/org/model-a@a3:off",
+    "openrouter/org/model-a@a4:off",
+    "openrouter/org/model-a@a5:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-b@b2:off",
+    "openrouter/org/model-b@b3:off",
+    "openrouter/org/model-b@b4:off",
   ]);
 });
 
@@ -250,11 +252,11 @@ test("the primary model contributes all its non-pinned routes", async () => {
   assert.equal(result.aborted, undefined);
   const doc = readConfig(dir);
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@a1"], [
-    "openrouter/org/model-a@a2:auto",
-    "openrouter/org/model-a@a3:auto",
-    "openrouter/org/model-a@a4:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-c@c1:auto",
+    "openrouter/org/model-a@a2:off",
+    "openrouter/org/model-a@a3:off",
+    "openrouter/org/model-a@a4:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-c@c1:off",
   ]);
 });
 
@@ -281,12 +283,12 @@ test("the auto-pin chain is in rankedRoutes (score) order", async () => {
   const def = resolveSettings(settings).settings.roles.default;
   const ranked = rankedRoutes(a, def);
   // The pinned best is the score leader; the chain carries the rest in score order.
-  assert.equal(doc.modelRoles.default, `openrouter/org/model-a@${ranked[0].providerSlug}:auto`);
+  assert.equal(doc.modelRoles.default, `openrouter/org/model-a@${ranked[0].providerSlug}:off`);
   const chain = doc.retry.fallbackChains[`openrouter/org/model-a@${ranked[0].providerSlug}`];
-  const primary = ranked.slice(1).map((r) => `openrouter/org/model-a@${r.providerSlug}:auto`);
+  const primary = ranked.slice(1).map((r) => `openrouter/org/model-a@${r.providerSlug}:off`);
   assert.deepEqual(chain.slice(0, primary.length), primary);
   // The score order is not the price order: `fast` (pricier) outranks `slow`.
-  assert.deepEqual(primary, ["openrouter/org/model-a@slow:auto", "openrouter/org/model-a@pricey:auto"]);
+  assert.deepEqual(primary, ["openrouter/org/model-a@slow:off", "openrouter/org/model-a@pricey:off"]);
 });
 
 test("a degraded route is excluded from the chain", async () => {
@@ -304,10 +306,10 @@ test("a degraded route is excluded from the chain", async () => {
   assert.equal(result.aborted, undefined);
   const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
   assert.deepEqual(chain, [
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-c@c1:auto",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-c@c1:off",
   ]);
   assert.ok(!chain.some((v) => v.includes("@down")));
 });
@@ -327,10 +329,10 @@ test("a route over filters.maxPriceUsdPerM is excluded from the chain", async ()
   assert.equal(result.aborted, undefined);
   const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
   assert.deepEqual(chain, [
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-a@over:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-c@c1:auto",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-a@over:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-c@c1:off",
   ]);
   assert.ok(!chain.some((v) => v.includes("@exp")));
 });
@@ -350,10 +352,10 @@ test("a route failing an endpoint filter is excluded from the chain", async () =
   assert.equal(result.aborted, undefined);
   const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
   assert.deepEqual(chain, [
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-c@c1:auto",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-c@c1:off",
   ]);
   assert.ok(!chain.some((v) => v.includes("@notools")));
 });
@@ -372,9 +374,9 @@ test("a whitelist-blocked route is excluded from the chain", async () => {
   assert.equal(result.aborted, undefined);
   const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
   assert.deepEqual(chain, [
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-c@c1:auto",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-c@c1:off",
   ]);
   assert.ok(!chain.some((v) => v.includes("@blocked")));
 });
@@ -394,10 +396,10 @@ test("two routes sharing a provider slug collapse to one chain entry", async () 
   assert.equal(result.aborted, undefined);
   const chain = readConfig(dir).retry.fallbackChains["openrouter/org/model-a@cheap"];
   assert.deepEqual(chain, [
-    "openrouter/org/model-a@shared:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-c@c1:auto",
+    "openrouter/org/model-a@shared:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-c@c1:off",
   ]);
   assert.equal(chain.filter((v) => v.includes("@shared")).length, 1);
 });
@@ -415,7 +417,7 @@ test("a re-run is idempotent (config.yml byte-identical)", async () => {
 
 test("changing the pin prunes the old chain key", async () => {
   const config =
-    "modelRoles:\n  default: openrouter/org/model-a@old:auto\nretry:\n  fallbackChains:\n    openrouter/org/model-a@old:\n      - openrouter/org/model-b@old:auto\n";
+    "modelRoles:\n  default: openrouter/org/model-a@old:medium\nretry:\n  fallbackChains:\n    openrouter/org/model-a@old:\n      - openrouter/org/model-b@old:medium\n";
   const dir = setupAgentDir(config, {
     lastRunDay: null,
     managedRoles: ["default"],
@@ -427,7 +429,7 @@ test("changing the pin prunes the old chain key", async () => {
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   const doc = readConfig(dir);
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cheap:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cheap:off");
   assert.equal(doc.retry.fallbackChains["openrouter/org/model-a@old"], undefined);
   assert.ok(doc.retry.fallbackChains["openrouter/org/model-a@cheap"]);
   const state = JSON.parse(readFileSync(join(dir, "llm-role-state.json"), "utf8"));
@@ -449,18 +451,18 @@ test("changing the pin prunes the old chain key", async () => {
  * agent pins), so the golden covers the two blocks the auto-pin owns — byte for
  * byte. */
 const TODAYS_AUTOPIN_BLOCKS = `modelRoles:
-  default: "openrouter/org/model-a@cheap:auto"
+  default: "openrouter/org/model-a@cheap:off"
 retry:
   fallbackChains:
     openrouter/org/model-a@cheap:
-      - "openrouter/org/model-a@mid:auto"
-      - "openrouter/org/model-a@exp:auto"
-      - "openrouter/org/model-b@b1:auto"
-      - "openrouter/org/model-b@mid:auto"
-      - "openrouter/org/model-b@b3:auto"
-      - "openrouter/org/model-c@c1:auto"
-      - "openrouter/org/model-c@mid:auto"
-      - "openrouter/org/model-c@c3:auto"
+      - "openrouter/org/model-a@mid:off"
+      - "openrouter/org/model-a@exp:off"
+      - "openrouter/org/model-b@b1:off"
+      - "openrouter/org/model-b@mid:off"
+      - "openrouter/org/model-b@b3:off"
+      - "openrouter/org/model-c@c1:off"
+      - "openrouter/org/model-c@mid:off"
+      - "openrouter/org/model-c@c3:off"
 `;
 
 /** The auto-pin-owned region of a written config.yml, from `modelRoles:` up to
@@ -519,23 +521,23 @@ test("a blocked best route pins the next route and records the skipped slug", as
   assert.equal(result.aborted, undefined);
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.equal(d.to, "openrouter/org/model-a@mid:auto");
+  assert.equal(d.to, "openrouter/org/model-a@mid:off");
   assert.deepEqual(d.routeBlockedSlugs, ["cheap"]);
   assert.equal(d.pinDropped, false);
   assert.ok(notified.some((l) => l.includes("@default:") && l.includes("route-blocked: cheap")));
   const doc = readConfig(dir);
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@mid:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@mid:off");
   // The chain excludes the pinned route by slug — not by index: the blocked
   // score leader `cheap` rides as a fallback entry while `mid` does not.
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@mid"], [
-    "openrouter/org/model-a@cheap:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-b@mid:auto",
-    "openrouter/org/model-b@b3:auto",
-    "openrouter/org/model-c@c1:auto",
-    "openrouter/org/model-c@mid:auto",
-    "openrouter/org/model-c@c3:auto",
+    "openrouter/org/model-a@cheap:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-b@mid:off",
+    "openrouter/org/model-b@b3:off",
+    "openrouter/org/model-c@c1:off",
+    "openrouter/org/model-c@mid:off",
+    "openrouter/org/model-c@c3:off",
   ]);
 });
 
@@ -548,10 +550,10 @@ test("a route probe that cannot tell (unknown) is usable and stays pinned", asyn
   assert.equal(result.aborted, undefined);
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.equal(d.to, "openrouter/org/model-a@cheap:auto");
+  assert.equal(d.to, "openrouter/org/model-a@cheap:off");
   assert.deepEqual(d.routeBlockedSlugs, []);
   assert.equal(d.pinDropped, false);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@cheap:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@cheap:off");
 });
 
 test("every route blocked writes a bare selector and drops the pin", async () => {
@@ -565,25 +567,25 @@ test("every route blocked writes a bare selector and drops the pin", async () =>
   assert.equal(result.aborted, undefined);
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.equal(d.to, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
   assert.equal(d.pinDropped, true);
   assert.deepEqual(d.routeBlockedSlugs, ["cheap", "mid", "exp"]);
   assert.ok(notified.some((l) => l.includes("@default:") && l.includes("pin dropped")));
   const doc = readConfig(dir);
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:off");
   // No pin was written, so the chain carries every gate-passing route of the
   // primary (the blocked ones included — one unroutable chain entry is
   // survivable, and only the primary pin is probed).
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], [
-    "openrouter/org/model-a@cheap:auto",
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-b@mid:auto",
-    "openrouter/org/model-b@b3:auto",
-    "openrouter/org/model-c@c1:auto",
-    "openrouter/org/model-c@mid:auto",
-    "openrouter/org/model-c@c3:auto",
+    "openrouter/org/model-a@cheap:off",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-b@mid:off",
+    "openrouter/org/model-b@b3:off",
+    "openrouter/org/model-c@c1:off",
+    "openrouter/org/model-c@mid:off",
+    "openrouter/org/model-c@c3:off",
   ]);
 });
 
@@ -619,14 +621,14 @@ test("the probe is never consulted with a manual providerPin", async () => {
 });
 
 test("the probe is never consulted for a locked role", async () => {
-  const r = await mutedProbeRun('modelRoles:\n  default: "openrouter/org/model-b:auto"\n', onlyDefault({ roles: { default: { locked: true, preferOwnProvider: true } } }));
+  const r = await mutedProbeRun('modelRoles:\n  default: "openrouter/org/model-b:off"\n', onlyDefault({ roles: { default: { locked: true, preferOwnProvider: true } } }));
   assert.equal(r.aborted, undefined);
   assert.equal(r.called, 0);
   assert.equal(r.muted, r.control);
 });
 
 test("the probe is never consulted for a disabled role", async () => {
-  const r = await mutedProbeRun('modelRoles:\n  default: "openrouter/org/model-b:auto"\n', onlyDefault({ roles: { default: { enabled: false, preferOwnProvider: true } } }));
+  const r = await mutedProbeRun('modelRoles:\n  default: "openrouter/org/model-b:off"\n', onlyDefault({ roles: { default: { enabled: false, preferOwnProvider: true } } }));
   assert.equal(r.aborted, undefined);
   assert.equal(r.called, 0);
   assert.equal(r.muted, r.control);
@@ -661,7 +663,7 @@ test("a role whose whole route pool is blocked issues at most ROUTE_PROBE_BUDGET
   assert.ok(d);
   assert.equal(d.pinDropped, true);
   assert.equal(d.routeBlockedSlugs.length, ROUTE_PROBE_BUDGET);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:off");
 });
 
 test("a route already probed for another role is not probed again", async () => {
@@ -675,10 +677,10 @@ test("a route already probed for another role is not probed again", async () => 
   const doc = readConfig(dir);
   // Both roles land on model-a and walk the same route order — so the shared
   // verdicts collapse to one probe each: `cheap` (blocked) and `mid` (ok).
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@mid:auto");
-  // `slow` pins `:high`, which the fixture's catalog does not advertise, so its
-  // selector stays level-free.
-  assert.equal(doc.modelRoles.slow, "openrouter/org/model-a@mid");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@mid:off");
+  // `slow` pins `:high`, which the fixture's catalog does not advertise, so the
+  // clamp runs it at `off` (the empty list is authoritative).
+  assert.equal(doc.modelRoles.slow, "openrouter/org/model-a@mid:off");
   assert.equal(counter.n, 2);
 });
 
@@ -750,13 +752,13 @@ test("provider priority writes the provider's selector and a cross-provider chai
   const result = await runInTempDir(dir, () => runUpdater("manual", providerDeps(providerModels(), dir), { force: true }));
   assert.equal(result.aborted, undefined);
   const config = readConfig(dir);
-  assert.equal(config.modelRoles.default, "flocta/org/model-a:auto");
+  assert.equal(config.modelRoles.default, "flocta/org/model-a:off");
   // The chosen model on OpenRouter first (the wildcard keeps the model id),
   // then the next-best models in value order.
   assert.deepEqual(config.retry.fallbackChains["flocta/org/model-a"], [
-    "openrouter/*:auto",
-    "openrouter/org/model-b:auto",
-    "openrouter/org/model-c:auto",
+    "openrouter/*:off",
+    "openrouter/org/model-b:off",
+    "openrouter/org/model-c:off",
   ]);
 });
 
@@ -787,7 +789,7 @@ test("a model only in the fresh provider rows is selectable", async () => {
   });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
-  assert.equal(readConfig(dir).modelRoles.default, "flocta/org/model-a:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "flocta/org/model-a:off");
 });
 
 test("a failed provider catalog read degrades to the session catalog with a note", async () => {
@@ -803,7 +805,7 @@ test("a failed provider catalog read degrades to the session catalog with a note
   });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:off");
   assert.ok(notified.some((l) => l.includes("@flocta: catalog refresh failed (provider flocta not found) — using the session catalog")));
 });
 
@@ -829,7 +831,7 @@ test("a provider with no catalog rows is noted and not used", async () => {
   });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:off");
   assert.ok(notified.some((l) => l.includes("@flocta: no catalog rows — the provider is not used")));
 });
 
@@ -858,7 +860,7 @@ test("a provider pre-seed does not mark another role's OpenRouter candidate clea
     },
   });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
-  assert.equal(result.decisions.find((d) => d.role === "default")?.to, "flocta/org/model-a:auto");
+  assert.equal(result.decisions.find((d) => d.role === "default")?.to, "flocta/org/model-a:off");
   assert.ok(probed.includes("org/model-a"), `smol's OpenRouter candidate was not probed: ${probed.join(", ")}`);
   const smol = result.decisions.find((d) => d.role === "smol");
   assert.ok(smol);
@@ -881,7 +883,7 @@ test("an empty provider priority list never refreshes or writes the cache", asyn
   assert.equal(result.aborted, undefined);
   assert.equal(refreshes, 0);
   assert.equal(existsSync(cachePath), false);
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a:off");
 });
 
 test("a provider change is a normal switch subject to the margin (US 29)", async () => {
@@ -897,7 +899,7 @@ test("a provider change is a normal switch subject to the margin (US 29)", async
   );
   assert.equal(kept.aborted, undefined);
   assert.equal(kept.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
-  assert.equal(readConfig(inside).modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(readConfig(inside).modelRoles.default, "openrouter/org/model-a:off");
 
   const outside = setupAgentDir(config);
   const switched = await runInTempDir(outside, () =>
@@ -905,7 +907,7 @@ test("a provider change is a normal switch subject to the margin (US 29)", async
   );
   assert.equal(switched.aborted, undefined);
   assert.equal(switched.decisions.find((d) => d.role === "default")?.reason, "switched");
-  assert.equal(readConfig(outside).modelRoles.default, "flocta/org/model-a:auto");
+  assert.equal(readConfig(outside).modelRoles.default, "flocta/org/model-a:off");
 });
 
 test("a provider catalog cache write failure does not abort the run", async () => {
@@ -920,6 +922,6 @@ test("a provider catalog cache write failure does not abort the run", async () =
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   // The fresh rows are still used for this run.
-  assert.equal(readConfig(dir).modelRoles.default, "flocta/org/model-a:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "flocta/org/model-a:off");
   assert.ok(notified.some((l) => l.includes("provider catalog cache write failed")));
 });

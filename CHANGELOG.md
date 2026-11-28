@@ -8,6 +8,37 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **The explorer shows the effective thinking level** — the model table gains a
+  `thinking` column carrying the level each row is actually priced at (the
+  role's pin clamped to the model's advertised range), and the explain panel
+  shows the role's pin and, when the clamp moves it, the level the selected
+  model runs. (spec #128)
+
+### Changed
+
+- **Every role is pinned to a concrete thinking level** — `auto` is removed from
+  the role vocabulary (it is a meta level omp decides per turn, so it cannot be
+  pinned). The shipped `auto` roles (`default`, `vision`, `plan`, `task`,
+  `advisor`, `designer`) become `medium` (the same 1.5 token overhead, so the
+  price factor is preserved); `slow` stays `high` and `smol`/`commit`/`tiny`
+  stay `off`. The level a model actually runs is the role's pin **clamped** to
+  the model's advertised range by the one pure seam `effectiveThinkingLevel`
+  (mirroring omp's `clampThinkingLevelForModel`: the largest level at or below
+  the pin, else the model's lowest; a non-thinking model runs `off`), and the
+  ranking prices that level, the written selector carries it, and a
+  single-claim fallback chain carries each target's own effective level. A
+  legacy `auto` in a lock file resolves to `medium`, and a role that omits
+  `thinking` resolves to `medium`, so every resolved def is pinned. (spec #128)
+
+### Removed
+
+- **`auto` as a role thinking level** — the role picker, the settings schema,
+  the validator and the thinking-level effect table no longer offer it. The
+  selector vocabulary keeps `auto` so a legacy `:auto` in an existing
+  `config.yml` still splits. (spec #128)
+
 ### Fixed
 
 - **The model display shows a direct provider again** — the status-line model

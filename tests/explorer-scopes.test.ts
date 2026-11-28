@@ -593,7 +593,8 @@ test("readScopeRoles returns the scope's authored, resolved and default global s
   });
   // `raw` is the merged map the updater reads, roles included.
   assert.equal(raw.switchMargin, 0.05);
-  assert.deepEqual(raw.roles, { userrole: { ...USER_ROLE, providerPriority: [], providerBonus: 0.05 } });
+  // A role that omits `thinking` resolves to the `medium` default.
+  assert.deepEqual(raw.roles, { userrole: { ...USER_ROLE, thinking: "medium", providerPriority: [], providerBonus: 0.05 } });
   // The existing fields are unchanged: `roles` is the RESOLVED map (the shipped
   // roles that are enabled by default, plus the authored role), and the authored
   // def survives verbatim.

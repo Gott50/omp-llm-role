@@ -158,8 +158,8 @@
       },
       "roles.default.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the default selector",
-        "default": "auto",
+        "description": "Thinking level appended to the default selector (clamped to each model's advertised range)",
+        "default": "medium",
         "values": [
           "off",
           "minimal",
@@ -167,8 +167,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.default.providerPin": {
@@ -342,7 +341,7 @@
       },
       "roles.smol.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the smol selector",
+        "description": "Thinking level appended to the smol selector (clamped to each model's advertised range)",
         "default": "off",
         "values": [
           "off",
@@ -351,8 +350,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.smol.providerPin": {
@@ -518,7 +516,7 @@
       },
       "roles.slow.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the slow selector",
+        "description": "Thinking level appended to the slow selector (clamped to each model's advertised range)",
         "default": "high",
         "values": [
           "off",
@@ -527,8 +525,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.slow.providerPin": {
@@ -694,8 +691,8 @@
       },
       "roles.vision.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the vision selector",
-        "default": "auto",
+        "description": "Thinking level appended to the vision selector (clamped to each model's advertised range)",
+        "default": "medium",
         "values": [
           "off",
           "minimal",
@@ -703,8 +700,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.vision.providerPin": {
@@ -878,8 +874,8 @@
       },
       "roles.plan.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the plan selector",
-        "default": "auto",
+        "description": "Thinking level appended to the plan selector (clamped to each model's advertised range)",
+        "default": "medium",
         "values": [
           "off",
           "minimal",
@@ -887,8 +883,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.plan.providerPin": {
@@ -1046,7 +1041,7 @@
       },
       "roles.commit.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the commit selector",
+        "description": "Thinking level appended to the commit selector (clamped to each model's advertised range)",
         "default": "off",
         "values": [
           "off",
@@ -1055,8 +1050,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.commit.providerPin": {
@@ -1214,7 +1208,7 @@
       },
       "roles.tiny.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the tiny selector",
+        "description": "Thinking level appended to the tiny selector (clamped to each model's advertised range)",
         "default": "off",
         "values": [
           "off",
@@ -1223,8 +1217,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.tiny.providerPin": {
@@ -1374,8 +1367,8 @@
       },
       "roles.task.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the task selector",
-        "default": "auto",
+        "description": "Thinking level appended to the task selector (clamped to each model's advertised range)",
+        "default": "medium",
         "values": [
           "off",
           "minimal",
@@ -1383,8 +1376,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.task.providerPin": {
@@ -1558,8 +1550,8 @@
       },
       "roles.advisor.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the advisor selector",
-        "default": "auto",
+        "description": "Thinking level appended to the advisor selector (clamped to each model's advertised range)",
+        "default": "medium",
         "values": [
           "off",
           "minimal",
@@ -1567,8 +1559,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.advisor.providerPin": {
@@ -1726,8 +1717,8 @@
       },
       "roles.designer.thinking": {
         "type": "enum",
-        "description": "Thinking level appended to the designer selector",
-        "default": "auto",
+        "description": "Thinking level appended to the designer selector (clamped to each model's advertised range)",
+        "default": "medium",
         "values": [
           "off",
           "minimal",
@@ -1735,8 +1726,7 @@
           "medium",
           "high",
           "xhigh",
-          "max",
-          "auto"
+          "max"
         ]
       },
       "roles.designer.providerPin": {

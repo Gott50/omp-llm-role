@@ -82,7 +82,7 @@ test("a blocked best route falls back to the next-best allowed route as the auto
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   // `cheap` is blocked, so the best allowed route (`mid`) rides as the pin.
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@mid:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@mid:off");
 });
 
 test("the written fallback chain contains only allowed routes", async () => {
@@ -96,9 +96,9 @@ test("the written fallback chain contains only allowed routes", async () => {
   // Primary on its remaining 2nd route, then each fallback model on its only
   // allowed route — every entry on `mid`/`exp`, never `cheap`/`b1`/`b3`/`c1`/`c3`.
   assert.deepEqual(chain, [
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@mid:auto",
-    "openrouter/org/model-c@mid:auto",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@mid:off",
+    "openrouter/org/model-c@mid:off",
   ]);
   for (const v of chain) assert.ok(v.includes("@mid") || v.includes("@exp"), `unexpected chain entry ${v}`);
 });
@@ -115,16 +115,16 @@ test("a null whitelist reproduces today's output byte-for-byte", async () => {
   const doc = readConfig(dir);
   // The raw best route (`cheap`) is the pin, and the chain is the full 8-value
   // auto-pin shape — exactly the pre-whitelist output.
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cheap:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cheap:off");
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@cheap"], [
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-b@mid:auto",
-    "openrouter/org/model-b@b3:auto",
-    "openrouter/org/model-c@c1:auto",
-    "openrouter/org/model-c@mid:auto",
-    "openrouter/org/model-c@c3:auto",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-b@mid:off",
+    "openrouter/org/model-b@b3:off",
+    "openrouter/org/model-c@c1:off",
+    "openrouter/org/model-c@mid:off",
+    "openrouter/org/model-c@c3:off",
   ]);
 });
 
@@ -144,7 +144,7 @@ test("a bare whitelist entry matches a tiered route slug by prefix", async () =>
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(result.aborted, undefined);
   // `parasail/fp8` is blocked; `coreweave/fp8` matches the bare `coreweave` entry.
-  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@coreweave/fp8:auto");
+  assert.equal(readConfig(dir).modelRoles.default, "openrouter/org/model-a@coreweave/fp8:off");
 });
 
 // --- notify ------------------------------------------------------------------

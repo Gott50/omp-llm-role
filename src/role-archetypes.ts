@@ -11,8 +11,9 @@
  *     `q = Σ (wᵢ/(1−w_price))·tᵢ` silently rescales q against the derived λ otherwise;
  *   - `price` and `throughput` are both weighted AND both in `required`.
  *
- * `thinking` uses only `off`/`auto`/`high`: `off` and `auto` are meta levels the
- * suffix resolver always accepts, so a pin can never silently drop to bare.
+ * `thinking` uses only `off`/`medium`/`high`: `off` is the only meta level (it
+ * applies to any model); `medium`/`high` are concrete pins the resolver clamps
+ * to each model's advertised range, so a pin never silently drops to bare.
  */
 
 import type { SuffixLevel } from "./engine.ts";
@@ -55,7 +56,7 @@ export const ARCHETYPES: readonly Archetype[] = [
     // The shipped `default` role's own weights: a generalist specialist IS the default.
     weights: DEFAULT_ROLES.default.weights,
     required: DEFAULT_ROLES.default.required,
-    thinking: "auto",
+    thinking: "medium",
     tools: ["read", "grep", "glob", "find", "write", "edit", "bash", "task"],
     criteria: [
       "Read the surrounding code before changing it; follow the repo's existing patterns rather than introducing a second convention.",
@@ -83,7 +84,7 @@ export const ARCHETYPES: readonly Archetype[] = [
     keywords: ["doc", "readme", "guide", "tutorial", "explain", "comment", "api reference", "manual", "onboard", "report"],
     weights: { general: 0.34, reasoning: 0.2, code: 0.1, long_context: 0.1, price: 0.16, throughput: 0.1 },
     required: ["general", "price", "throughput"],
-    thinking: "auto",
+    thinking: "medium",
     tools: ["read", "grep", "glob", "find", "write", "edit"],
     criteria: [
       "Write for a reader without your context: define a term on first use, name the file paths, keep examples runnable.",
@@ -97,7 +98,7 @@ export const ARCHETYPES: readonly Archetype[] = [
     keywords: ["prose", "writing", "write", "blog", "article", "essay", "narrative", "copy", "marketing", "release note", "changelog", "announcement", "newsletter", "email"],
     weights: { general: 0.24, reasoning: 0.16, long_context: 0.1, writing: 0.26, price: 0.14, throughput: 0.1 },
     required: ["general", "price", "throughput"],
-    thinking: "auto",
+    thinking: "medium",
     tools: ["read", "grep", "glob", "find", "write", "edit"],
     criteria: [
       "Lead with the outcome; cut ceremony, hedging, and filler.",
@@ -125,7 +126,7 @@ export const ARCHETYPES: readonly Archetype[] = [
     keywords: ["research", "search", "investigat", "survey", "literature", "gather", "explore", "compare", "scout", "discover", "source", "find out"],
     weights: { search: 0.28, general: 0.24, reasoning: 0.2, long_context: 0.1, price: 0.1, throughput: 0.08 },
     required: ["general", "price", "throughput"],
-    thinking: "auto",
+    thinking: "medium",
     tools: ["read", "grep", "glob", "find", "web_search"],
     criteria: [
       "Return findings another agent can act on without re-reading the sources: claim, evidence, source.",
@@ -140,7 +141,7 @@ export const ARCHETYPES: readonly Archetype[] = [
     // The shipped `designer` role's own weights: one canonical design weighting.
     weights: DEFAULT_ROLES.designer.weights,
     required: DEFAULT_ROLES.designer.required,
-    thinking: "auto",
+    thinking: "medium",
     tools: ["read", "grep", "glob", "find", "write", "edit"],
     image: true,
     criteria: [
@@ -155,7 +156,7 @@ export const ARCHETYPES: readonly Archetype[] = [
     keywords: ["refactor", "migration", "migrate", "restructure", "cleanup", "clean up", "moderni", "upgrade", "rewrite", "legacy", "technical debt"],
     weights: { code: 0.3, agents: 0.2, general: 0.2, long_context: 0.1, price: 0.12, throughput: 0.08 },
     required: ["general", "price", "throughput"],
-    thinking: "auto",
+    thinking: "medium",
     tools: ["read", "grep", "glob", "find", "write", "edit", "bash"],
     criteria: [
       "Preserve behaviour: the change is structure, not features — call out any intentional behaviour change explicitly.",
@@ -169,7 +170,7 @@ export const ARCHETYPES: readonly Archetype[] = [
     keywords: ["test", "qa", "coverage", "assert", "e2e", "fuzz", "fixture", "flaky"],
     weights: { code: 0.28, agents: 0.2, tool_calling: 0.14, general: 0.18, price: 0.12, throughput: 0.08 },
     required: ["general", "price", "throughput"],
-    thinking: "auto",
+    thinking: "medium",
     tools: ["read", "grep", "glob", "find", "write", "edit", "bash"],
     criteria: [
       "Test behaviour, boundaries, and error paths — never wiring, copies, mock echoes, or source text.",
@@ -183,7 +184,7 @@ export const ARCHETYPES: readonly Archetype[] = [
     keywords: ["ops", "infra", "deploy", "devops", "ci", "cd", "pipeline", "kubernetes", "docker", "terraform", "monitor", "sre", "incident", "shell", "provision"],
     weights: { agents: 0.24, tool_calling: 0.2, general: 0.2, code: 0.14, price: 0.12, throughput: 0.1 },
     required: ["general", "price", "throughput"],
-    thinking: "auto",
+    thinking: "medium",
     tools: ["read", "grep", "glob", "find", "write", "edit", "bash"],
     criteria: [
       "State the blast radius before running anything that changes state.",

@@ -32,7 +32,7 @@ import { promisify } from "node:util";
 import { assessFocusMetric, type FocusMetricAssessment } from "../agent-create.ts";
 import { catalogFromOmpModelsJson, enrichCatalogData, resolveProviderVariant, type CatalogEntry } from "../availability.ts";
 import { cachedSourceInfo, loadDeclaredSources } from "../benchmark-sources.ts";
-import { computeRankings, loadRankData, META_LEVELS, paretoFrontier, roleLambda, thinkingPriceFactor, type Model, type Ranked, type RoleDef } from "../engine.ts";
+import { computeRankings, effectiveThinkingLevel, loadRankData, paretoFrontier, roleLambda, type Model, type Ranked, type RoleDef } from "../engine.ts";
 import { focusMetricsOf } from "../explorer/explain.ts";
 import { DEFAULT_ROLES as ROLES, DEFAULT_SETTINGS, readPluginSettingsMap, resolveSettings, type ResolvedSettings } from "../settings.ts";
 
@@ -123,9 +123,10 @@ function formatRankings(
     "price); value = q − λ·$/M sorts each role. λ = w/(1−w) ÷ $20 (w = price weight), per-role",
     "override via plugin settings roles.<role>.lambda. Metric columns show weighted",
     "contributions and sum to q; — = metric missing (contributes 0).",
-    "Roles with a thinking level rank on the thinking-adjusted price: the billed",
-    "blend scales by the level's factor (thinking tokens bill as output); models",
-    "without thinking support are not adjusted.",
+    "Roles with a thinking level rank on the thinking-adjusted price: each model is",
+    "priced at the level it will actually run — the role's pin clamped to the model's",
+    "advertised range (the largest level at or below the pin, else the model's lowest;",
+    "a non-thinking model runs off) — and the written selector carries that level.",
     "Abbr: gen=general rea=reasoning math=math ag=agents tool=tool_calling lc=long_context",
     "sea=search vis=vision tput=throughput (code, mrcr as-is).",
     ...(weightsWebsite
@@ -167,8 +168,7 @@ function formatRankings(
       lines.push("eligible: 0 — no eligible models", "");
       continue;
     }
-    const tf = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
-    lines.push(`eligible: ${ranked.length} — λ ${roleLambda(def).toFixed(5)} $/quality-point` + (tf > 1 ? ` (thinking ×${tf.toFixed(3)})` : ""), "");
+    lines.push(`eligible: ${ranked.length} — λ ${roleLambda(def).toFixed(5)} $/quality-point` + (def.thinking === undefined ? "" : ` (thinking :${def.thinking}, clamped per model)`), "");
     const frontier = paretoFrontier(ranked);
     const metricKeys = Object.keys(def.weights).filter((k) => k !== "price");
     const weightsWebsite = def.weights.website !== undefined;
@@ -261,19 +261,20 @@ export function formatModelRolesYaml(rankings: Record<string, Ranked[]>, roles: 
     for (const r of ranked) {
       const provider = r.provider ?? "openrouter";
       if (provider !== "openrouter") {
-        // A non-OpenRouter provider IS the route: `<provider>/<catalog-id>[:<level>]`,
-        // no `@<slug>`. The level comes from that provider's own offer list.
+        // A non-OpenRouter provider IS the route: `<provider>/<catalog-id>:<level>`,
+        // no `@<slug>`. The level comes from that provider's own offer list,
+        // clamped to the model's advertised range.
         const offer = r.model.providerOffers?.[provider];
         if (offer === undefined) continue;
-        const appendSuffix = suffix !== undefined && (META_LEVELS[suffix] === true || offer.thinking.includes(suffix));
-        line = `  ${role}: "${provider}/${offer.catalogId}${appendSuffix ? `:${suffix}` : ""}"`;
+        const level = suffix === undefined ? undefined : effectiveThinkingLevel(suffix, offer.thinking, r.model.thinking);
+        line = `  ${role}: "${provider}/${offer.catalogId}${level === undefined ? "" : `:${level}`}"`;
         break;
       }
       const catalogId = resolveProviderVariant(r.model.id, provider, catalog, "billed");
       if (catalogId === null) continue;
       const row = catalog.find((c) => c.provider === "openrouter" && c.id === catalogId);
-      const appendSuffix = suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix));
-      line = `  ${role}: "openrouter/${catalogId}${appendSuffix ? `:${suffix}` : ""}"`;
+      const level = suffix === undefined ? undefined : effectiveThinkingLevel(suffix, row?.thinking, r.model.thinking);
+      line = `  ${role}: "openrouter/${catalogId}${level === undefined ? "" : `:${level}`}"`;
       break;
     }
     lines.push(line ?? `  ${role}: # no catalog match for ${ranked[0].model.id}`);

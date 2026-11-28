@@ -90,13 +90,13 @@ test("thinkingLevelEffect: one row per level, with the factor and the leader at 
   // (1 + 3·0.25 + overhead)/(1 + 3·0.25) = (7/4 + overhead)/(7/4).
   assert.deepEqual(
     rows.map((r) => r.factor),
-    [1, 8 / 7, 10 / 7, 13 / 7, 19 / 7, 31 / 7, 55 / 7, 13 / 7],
+    [1, 8 / 7, 10 / 7, 13 / 7, 19 / 7, 31 / 7, 55 / 7],
   );
   // w_price 0.2 → λ 0.0125: premium leads through `low`, budget takes over at
   // `medium` (λ·factor crosses 0.375/19.5).
   assert.deepEqual(
     rows.map((r) => r.leader?.id),
-    ["premium", "premium", "premium", "budget", "budget", "budget", "budget", "budget"],
+    ["premium", "premium", "premium", "budget", "budget", "budget", "budget"],
   );
   assert.ok(Math.abs((rows[0].leader?.value ?? 0) - 1.125) < 1e-12);
   assert.ok(Math.abs((rows[3].leader?.value ?? 0) - 0.9883928571428571) < 1e-12);

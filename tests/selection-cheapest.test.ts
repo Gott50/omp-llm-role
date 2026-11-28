@@ -141,7 +141,7 @@ test("selection: value (the default) writes the value leader, byte-identical to 
   const explicit = await runWrite(TWENTY_X, onlyDefault({ selection: "value" }));
   // The value leader, from the engine — not a formula restated here.
   assert.equal(rankRole(DEFAULT_ROLES.default, TWENTY_X)[0].model.id, "premium");
-  assert.equal(implicit.modelRoles.default, "openrouter/org/premium:auto");
+  assert.equal(implicit.modelRoles.default, "openrouter/org/premium:off");
   assert.equal(decision(implicit).reason, "no-current");
   // The mode is opt-in: an absent key and an explicit "value" are the same run.
   assert.equal(explicit.text, implicit.text);
@@ -155,7 +155,7 @@ test("cheapest mode picks the cheap bar-clearing candidate over a 20x value lead
   assert.equal(rankRole(DEFAULT_ROLES.default, TWENTY_X)[0].model.id, "premium");
   assert.equal(row(TWENTY_X, "premium").priceEff, 20);
   assert.equal(row(TWENTY_X, "budget").priceEff, 1);
-  assert.equal(w.modelRoles.default, "openrouter/org/budget:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/budget:off");
   assert.equal(decision(w).reason, "no-current");
   // Reporting stays comparable: `bestValue` is still the value walk's leader,
   // `value` the chosen model's.
@@ -173,7 +173,7 @@ test("an under-bar incumbent is dropped with no margin (switched)", async () => 
   const d = decision(w);
   assert.equal(d.reason, "switched");
   assert.equal(d.from, "openrouter/org/weak");
-  assert.equal(d.to, "openrouter/org/budget:auto");
+  assert.equal(d.to, "openrouter/org/budget:off");
 });
 
 test("a bar-clearing incumbent undercut by less than priceSwitchFraction is kept (kept-margin)", async () => {
@@ -182,7 +182,7 @@ test("a bar-clearing incumbent undercut by less than priceSwitchFraction is kept
   assert.ok(row(NEAR_UNDERCUT, "cheap").priceEff > row(NEAR_UNDERCUT, "mid").priceEff * (1 - DEFAULT_SETTINGS.priceSwitchFraction));
   const d = decision(w);
   assert.equal(d.reason, "kept-margin");
-  assert.equal(d.to, "openrouter/org/mid:auto");
+  assert.equal(d.to, "openrouter/org/mid:off");
 });
 
 test("a bar-clearing incumbent undercut by more than priceSwitchFraction is switched (switched-cost)", async () => {
@@ -190,7 +190,7 @@ test("a bar-clearing incumbent undercut by more than priceSwitchFraction is swit
   assert.ok(row(DEEP_UNDERCUT, "cheap").priceEff <= row(DEEP_UNDERCUT, "mid").priceEff * (1 - DEFAULT_SETTINGS.priceSwitchFraction));
   const d = decision(w);
   assert.equal(d.reason, "switched-cost");
-  assert.equal(d.to, "openrouter/org/cheap:auto");
+  assert.equal(d.to, "openrouter/org/cheap:off");
 });
 
 test("priceSwitchFraction 0 keeps a bar-clearing incumbent (kept-margin)", async () => {
@@ -206,14 +206,14 @@ test("priceSwitchFraction 0 keeps a bar-clearing incumbent (kept-margin)", async
   assert.ok(row(DEEP_UNDERCUT, "cheap").priceEff <= row(DEEP_UNDERCUT, "mid").priceEff * (1 - DEFAULT_SETTINGS.priceSwitchFraction));
   const d = decision(w);
   assert.equal(d.reason, "kept-margin");
-  assert.equal(d.to, "openrouter/org/mid:auto");
+  assert.equal(d.to, "openrouter/org/mid:off");
 });
 
 test("the default priceSwitchFraction switches the same incumbent (switched-cost)", async () => {
   const w = await runWrite(DEEP_UNDERCUT, onlyDefault({ selection: "cheapest" }), {}, 'modelRoles:\n  default: "openrouter/org/mid"\n');
   const d = decision(w);
   assert.equal(d.reason, "switched-cost");
-  assert.equal(d.to, "openrouter/org/cheap:auto");
+  assert.equal(d.to, "openrouter/org/cheap:off");
 });
 
 test("a probe-blocked incumbent is adopted away from, not kept", async () => {
@@ -230,7 +230,7 @@ test("a probe-blocked incumbent is adopted away from, not kept", async () => {
   assert.equal(row(NEAR_UNDERCUT, "cheap").priceEff, 6);
   const d = decision(w);
   assert.equal(d.reason, "adopted");
-  assert.equal(d.to, "openrouter/org/cheap:auto");
+  assert.equal(d.to, "openrouter/org/cheap:off");
 });
 
 test("the anchor is the max-q candidate, not the value leader", async () => {
@@ -241,7 +241,7 @@ test("the anchor is the max-q candidate, not the value leader", async () => {
   assert.ok(row(ANCHOR_SPLIT, "cheap").q < 0.9 * row(ANCHOR_SPLIT, "expensive").q);
   assert.ok(row(ANCHOR_SPLIT, "cheap").q >= 0.9 * row(ANCHOR_SPLIT, "leader").q);
   // Measured against the max-q anchor, `cheap` is out and the pick is `leader`.
-  assert.equal(w.modelRoles.default, "openrouter/org/leader:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/leader:off");
 });
 
 test("a probe-blocked anchor still sets the bar (the anchor is quality-only)", async () => {
@@ -255,9 +255,9 @@ test("a probe-blocked anchor still sets the bar (the anchor is quality-only)", a
     ANCHOR_SPLIT,
     onlyDefault({ selection: "cheapest" }),
     { probeModel: async (_token: string, catalogId: string): Promise<ProbeVerdict> => (catalogId === "org/expensive" ? "blocked" : "ok") },
-    'modelRoles:\n  default: "openrouter/org/expensive:auto"\n',
+    'modelRoles:\n  default: "openrouter/org/expensive:off"\n',
   );
-  assert.equal(w.modelRoles.default, "openrouter/org/leader:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/leader:off");
   assert.equal(decision(w).reason, "adopted");
 });
 
@@ -268,14 +268,14 @@ test("equal-price equal-quality candidates tie-break on model.id ascending", asy
   const w = await runWrite(twins, onlyDefault({ selection: "cheapest" }));
   assert.equal(row(twins, "aaa").priceEff, row(twins, "zzz").priceEff);
   assert.equal(row(twins, "aaa").q, row(twins, "zzz").q);
-  assert.equal(w.modelRoles.default, "openrouter/org/aaa:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/aaa:off");
 });
 
 test("qualityFloor 0 selects the cheapest usable candidate and 1 selects the anchor", async () => {
   const off = await runWrite(UNDER_BAR, onlyDefault({ selection: "cheapest", qualityFloor: 0 }));
-  assert.equal(off.modelRoles.default, "openrouter/org/weak:auto");
+  assert.equal(off.modelRoles.default, "openrouter/org/weak:off");
   const tight = await runWrite(UNDER_BAR, onlyDefault({ selection: "cheapest", qualityFloor: 1 }));
-  assert.equal(tight.modelRoles.default, "openrouter/org/premium:auto");
+  assert.equal(tight.modelRoles.default, "openrouter/org/premium:off");
 });
 
 test("a key-blocked cheap candidate is never selected", async () => {
@@ -285,8 +285,8 @@ test("a key-blocked cheap candidate is never selected", async () => {
   });
   // Premise: `weak` is the cheapest usable candidate when the key can run it.
   const control = await runWrite(UNDER_BAR, settings);
-  assert.equal(control.modelRoles.default, "openrouter/org/weak:auto");
-  assert.equal(blocked.modelRoles.default, "openrouter/org/budget:auto");
+  assert.equal(control.modelRoles.default, "openrouter/org/weak:off");
+  assert.equal(blocked.modelRoles.default, "openrouter/org/budget:off");
   assert.equal(decision(blocked).keyBlockedCount, 1);
 });
 
@@ -296,7 +296,7 @@ test("a probe-blocked pick falls through to the next-cheapest bar-clearing candi
   });
   // `budget` is the cheapest good candidate but the probe rejects it. The bar is
   // fixed, so the next-cheapest good candidate (`mid3`, $17/M) is picked.
-  assert.equal(w.modelRoles.default, "openrouter/org/mid3:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/mid3:off");
 });
 
 test("a role whose every bar-clearing candidate is probe-blocked is left untouched", async () => {
@@ -312,10 +312,10 @@ test("the fallback chain is byte-identical with the mode on and off", async () =
   const on = await runWrite(LEADER_IS_CHEAPEST, onlyDefault({ selection: "cheapest" }));
   // The value leader is the cheapest bar-clearing candidate, so the rule cannot
   // move the pick — the whole document must be unchanged.
-  assert.equal(off.modelRoles.default, "openrouter/org/cheap-best:auto");
+  assert.equal(off.modelRoles.default, "openrouter/org/cheap-best:off");
   assert.equal(on.text, off.text);
   assert.deepEqual(on.chains, off.chains);
-  assert.deepEqual(on.chains["openrouter/org/cheap-best"], ["openrouter/org/pricier:auto", "openrouter/org/pricier2:auto"]);
+  assert.deepEqual(on.chains["openrouter/org/cheap-best"], ["openrouter/org/pricier:off", "openrouter/org/pricier2:off"]);
 });
 
 test("a locked role is untouched", async () => {
@@ -329,9 +329,9 @@ test("a manual providerPin keeps its hard-gate meaning in cheapest mode", async 
   const w = await runWrite(PINNED, pinned);
   // The rule picks within the pinned pool and the pin rides the selector: the
   // cheapest bar-clearing pin-eligible model, never the value leader.
-  assert.equal(w.modelRoles.default, "openrouter/org/model-b@mid:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/model-b@mid:off");
   const value = await runWrite(PINNED, onlyDefault({ roles: { default: { providerPin: "mid" } } }));
-  assert.equal(value.modelRoles.default, "openrouter/org/model-a@mid:auto");
+  assert.equal(value.modelRoles.default, "openrouter/org/model-a@mid:off");
 });
 
 test("two runs on the same data write the same selector", async () => {
@@ -340,7 +340,7 @@ test("two runs on the same data write the same selector", async () => {
   const first = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(TWENTY_X, settings), { force: true }));
   const second = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(TWENTY_X, settings), { force: true }));
   const doc = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as { modelRoles?: Record<string, string> };
-  assert.equal(doc.modelRoles?.default, "openrouter/org/budget:auto");
+  assert.equal(doc.modelRoles?.default, "openrouter/org/budget:off");
   assert.equal(first.decisions.find((d) => d.role === "default")?.to, second.decisions.find((d) => d.role === "default")?.to);
   assert.equal(second.decisions.find((d) => d.role === "default")?.reason, "kept-eligible");
 });
@@ -355,27 +355,27 @@ test("a per-role value selection beats a global cheapest mode", async () => {
   // Premise, from the engine: the value leader is `premium`, 20× `budget`.
   assert.equal(rankRole(DEFAULT_ROLES.default, TWENTY_X)[0].model.id, "premium");
   // The global cheapest mode would pick `budget`; the per-role override wins.
-  assert.equal(w.modelRoles.default, "openrouter/org/premium:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/premium:off");
   const control = await runWrite(TWENTY_X, onlyDefault({ selection: "cheapest" }));
-  assert.equal(control.modelRoles.default, "openrouter/org/budget:auto");
+  assert.equal(control.modelRoles.default, "openrouter/org/budget:off");
 });
 
 test("a per-role cheapest selection beats a global value mode", async () => {
   const w = await runWrite(TWENTY_X, onlyDefault({ selection: "value", roles: { default: { selection: "cheapest" } } }));
   // The global value mode would pick `premium`; the per-role override picks the
   // cheap bar-clearing candidate.
-  assert.equal(w.modelRoles.default, "openrouter/org/budget:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/budget:off");
   const control = await runWrite(TWENTY_X, onlyDefault({ selection: "value" }));
-  assert.equal(control.modelRoles.default, "openrouter/org/premium:auto");
+  assert.equal(control.modelRoles.default, "openrouter/org/premium:off");
 });
 
 test("a per-role qualityFloor beats the global floor", async () => {
   // The global floor (0.9) excludes `weak`; the per-role floor (0) admits it, so
   // the pick moves from `budget` to the cheapest usable candidate.
   const w = await runWrite(UNDER_BAR, onlyDefault({ selection: "cheapest", qualityFloor: 0.9, roles: { default: { qualityFloor: 0 } } }));
-  assert.equal(w.modelRoles.default, "openrouter/org/weak:auto");
+  assert.equal(w.modelRoles.default, "openrouter/org/weak:off");
   const control = await runWrite(UNDER_BAR, onlyDefault({ selection: "cheapest", qualityFloor: 0.9 }));
-  assert.equal(control.modelRoles.default, "openrouter/org/budget:auto");
+  assert.equal(control.modelRoles.default, "openrouter/org/budget:off");
 });
 
 // --- the pure rule itself (the seam ticket #107 consumes) -------------------

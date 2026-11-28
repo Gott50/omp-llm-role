@@ -11,7 +11,7 @@
  *
  * Usage:
  *   node src/cli/create-role.ts --name <role> --weights general=0.3,code=0.2,price=0.25,throughput=0.25 \
- *     [--required general,price,throughput] [--thinking auto] [--description "..."] \
+ *     [--required general,price,throughput] [--thinking medium] [--description "..."] \
  *     [--image] [--lambda 0.01] [--lock PATH] [--dry-run] [--json]
  *
  * Exit codes: 0 written (or dry-run), 1 validation/IO error.
@@ -44,7 +44,7 @@ const USAGE = [
   "  --name <role>          role name ([A-Za-z0-9_-]+, not main/sub)",
   "  --weights <m=w,...>    metric weights; must sum to 1.0 (±0.01)",
   "  --required <m,...>     eligibility gate (default: general,price,throughput)",
-  "  --thinking <level>     off|minimal|low|medium|high|xhigh|max|auto",
+  "  --thinking <level>     off|minimal|low|medium|high|xhigh|max (default: medium)",
   "  --description <text>   one-line role description",
   "  --image                require image input (filters.image)",
   "  --lambda <n>           explicit λ override ($ per quality point)",
@@ -87,7 +87,7 @@ function parseArgs(argv: string[]): CreateRoleArgs {
     name: "",
     weights: {},
     required: ["general", "price", "throughput"],
-    thinking: undefined,
+    thinking: "medium",
     description: "",
     image: false,
     lambda: undefined,

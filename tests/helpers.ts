@@ -138,6 +138,11 @@ export function fakeDeps(models: Model[], settings: Record<string, unknown> = {}
   };
   return {
     getToken: async () => "sk-or-test",
+    // The fixture models are non-thinking (`makeModel` defaults `thinking: false`)
+    // and the default catalog advertises no thinking support, so the clamp runs
+    // every fixture model at `off` (factor 1) — the numeric design of the
+    // updater/preview fixtures is unchanged. A test that wants a level passes its
+    // own catalog.
     getCatalog: async () => makeCatalog(models.map((m) => m.id)),
     getKeyMeta: async () => PAID_KEY_META,
     getKeyAvailability: async () => NO_FILTER_AVAILABILITY,

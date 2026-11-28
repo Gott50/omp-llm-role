@@ -84,3 +84,23 @@ test("the provider column uses theme variables only, no background colors", () =
     assert.doesNotMatch(line, /#[0-9a-fA-F]{3,8}\b|rgba?\(/, `no literal color on a provider rule: ${line}`);
   }
 });
+
+test("the rank table shows the effective thinking level in every row", () => {
+  // The column header and the per-row cell (spec #128).
+  assert.match(app, /el\("th", \{ "data-tip": TIPS\.thinking, text: "thinking" \}\)/);
+  assert.match(app, /el\("td", \{ class: "thinking", "data-tip": TIPS\.thinking, text: r\.thinking \}\)/);
+  // The tooltip explains the clamp.
+  assert.match(app, /the pin clamped to the model's advertised range \(the largest level at or below the pin, else the model's lowest; a non-thinking model runs off\)/);
+});
+
+test("the role editor's thinking picker offers only concrete levels", () => {
+  // No bare option and no `auto`: the select always has a value.
+  assert.doesNotMatch(app, /— \(bare\)/);
+  assert.match(app, /for \(const level of state\.levels\) levelSel\.append\(el\("option", \{ value: level, text: level \}\)\)/);
+  assert.match(app, /levelSel\.value = def\.thinking === undefined \? state\.levels\[0\] : def\.thinking/);
+  assert.match(app, /def\.thinking = levelSel\.value;/);
+});
+
+test("the explain panel shows the role's pin and the effective level", () => {
+  assert.match(app, /const effNote = ex\.role\.effectiveThinking === undefined \|\| ex\.role\.effectiveThinking === ex\.role\.thinking \? "" : " → runs :" \+ ex\.role\.effectiveThinking/);
+});

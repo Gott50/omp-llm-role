@@ -370,7 +370,7 @@ const TIPS = {
   lambda: "λ = price of one quality point, in $/M. Derived as " + LAMBDA_DERIVATION + " unless the role overrides lambda.",
   leaderFlip: "The price weight w* at which a cheaper challenger overtakes the value leader: λ* = min over cheaper challengers X of (q_L − q_X)/(pEff_L − pEff_X), then w* = 20λ*/(1+20λ*). Absent when no cheaper challenger exists. Exact for the 1/price² blend or a hard provider pin; a first-order estimate under the soft best-route basis (the route choice itself moves with the price weight).",
   levers: "Two price-lever readouts, computed on the pool you are viewing: the leader-flip threshold (the price weight at which a cheaper challenger overtakes the leader) and the thinking level's effect on the leader. Each is absent when the server sends null — no cheaper challenger, or a bare role.",
-  thinkingLevels: "The leader at each thinking level, with the level's price factor (3ρ+1+T)/(3ρ+1). The factor multiplies the price axis, so it penalizes expensive models more in absolute λ-units — that is why auto favours the cheap model. Absent for a bare role (no thinking level).",
+  thinkingLevels: "The leader at each thinking level, with the level's price factor (3ρ+1+T)/(3ρ+1). The factor multiplies the price axis, so it penalizes expensive models more in absolute λ-units — that is why a higher level favours the cheap model. Absent for a bare role (no thinking level).",
   sum: "Weights must sum to 1.0 (±0.01) or the plugin rejects the role.",
   required: "Eligibility gate, not a weight: a model missing this metric is not ranked at all for the role.",
   focus: "Nine-axis audit of each weighted benchmark/percentile metric, over the same pool the updater ranks on. A below-bar axis is warned; unknown means the metric's scores were not loaded (never a silent ok).",
@@ -394,8 +394,7 @@ const TIPS = {
   featureState: "inherit = use the global flag (features.<id> in the lock file); on/off = a per-role override (roles.<role>.features.<id>) that beats the global in either direction.",
   featureKnob: "An individual knob the capability's recommended bundle fills. Leave it at inherit to take the recommendation; set a value to override it (an explicit value always wins over the flag).",
   featureDerived: "derived = this value comes from the enabled capability's recommended bundle, not from an explicit key in the role. Set the knob to make it authored.",
-  thinking: "Thinking level appended to the role's selector (`:level`) and used to scale the price axis. The factor (3ρ+1+T)/(3ρ+1) applies only to models that will actually run the level (omp catalog `thinking[]` membership; meta levels off/auto need only a non-empty list). Bare = no suffix — the session's defaultThinkingLevel applies and the price is unadjusted.",
-  thinkingBare: "Bare (no suffix). Not restorable once the role's shipped default or the lock file sets a level: the plugin deep-merges roles over DEFAULT_ROLES, so an omitted key keeps the inherited value.",
+  thinking: "Thinking level pinned on the role and appended to the selector (`:level`), used to scale the price axis. The factor (3ρ+1+T)/(3ρ+1) applies at the level the model will actually run: the pin clamped to the model's advertised range (the largest level at or below the pin, else the model's lowest; a non-thinking model runs off). The written selector always carries that effective level, so the session default never applies. Bare = no suffix (a role with no level).",
   normalize: "Rescale every weight so the sum is 1.0 (the parked ε is rescaled too).",
   addMetric: "Add a metric at weight 0.05, then Normalize.",
   resetEffective: "Discard edits and restore the role's saved (effective) definition.",
@@ -904,6 +903,7 @@ function renderTable() {
       el("th", { text: "model" }),
       el("th", { text: "org" }),
       el("th", { "data-tip": TIPS.provider, text: "provider" }),
+      el("th", { "data-tip": TIPS.thinking, text: "thinking" }),
       el("th", { "data-tip": TIPS.key, text: "key" }),
       el("th", { class: "num", "data-tip": TIPS.value, text: "value" }),
       el("th", { class: "num", "data-tip": TIPS.q, text: "q" }),
@@ -937,6 +937,7 @@ function renderTable() {
         el("td", { class: "model", text: r.name }),
         el("td", { class: "org", text: r.org }),
         el("td", { class: "provider", "data-tip": providerTip(r), text: providerCellText(r) }),
+        el("td", { class: "thinking", "data-tip": TIPS.thinking, text: r.thinking }),
         el("td", { class: "key" }, keyBadge(r.key)),
         el("td", { class: "num", text: fmt(r.value, 3) }),
         el("td", { class: "num", text: fmt(r.q, 3) }),
@@ -1116,9 +1117,10 @@ function renderExplain() {
   const derived = ex.role.lambda === ex.role.derivedLambda;
   panel.append(el("p", { class: "cost", "data-tip": TIPS.lambda, text: "λ = " + ex.role.lambda.toFixed(5) + " $/quality-point" + (derived ? " (derived = " + LAMBDA_DERIVATION + ")" : " (override)") }));
   const thinkNote = ex.role.thinking === undefined ? "bare" : ":" + ex.role.thinking;
+  const effNote = ex.role.effectiveThinking === undefined || ex.role.effectiveThinking === ex.role.thinking ? "" : " → runs :" + ex.role.effectiveThinking;
   const cacheNote = ex.role.cacheHitRate > 0 ? " · cache " + ex.role.cacheHitRate : "";
   const ownNote = ex.ownProvider ? " · best route" : "";
-  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × " + thinkNote + ")" : " (" + thinkNote + ")") + cacheNote + ownNote + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
+  panel.append(el("p", { class: "cost", "data-tip": TIPS.costPenalty, text: "eff price $" + fmt(ex.cost.priceEff, 2) + "/M" + (ex.cost.priceEff !== ex.cost.billedPrice ? " (billed $" + fmt(ex.cost.billedPrice, 2) + " × " + thinkNote + effNote + ")" : " (" + thinkNote + effNote + ")") + cacheNote + ownNote + " · penalty = λ·price = " + fmt(ex.cost.penalty, 4) + " · value = q − penalty = " + fmt(ex.cost.value, 4) }));
   // The provider basis (spec #116): the server's own lines, never recomputed
   // here, so the panel cannot drift from the ranking.
   panel.append(el("p", { class: "cost", "data-tip": TIPS.provider, text: "provider: " + ex.providerLine }));
@@ -1798,14 +1800,11 @@ function renderEditor() {
   renderFeatures(panel);
 
   panel.append(el("h3", { "data-tip": TIPS.thinking, text: "Thinking level" }));
-  const bareLocked = state.effective[state.role]?.thinking !== undefined;
   const levelSel = el("select", { id: "thinking", "data-tip": TIPS.thinking });
-  levelSel.append(el("option", { value: "", text: "— (bare)", disabled: bareLocked ? "" : null, "data-tip": bareLocked ? TIPS.thinkingBare : null }));
   for (const level of state.levels) levelSel.append(el("option", { value: level, text: level }));
-  levelSel.value = def.thinking === undefined ? "" : def.thinking;
+  levelSel.value = def.thinking === undefined ? state.levels[0] : def.thinking;
   levelSel.addEventListener("change", () => {
-    if (levelSel.value === "") delete def.thinking;
-    else def.thinking = levelSel.value;
+    def.thinking = levelSel.value;
     renderEditor();
     renderRoles();
     scheduleRecompute();
@@ -1848,7 +1847,7 @@ function updateReadouts() {
     if (def.thinking === undefined) thinkEl.textContent = "bare — price unadjusted";
     else {
       const factor = state.thinkingFactors[def.thinking] ?? 1;
-      thinkEl.textContent = "price ×" + factor.toFixed(3) + " on models that run :" + def.thinking;
+      thinkEl.textContent = "pin :" + def.thinking + " (×" + factor.toFixed(3) + " at the pin) — clamped per model to the level it runs";
     }
   }
   const lamEl = document.getElementById("lambda-readout");

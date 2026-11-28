@@ -64,27 +64,28 @@ const OPENROUTER = [entry("openrouter", "org/model-a"), entry("openrouter", "org
 test("a prioritized provider writes its own selector for the role's #1", () => {
   const catalog = [...OPENROUTER, entry("flocta", "model-a")];
   const yaml = report({ providerPriority: "flocta" }, models(), catalog);
-  // `default` pins the meta level `auto`, which always applies.
-  assert.match(yaml, /^ {2}default: "flocta\/model-a:auto"$/m);
+  // `default` pins `medium`, which the flocta row advertises.
+  assert.match(yaml, /^ {2}default: "flocta\/model-a:off"$/m);
   // Every role's #1 is model-a, so every role routes through flocta (the
   // header comment still names the openrouter form).
   assert.doesNotMatch(yaml, /^ {2}\w+: "openrouter\//m);
 });
 
 test("the thinking suffix comes from the provider's own offer list", () => {
-  const catalog = [...OPENROUTER, entry("flocta", "model-a", ["low", "high"])];
+  const catalog = [...OPENROUTER, entry("flocta", "model-a", ["low", "medium", "high"])];
   const yaml = report({ providerPriority: "flocta" }, models(), catalog);
   // `slow` pins `high`, which the flocta row advertises.
   assert.match(yaml, /^ {2}slow: "flocta\/model-a:high"$/m);
-  // `default` pins the meta level `auto`, which always applies.
-  assert.match(yaml, /^ {2}default: "flocta\/model-a:auto"$/m);
-  // `smol` pins `off` (a meta level) — also always applies.
+  // `default` pins `medium`, which the flocta row advertises.
+  assert.match(yaml, /^ {2}default: "flocta\/model-a:medium"$/m);
+  // `smol` pins `off` (the only meta level) — always applies.
   assert.match(yaml, /^ {2}smol: "flocta\/model-a:off"$/m);
 });
 
-test("a level the provider's offer does not advertise leaves the selector bare", () => {
-  // The OpenRouter row advertises `high`; the flocta row does not. The level is
-  // provider-scoped, so the flocta selector must not inherit it.
+test("a level the provider's offer does not advertise clamps to its own range", () => {
+  // The OpenRouter row advertises `high`; the flocta row advertises only `low`.
+  // The level is provider-scoped, so the flocta selector clamps `high` to `low`
+  // and must not inherit the OpenRouter range.
   const catalog = [
     entry("openrouter", "org/model-a", ["high"]),
     entry("openrouter", "org/model-b"),
@@ -92,7 +93,7 @@ test("a level the provider's offer does not advertise leaves the selector bare",
     entry("flocta", "model-a", ["low"]),
   ];
   const yaml = report({ providerPriority: "flocta" }, models(), catalog);
-  assert.match(yaml, /^ {2}slow: "flocta\/model-a"$/m);
+  assert.match(yaml, /^ {2}slow: "flocta\/model-a:low"$/m);
   // The same fixture without the priority keeps the OpenRouter suffix.
   const defaults = defaultReport(models(), catalog);
   assert.match(defaults, /^ {2}slow: "openrouter\/org\/model-a:high"$/m);
@@ -104,7 +105,7 @@ test("a model the prioritized provider does not offer stays on OpenRouter", () =
   // different model id never claims model-a.)
   const catalog = [...OPENROUTER, entry("flocta", "model-b")];
   const yaml = report({ providerPriority: "flocta" }, models(), catalog);
-  assert.match(yaml, /^ {2}default: "openrouter\/org\/model-a:auto"$/m);
+  assert.match(yaml, /^ {2}default: "openrouter\/org\/model-a:off"$/m);
   assert.doesNotMatch(yaml, /flocta\//);
 });
 
@@ -115,15 +116,15 @@ test("an empty priority list writes the OpenRouter selectors with the role's lev
       "# Suggested settings.modelRoles (best-fit #1 per role, resolved via the omp catalog).",
       "# Selectors are <provider>/<id> (openrouter unless a provider priority is set); the omp-llm-role plugin writes this block daily.",
       "modelRoles:",
-      '  default: "openrouter/org/model-a:auto"',
+      '  default: "openrouter/org/model-a:off"',
       '  smol: "openrouter/org/model-a:off"',
-      // The OpenRouter row advertises no thinking list, so `slow`'s `high` is bare.
-      '  slow: "openrouter/org/model-a"',
-      '  plan: "openrouter/org/model-a:auto"',
+      // The OpenRouter row advertises no thinking list, so `slow`'s `high` clamps to `off`.
+      '  slow: "openrouter/org/model-a:off"',
+      '  plan: "openrouter/org/model-a:off"',
       '  commit: "openrouter/org/model-a:off"',
       '  tiny: "openrouter/org/model-a:off"',
-      '  task: "openrouter/org/model-a:auto"',
-      '  advisor: "openrouter/org/model-a:auto"',
+      '  task: "openrouter/org/model-a:off"',
+      '  advisor: "openrouter/org/model-a:off"',
     ].join("\n");
   assert.equal(report({}, models(), catalog), expected);
   assert.equal(report({ providerPriority: "" }, models(), catalog), expected);
@@ -134,7 +135,7 @@ test("an empty priority list writes the OpenRouter selectors with the role's lev
 test("a role's own priority overrides the global list", () => {
   const catalog = [...OPENROUTER, entry("flocta", "model-a"), entry("other", "model-a")];
   const yaml = report({ providerPriority: "flocta", "roles.smol.providerPriority": "other" }, models(), catalog);
-  assert.match(yaml, /^ {2}default: "flocta\/model-a:auto"$/m);
+  assert.match(yaml, /^ {2}default: "flocta\/model-a:off"$/m);
   assert.match(yaml, /^ {2}smol: "other\/model-a:off"$/m);
 });
 
@@ -145,7 +146,7 @@ test("a role whose #1 has no catalog row emits the next resolvable model's selec
   const roles: Record<string, RoleDef> = { default: DEFAULT_ROLES.default };
   const catalog = [entry("openrouter", "org/model-b")];
   const yaml = formatModelRolesYaml(computeRankings(models(), roles), roles, catalog);
-  assert.match(yaml, /^ {2}default: "openrouter\/org\/model-b:auto"$/m);
+  assert.match(yaml, /^ {2}default: "openrouter\/org\/model-b:off"$/m);
   assert.doesNotMatch(yaml, /no catalog match/);
 });
 
@@ -198,7 +199,7 @@ test("a tuned lock changes only the provider keys, never the role set or weights
   assert.equal(report(tuned, models(), catalog), defaultReport(models(), catalog));
   // The provider keys still come through: the global priority applies.
   const yaml = report({ ...tuned, providerPriority: "flocta" }, models(), catalog);
-  assert.match(yaml, /^ {2}default: "flocta\/model-a:auto"$/m);
+  assert.match(yaml, /^ {2}default: "flocta\/model-a:off"$/m);
   // The role set and weights are the shipped defaults, not the lock's.
   const roles = reportRoles(resolveSettings(lockSettings(tuned)).settings, false);
   assert.deepEqual(Object.keys(roles), Object.keys(DEFAULT_ROLES).filter((r) => DEFAULT_ROLES[r].enabled !== false));
@@ -221,5 +222,5 @@ test("--all keeps designer even when the lock does not enable it", () => {
   const catalog = [...OPENROUTER, entry("openrouter", "org/model-a", ["high"])];
   const multimodal = models().map((m) => ({ ...m, multimodal: true }));
   const yaml = report(lock, multimodal, catalog, true);
-  assert.match(yaml, /^ {2}designer: "openrouter\/org\/model-a:auto"$/m);
+  assert.match(yaml, /^ {2}designer: "openrouter\/org\/model-a:off"$/m);
 });

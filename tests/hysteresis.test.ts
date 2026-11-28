@@ -37,19 +37,19 @@ test("no current entry -> adopt best (no-current)", async () => {
   assert.ok(d);
   assert.equal(d.reason, "no-current");
   assert.equal(d.from, null);
-  assert.equal(d.to, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
 });
 
 test("current not in today's pool -> adopt best (adopted)", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-z"\n');
   assert.equal(result.decisions[0].reason, "adopted");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-a:auto");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a:off");
 });
 
 test("best not better by margin -> keep current (kept-margin)", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.6, priceSwitchFraction: 0 });
   assert.equal(result.decisions[0].reason, "kept-margin");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-b:auto");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-b:off");
   const margin = result.decisions[0].bestValue - (result.decisions[0].currentValue ?? 0);
   // The hysteresis step compares the role's ranked values, so the expected margin is the
   // engine's own value gap between the two models — not a formula duplicated here.
@@ -75,36 +75,36 @@ test("challenger inside the margin but >=2x cheaper -> switch (switched-cost)", 
   assert.ok(best.value - current.value < DEFAULT_SETTINGS.switchMargin);
   assert.ok(best.priceEff <= current.priceEff * (1 - DEFAULT_SETTINGS.priceSwitchFraction));
   assert.equal(result.decisions[0].reason, "switched-cost");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-x:auto");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-x:off");
 });
 
 test("priceSwitchFraction 0 keeps the switch margin in charge", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-y"\n', { priceSwitchFraction: 0 }, NEAR_TIE);
   assert.equal(result.decisions[0].reason, "kept-margin");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-y:auto");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-y:off");
 });
 
 test("inside the margin but not cheap enough -> keep current", async () => {
   // A 0.9 fraction demands a >=10x undercut; this pair's 3x is not enough.
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-y"\n', { priceSwitchFraction: 0.9 }, NEAR_TIE);
   assert.equal(result.decisions[0].reason, "kept-margin");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-y:auto");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-y:off");
 });
 
 test("best beats current by margin -> switch (switched)", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0.1 });
   assert.equal(result.decisions[0].reason, "switched");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-a:auto");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a:off");
 });
 
 test("switchMargin 0 always takes today's best", async () => {
   const { result } = await run('modelRoles:\n  default: "openrouter/org/model-b"\n', { switchMargin: 0 });
   assert.equal(result.decisions[0].reason, "switched");
-  assert.equal(result.decisions[0].to, "openrouter/org/model-a:auto");
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a:off");
 });
 
 test("current already best -> kept-eligible with identical selector", async () => {
-  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-a:auto"\n');
+  const { result } = await run('modelRoles:\n  default: "openrouter/org/model-a:off"\n');
   assert.equal(result.decisions[0].reason, "kept-eligible");
   assert.equal(result.decisions[0].from, result.decisions[0].to);
 });
@@ -118,22 +118,24 @@ test("suffix appended from settings when the catalog entry thinks", async () => 
   assert.equal(result.decisions[0].to, "openrouter/org/model-a:high");
 });
 
-test("no suffix when the chosen catalog entry has empty thinking[]", async () => {
+test("an empty thinking[] runs off", async () => {
   const dir = setupAgentDir("other: 1\n");
   const deps = fakeDeps(MODELS, { roles: { default: { thinking: "high" } } }, {
     getCatalog: async () => makeCatalog(MODELS.map((m) => m.id), []),
   });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
-  assert.equal(result.decisions[0].to, "openrouter/org/model-a");
+  // The catalog's empty list is authoritative: the model runs `off`.
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a:off");
 });
 
-test("no suffix when the pinned level is not in the model's thinking[]", async () => {
+test("a pinned level the model does not advertise clamps to its own range", async () => {
   const dir = setupAgentDir("other: 1\n");
   const deps = fakeDeps(MODELS, { roles: { default: { thinking: "high" } } }, {
     getCatalog: async () => makeCatalog(MODELS.map((m) => m.id), ["low"]),
   });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
-  assert.equal(result.decisions[0].to, "openrouter/org/model-a"); // omp would clamp: bare
+  // The model advertises only `low`, so `high` clamps down to `low`.
+  assert.equal(result.decisions[0].to, "openrouter/org/model-a:low");
 });
 
 // ---------------------------------------------------------------------------
@@ -151,12 +153,12 @@ const OVERRIDE_CONFIG = 'modelRoles:\n  default: "openrouter/org/model-b"\n';
 // `task.disabledAgents` line. A run handed this text has nothing left to write
 // (story 18), so the document must come back byte-identical.
 const FIXED_POINT = `modelRoles:
-  default: "openrouter/org/model-a:auto"
+  default: "openrouter/org/model-a:off"
 retry:
   fallbackChains:
     openrouter/org/model-a:
-      - "openrouter/org/model-b:auto"
-      - "openrouter/org/model-c:auto"
+      - "openrouter/org/model-b:off"
+      - "openrouter/org/model-c:off"
 task:
   disabledAgents:
     - "designer"
@@ -203,8 +205,8 @@ test("switchMargin override 0 switches a challenger that sits inside the configu
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "switched");
-  assert.equal(d.to, "openrouter/org/model-a:auto");
-  assert.equal(modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
+  assert.equal(modelRoles.default, "openrouter/org/model-a:off");
 });
 
 test("without the override the same fixture keeps the incumbent (regression pin)", async () => {
@@ -212,8 +214,8 @@ test("without the override the same fixture keeps the incumbent (regression pin)
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "kept-margin");
-  assert.equal(d.to, "openrouter/org/model-b:auto");
-  assert.equal(modelRoles.default, "openrouter/org/model-b:auto");
+  assert.equal(d.to, "openrouter/org/model-b:off");
+  assert.equal(modelRoles.default, "openrouter/org/model-b:off");
 });
 
 test("the override leaves an already-best incumbent kept-eligible", async () => {
@@ -222,7 +224,7 @@ test("the override leaves an already-best incumbent kept-eligible", async () => 
   assert.ok(d);
   assert.equal(d.reason, "kept-eligible");
   assert.equal(d.from, d.to);
-  assert.equal(modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(modelRoles.default, "openrouter/org/model-a:off");
   // Story 18: a margin-free run on a config that is already the fixed point
   // writes nothing and leaves the file byte-identical.
   assert.equal(result.wrote, false);
@@ -234,8 +236,8 @@ test("the override leaves the adopted path (current not in the pool) unchanged",
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "adopted");
-  assert.equal(d.to, "openrouter/org/model-a:auto");
-  assert.equal(modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
+  assert.equal(modelRoles.default, "openrouter/org/model-a:off");
 });
 
 test("the override cannot touch a locked role", async () => {
@@ -243,7 +245,7 @@ test("the override cannot touch a locked role", async () => {
   const { result, modelRoles } = await writeRun(MODELS, configText, { roles: { ...ONLY_DEFAULT, vision: { locked: true } } }, { switchMargin: 0 });
   assert.equal(result.decisions.some((d) => d.role === "vision"), false);
   assert.equal(modelRoles.vision, "openrouter/org/model-b");
-  assert.equal(modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(modelRoles.default, "openrouter/org/model-a:off");
 });
 
 test("the override cannot resurrect a disabled role", async () => {
@@ -259,13 +261,13 @@ test("the chain is rebuilt from the newly chosen model under the override", asyn
   // Without the override the incumbent stays: its own chain key holds its fallbacks.
   const kept = await writeRun(MODELS, OVERRIDE_CONFIG, base);
   assert.equal(kept.result.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
-  assert.deepEqual(kept.chains["openrouter/org/model-b"], ["openrouter/org/model-c:auto"]);
+  assert.deepEqual(kept.chains["openrouter/org/model-b"], ["openrouter/org/model-c:off"]);
   // With the override the selector moves to the leader and the chain follows it —
   // the model-b key is not written at all.
   const forced = await writeRun(MODELS, OVERRIDE_CONFIG, base, { switchMargin: 0 });
-  assert.deepEqual(forced.chains["openrouter/org/model-a"], ["openrouter/org/model-b:auto", "openrouter/org/model-c:auto"]);
+  assert.deepEqual(forced.chains["openrouter/org/model-a"], ["openrouter/org/model-b:off", "openrouter/org/model-c:off"]);
   assert.equal(forced.chains["openrouter/org/model-b"], undefined);
-  assert.equal(forced.modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(forced.modelRoles.default, "openrouter/org/model-a:off");
 });
 
 test("the override is not persisted: a later run uses the configured margin, not the last override", async () => {
@@ -281,12 +283,12 @@ test("the override is not persisted: a later run uses the configured margin, not
   // Run 1: `MODELS`, incumbent `model-b`, gap 0.148 inside the configured 0.3.
   const one = await runIn(dir, MODELS, configured);
   assert.equal(one.result.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
-  assert.equal(one.modelRoles.default, "openrouter/org/model-b:auto");
+  assert.equal(one.modelRoles.default, "openrouter/org/model-b:off");
   // Run 2: the same dir and leaderboard, so the incumbent is the one run 1 kept;
   // the override adopts the leader, which run 2 writes to the shared config.
   const two = await runIn(dir, MODELS, configured, { switchMargin: 0 });
   assert.equal(two.result.decisions.find((d) => d.role === "default")?.reason, "switched");
-  assert.equal(two.modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(two.modelRoles.default, "openrouter/org/model-a:off");
   // Run 3: plain, on the moved leaderboard, reading the config run 2 left behind.
   // `model-a` is now second to `model-w` by 0.1238 — inside the configured 0.3,
   // so it is kept. A persisted override of 0 would switch to `model-w`.
@@ -294,8 +296,8 @@ test("the override is not persisted: a later run uses the configured margin, not
   const d = three.result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "kept-margin");
-  assert.equal(d.to, "openrouter/org/model-a:auto");
-  assert.equal(three.modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
+  assert.equal(three.modelRoles.default, "openrouter/org/model-a:off");
 });
 
 test("the history row records the override when active and omits it otherwise", async () => {
@@ -304,7 +306,7 @@ test("the history row records the override when active and omits it otherwise", 
   const forced = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, switchMargin: 0 }));
   // The overridden run really moved the selector (so the row records something
   // that happened, not just an option the run happened to receive).
-  assert.equal(forced.decisions.find((d) => d.role === "default")?.to, "openrouter/org/model-a:auto");
+  assert.equal(forced.decisions.find((d) => d.role === "default")?.to, "openrouter/org/model-a:off");
   const plain = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   assert.equal(plain.decisions.find((d) => d.role === "default")?.reason, "kept-eligible");
   const rows = historyRows(dir);
@@ -335,7 +337,7 @@ test("a non-finite switchMargin override is ignored, not applied", async () => {
   const nan = await writeRun(MODELS, OVERRIDE_CONFIG, { switchMargin: 0.6, priceSwitchFraction: 0 }, { switchMargin: Number.NaN }, { notify: (lines) => notified.push(...lines) });
   const plain = await writeRun(MODELS, OVERRIDE_CONFIG, { switchMargin: 0.6, priceSwitchFraction: 0 });
   assert.equal(nan.result.decisions.find((d) => d.role === "default")?.reason, "kept-margin");
-  assert.equal(nan.modelRoles.default, "openrouter/org/model-b:auto");
+  assert.equal(nan.modelRoles.default, "openrouter/org/model-b:off");
   assert.equal(nan.text, plain.text);
   assert.equal(nan.result.wrote, plain.result.wrote);
   assert.equal(notified.includes("switchMargin ignored for this run (--no-margin)"), false);

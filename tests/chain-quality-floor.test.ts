@@ -103,11 +103,11 @@ const CHEAP_PRIMARY = [
 
 test("scenario 1: a cheaper rank-4 candidate that clears the floor becomes the first fallback", async () => {
   const { chains, modelRoles } = await runWrite(CHEAP_PRIMARY, onlyDefault());
-  assert.equal(modelRoles.default, "openrouter/org/chosen:auto");
+  assert.equal(modelRoles.default, "openrouter/org/chosen:off");
   // The rank-4 `cheap4` ($1 ≤ $2, q 1.2319 ≥ 0.9·chosen) leads; the pricier
   // next-best `p2` fills the remaining depth. The probe window alone would have
   // written [p2, p3].
-  assert.deepEqual(chains["openrouter/org/chosen"], ["openrouter/org/cheap4:auto", "openrouter/org/p2:auto"]);
+  assert.deepEqual(chains["openrouter/org/chosen"], ["openrouter/org/cheap4:off", "openrouter/org/p2:off"]);
 });
 
 // Fixture: the `default` role's measured shape — a cheap primary whose only
@@ -123,7 +123,7 @@ const SUB_FLOOR_CHEAP = [
 
 test("scenario 2: a cheap primary with only sub-floor cheaper candidates keeps the next-best-by-value models", async () => {
   const { chains } = await runWrite(SUB_FLOOR_CHEAP, onlyDefault());
-  assert.deepEqual(chains["openrouter/org/chosen"], ["openrouter/org/p2:auto", "openrouter/org/p3:auto"]);
+  assert.deepEqual(chains["openrouter/org/chosen"], ["openrouter/org/p2:off", "openrouter/org/p3:off"]);
   assert.ok(!(chains["openrouter/org/chosen"] ?? []).some((v) => v.includes("weak")), "a sub-floor cheap model must not be chained");
 });
 
@@ -131,7 +131,7 @@ test("scenario 3: fallbackQualityFloor 0 admits any cheaper-or-equal candidate",
   const { chains } = await runWrite(SUB_FLOOR_CHEAP, onlyDefault({ fallbackQualityFloor: 0 }));
   // The same fixture as scenario 2: with the floor off, the two cheap models the
   // floor excluded take the whole depth.
-  assert.deepEqual(chains["openrouter/org/chosen"], ["openrouter/org/weak4:auto", "openrouter/org/weak5:auto"]);
+  assert.deepEqual(chains["openrouter/org/chosen"], ["openrouter/org/weak4:off", "openrouter/org/weak5:off"]);
 });
 
 // Fixture: an exactly-equal-quality twin (same q, same price, ranked below the
@@ -149,9 +149,9 @@ test("scenario 4: fallbackQualityFloor 1 admits only an exactly-equal-quality ch
   // `twin` matches the chosen model's q exactly and is priced at or below it, so
   // it qualifies; `near` (0.99·chosen) does not, and the pricier `p3` fills the
   // remaining depth.
-  assert.deepEqual(exact.chains["openrouter/org/chosen"], ["openrouter/org/twin:auto", "openrouter/org/p3:auto"]);
+  assert.deepEqual(exact.chains["openrouter/org/chosen"], ["openrouter/org/twin:off", "openrouter/org/p3:off"]);
   const relaxed = await runWrite(TWIN_AND_NEAR, onlyDefault({ fallbackQualityFloor: 0.9 }));
-  assert.deepEqual(relaxed.chains["openrouter/org/chosen"], ["openrouter/org/twin:auto", "openrouter/org/near:auto"]);
+  assert.deepEqual(relaxed.chains["openrouter/org/chosen"], ["openrouter/org/twin:off", "openrouter/org/near:off"]);
 });
 
 // The floor's literal formula leaves a gap: `cheaper` needs `priceEff <=
@@ -173,14 +173,14 @@ test("scenario 5: a key-blocked cheaper candidate never enters the chain", async
   const blocked = await runWrite(KEY_BLOCKABLE, onlyDefault(), {
     getKeyAvailability: async () => availability(["ghost"], ["chosen", "p3"]),
   });
-  assert.deepEqual(blocked.chains["openrouter/org/chosen"], ["openrouter/org/p3:auto"]);
+  assert.deepEqual(blocked.chains["openrouter/org/chosen"], ["openrouter/org/p3:off"]);
   assert.doesNotMatch(blocked.text, /ghost/);
   // The same fixture with the key allowing `ghost` chains it first — so the
   // exclusion, not the ranking, is what kept `ghost` out above.
   const allowed = await runWrite(KEY_BLOCKABLE, onlyDefault(), {
     getKeyAvailability: async () => availability([], ["chosen", "ghost", "p3"]),
   });
-  assert.deepEqual(allowed.chains["openrouter/org/chosen"], ["openrouter/org/ghost:auto", "openrouter/org/p3:auto"]);
+  assert.deepEqual(allowed.chains["openrouter/org/chosen"], ["openrouter/org/ghost:off", "openrouter/org/p3:off"]);
 });
 
 test("scenario 6: the chain stops at fallbackChainDepth, keeping the cheaper set's value order", async () => {
@@ -188,12 +188,12 @@ test("scenario 6: the chain stops at fallbackChainDepth, keeping the cheaper set
   const depth2 = await runWrite(models, onlyDefault());
   // Two qualifying cheaper candidates (`cheap6` $0.5, `cheap4` $1, both q 1.2319)
   // in value order, and nothing more: the depth cap wins over the pricier `p2`.
-  assert.deepEqual(depth2.chains["openrouter/org/chosen"], ["openrouter/org/cheap6:auto", "openrouter/org/cheap4:auto"]);
+  assert.deepEqual(depth2.chains["openrouter/org/chosen"], ["openrouter/org/cheap6:off", "openrouter/org/cheap4:off"]);
   const depth3 = await runWrite(models, onlyDefault({ fallbackChainDepth: 3 }));
   assert.deepEqual(depth3.chains["openrouter/org/chosen"], [
-    "openrouter/org/cheap6:auto",
-    "openrouter/org/cheap4:auto",
-    "openrouter/org/p2:auto",
+    "openrouter/org/cheap6:off",
+    "openrouter/org/cheap4:off",
+    "openrouter/org/p2:off",
   ]);
 });
 
@@ -207,25 +207,25 @@ const PINNED_MODELS = [
 
 test("scenario 7: the manual-pin path is unchanged", async () => {
   const { chains, modelRoles } = await runWrite(PINNED_MODELS, onlyDefault({ roles: { default: { providerPin: "mid" } } }));
-  assert.equal(modelRoles.default, "openrouter/org/model-a@mid:auto");
+  assert.equal(modelRoles.default, "openrouter/org/model-a@mid:off");
   // One entry per fallback model, every value carrying the manual pin.
-  assert.deepEqual(chains["openrouter/org/model-a@mid"], ["openrouter/org/model-b@mid:auto", "openrouter/org/model-c@mid:auto"]);
+  assert.deepEqual(chains["openrouter/org/model-a@mid"], ["openrouter/org/model-b@mid:off", "openrouter/org/model-c@mid:off"]);
 });
 
 test("scenario 8: the auto-pin chain shape is unchanged", async () => {
   const { chains, modelRoles } = await runWrite(PINNED_MODELS, onlyDefault({ roles: { default: { preferOwnProvider: true } } }));
-  assert.equal(modelRoles.default, "openrouter/org/model-a@cheap:auto");
+  assert.equal(modelRoles.default, "openrouter/org/model-a@cheap:off");
   // The primary's other routes first (the pin excluded by slug), then each
   // fallback model's gate-passing routes in the role's route order.
   assert.deepEqual(chains["openrouter/org/model-a@cheap"], [
-    "openrouter/org/model-a@mid:auto",
-    "openrouter/org/model-a@exp:auto",
-    "openrouter/org/model-b@b1:auto",
-    "openrouter/org/model-b@mid:auto",
-    "openrouter/org/model-b@b3:auto",
-    "openrouter/org/model-c@c1:auto",
-    "openrouter/org/model-c@mid:auto",
-    "openrouter/org/model-c@c3:auto",
+    "openrouter/org/model-a@mid:off",
+    "openrouter/org/model-a@exp:off",
+    "openrouter/org/model-b@b1:off",
+    "openrouter/org/model-b@mid:off",
+    "openrouter/org/model-b@b3:off",
+    "openrouter/org/model-c@c1:off",
+    "openrouter/org/model-c@mid:off",
+    "openrouter/org/model-c@c3:off",
   ]);
 });
 
@@ -258,15 +258,15 @@ test("scenario 10: a kept role's chain is built from the kept model's quality an
   const kept = await runWrite(KEPT_ROLE, settings, {}, KEPT_CONFIG);
   const decision = kept.result.decisions.find((d) => d.role === "default");
   assert.equal(decision?.reason, "kept-margin");
-  assert.equal(decision?.to, "openrouter/org/kept:auto");
+  assert.equal(decision?.to, "openrouter/org/kept:off");
   // The floor reads `kept`'s q (the challenger above it is never chained):
   // `cheaper` (q 1.2561 ≥ 0.9·1.3529) qualifies, `weak` (0.7477) does not.
-  assert.deepEqual(kept.chains["openrouter/org/kept"], ["openrouter/org/cheaper:auto", "openrouter/org/pricier:auto"]);
+  assert.deepEqual(kept.chains["openrouter/org/kept"], ["openrouter/org/cheaper:off", "openrouter/org/pricier:off"]);
   // A tighter floor drops `cheaper` from the chain without touching the selector
   // or the decision reason.
   const tighter = await runWrite(KEPT_ROLE, onlyDefault({ switchMargin: 0.6, priceSwitchFraction: 0, fallbackQualityFloor: 0.95 }), {}, KEPT_CONFIG);
   const tighterDecision = tighter.result.decisions.find((d) => d.role === "default");
   assert.equal(tighterDecision?.reason, "kept-margin");
-  assert.equal(tighterDecision?.to, "openrouter/org/kept:auto");
-  assert.deepEqual(tighter.chains["openrouter/org/kept"], ["openrouter/org/pricier:auto"]);
+  assert.equal(tighterDecision?.to, "openrouter/org/kept:off");
+  assert.deepEqual(tighter.chains["openrouter/org/kept"], ["openrouter/org/pricier:off"]);
 });

@@ -61,7 +61,7 @@ test("blocked best candidate -> next ranked adopted, decision records the block"
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "no-current");
-  assert.equal(d.to, "openrouter/org/model-b:auto");
+  assert.equal(d.to, "openrouter/org/model-b:off");
   assert.deepEqual(d.blocked, ["org/model-a"]);
 });
 
@@ -70,7 +70,7 @@ test("blocked current selector -> adopted replacement", async () => {
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "adopted");
-  assert.equal(d.to, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
   assert.deepEqual(d.blocked, ["org/model-b"]);
 });
 
@@ -79,7 +79,7 @@ test("hysteresis intact when everything probes clean", async () => {
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "kept-margin");
-  assert.equal(d.to, "openrouter/org/model-b:auto");
+  assert.equal(d.to, "openrouter/org/model-b:off");
   assert.deepEqual(d.blocked, []);
 });
 
@@ -114,7 +114,7 @@ test("a kept role's chain is filled to full depth from the candidates below the 
   const deps = fakeDeps(SIX, { switchMargin: 1, fallbackChainDepth: 2, priceSwitchFraction: 0 }, { probeModel: blockedExcept([]) });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const text = readFileSync(join(dir, "config.yml"), "utf8");
-  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-e:auto"\n\s+- "openrouter\/org\/model-f:auto"/);
+  assert.match(text, /openrouter\/org\/model-d:\n\s+- "openrouter\/org\/model-e:off"\n\s+- "openrouter\/org\/model-f:off"/);
 });
 
 // Spec #95: the chain's fallback models come from the role's whole ranked
@@ -141,7 +141,7 @@ test("the chain reaches a cheaper candidate the walk never probes", async () => 
   const deps = fakeDeps(PROBE_WINDOW, { fallbackChainDepth: 2, roles: ONLY_DEFAULT_ROLES }, { probeModel: blockedExcept([]) });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const text = readFileSync(join(dir, "config.yml"), "utf8");
-  assert.match(text, /openrouter\/org\/model-a:\n\s+- "openrouter\/org\/model-d:auto"\n\s+- "openrouter\/org\/model-b:auto"/);
+  assert.match(text, /openrouter\/org\/model-a:\n\s+- "openrouter\/org\/model-d:off"\n\s+- "openrouter\/org\/model-b:off"/);
 });
 
 // Spec #116: a non-OpenRouter pick is availability-verified by catalog
@@ -180,6 +180,6 @@ test("a non-OpenRouter pick is not probe-verified", async () => {
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.equal(d.to, "flocta/org/model-a-1017:auto");
+  assert.equal(d.to, "flocta/org/model-a-1017:off");
   assert.ok(!probed.includes("org/model-a-1017"), `the flocta pick was probed: ${probed.join(", ")}`);
 });
