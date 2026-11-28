@@ -395,10 +395,10 @@ reports the leader per level, with the level's price factor
 (1 + 3·0.25)`. It is **inert for a bare role** (no thinking level) — the readout
 is `null`. The factor is a **price-sensitivity amplifier, not a hidden cost**: it
 is multiplicative on `priceEff`, so it penalizes expensive models more in
-absolute λ-units — which is why `auto` favours the cheap model. On the user's
-live `default` def: `off` → Gemini 4 Argon $2.99, `auto` → Gemini 4 Argon $5.55,
-`high` → DeepSeek-V4.1-Flash $0.17. The readout shows this effect; it never
-frames the level as a cost to remove.
+absolute λ-units — which is why a higher level favours the cheap model. On the
+user's live `default` def: `off` → Gemini 4 Argon $2.99, `medium` → Gemini 4
+Argon $5.55, `high` → DeepSeek-V4.1-Flash $0.17. The readout shows this effect;
+it never frames the level as a cost to remove.
 
 ## Capability presets (feature flags)
 
@@ -590,31 +590,46 @@ Roles with a `thinking` level rank on the thinking-adjusted price.
 `ρ = IO_PRICE_RATIO = 0.25` (field-typical input:output price ratio 1:4) and
 `T = THINKING_TOKEN_OVERHEAD[level]`:
 
-| level | off | minimal | low | medium | high | xhigh | max | auto |
-|---|---|---|---|---|---|---|---|---|
-| T | 0 | 0.25 | 0.75 | 1.5 | 3 | 6 | 12 | 1.5 |
-| factor | 1.00 | 1.14 | 1.43 | 1.86 | 2.71 | 4.43 | 7.86 | 1.86 |
+| level | off | minimal | low | medium | high | xhigh | max |
+|---|---|---|---|---|---|---|---|
+| T | 0 | 0.25 | 0.75 | 1.5 | 3 | 6 | 12 |
+| factor | 1.00 | 1.14 | 1.43 | 1.86 | 2.71 | 4.43 | 7.86 |
+
+`auto` is **not** a role level: it is a meta level omp decides per turn, so it
+cannot be pinned. The role vocabulary is the seven concrete levels; the selector
+vocabulary (`THINKING_LEVELS` in `src/availability.ts`) keeps `auto` so a legacy
+`:auto` in an existing `config.yml` still splits, and the resolver maps a legacy
+`auto` to `medium` (the same 1.5 token overhead, so the price factor is
+preserved).
 
 Thinking tokens bill as output, so the factor scales only the output share of the
-3:1 blend. The factor is gated per model on what it will actually run:
+3:1 blend. The factor is the **effective level's** factor, computed per model by
+the one pure clamp `effectiveThinkingLevel(pin, levels, reasoning)` (mirroring
+omp's `clampThinkingLevelForModel`, the floor rule):
 
-- the omp catalog's per-model `thinking[]` wins when available — a model whose
-  level list excludes the role's level is priced bare (omp clamps unsupported
-  levels, and the written selector stays bare, so ranking and write agree);
-- meta levels (`off`, `auto`, `META_LEVELS`) need only a non-empty list;
-- without the catalog (standalone ranking), the OpenRouter `supports_reasoning`
-  flag gates;
-- bare roles (`thinking` undefined) are not adjusted — the session
-  `defaultThinkingLevel` is user-controlled.
+- `pin === "off"` → `off` (a meta level outside omp's effort ladder);
+- `levels === undefined` (no catalog row) → `reasoning ? pin : "off"` (the
+  standalone fallback keeps the OpenRouter `supports_reasoning` gate);
+- `levels.length === 0` → `off` (the catalog's empty list is authoritative);
+- otherwise → the largest advertised level at or below the pin on the ladder;
+  if none is at or below the pin, the model's lowest advertised level. The floor
+  rule never escalates above the pin when a lower option exists.
+
+The written selector always carries that effective level, so the ranking and the
+write cannot disagree and the session `defaultThinkingLevel` never applies to a
+plugin-written role. A bare role (`thinking` undefined) is unadjusted.
 
 **`thinking` is a second, hidden λ.** The factor multiplies the price axis and
 never `q` — `rankRole` has no term that rewards deliberation, so a level is pure
 cost and silently scales λ by the same factor (`slow` at `:max` ran λ_eff
 0.0207, 7.9× its nominal 0.00263). This is why the 2026-09-30 review lowered
-`slow` max → high and `plan`/`designer` high → `auto`, and why `auto` (not
-`medium`) is the pin: no reachable model lists `medium` in its catalog
-`thinking[]`, so a `medium` pin writes bare at a bare price while the session
-default (`auto`) bills 1.86×.
+`slow` max → high. The old rationale for pinning `auto` (not `medium`) — "no
+reachable model lists `medium` in its catalog `thinking[]`, so a `medium` pin
+writes bare at a bare price while the session default bills 1.86×" — is
+**obsolete**: the clamp now runs and writes the model's own level (e.g. `:low`),
+never a bare selector, and 288 of 318 thinking-capable catalog rows list
+`medium`. The shipped `auto` roles (`default`, `vision`, `plan`, `task`,
+`advisor`, `designer`) are now pinned to `medium`.
 
 ## External metrics and the focus-share fit
 

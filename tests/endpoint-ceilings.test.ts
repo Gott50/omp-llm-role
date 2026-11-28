@@ -285,6 +285,6 @@ test("the updater records endpoint-filter drops on the decision", async () => {
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.equal(d.to, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
   assert.deepEqual(d.endpointBlocked, ["model-b"]);
 });

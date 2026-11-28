@@ -176,7 +176,7 @@ tail: true
 
 test("issue #54: a hand-written `disabledAgents: null` patches instead of refusing", () => {
   const config = `modelRoles:
-  default: "openrouter/org/model-a:auto"
+  default: "openrouter/org/model-a:medium"
 task:
   disabledAgents: null
   isolation:
@@ -189,7 +189,7 @@ retry:
 `;
   assert.deepEqual(parseConfig(config).disabledAgents, []);
   const out = patchConfig(config, {
-    roleSelectors: { default: "openrouter/org/model-a:auto" },
+    roleSelectors: { default: "openrouter/org/model-a:medium" },
     roleRemovals: [], chainUpserts: {}, chainPrunes: [],
     agentDisableAdds: ["designer"],
   });
@@ -379,7 +379,7 @@ test("patched output is valid YAML (real parser) and reads back through parseCon
 test("parseConfig agrees with the real yaml parser on block-style configs", () => {
   const REAL_SHAPED = `modelRoles:
   smol: openrouter/deepseek/deepseek-v4.1-flash:off
-  default: "openrouter/org/model-x:auto"
+  default: "openrouter/org/model-x:medium"
   web: web/exa
 modelTags:
   designer:

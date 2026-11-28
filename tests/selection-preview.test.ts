@@ -36,6 +36,9 @@ function reasonOf(p: SelectionPreview, role = "default"): DecisionReason {
 }
 
 const MODELS = [makeModel("model-a", 90, 1, 100), makeModel("model-b", 80, 5, 60), makeModel("model-c", 70, 10, 30)];
+// The fixture models are non-thinking and the catalog advertises no thinking
+// support, so the shipped `medium` pin clamps to `off` (factor 1) — the numeric
+// design of the fixtures is unchanged.
 const CATALOG = makeCatalog(MODELS.map((m) => m.id));
 const RANK: RankData = { models: MODELS, fetchedAt: "2026-09-22T00:00:00.000Z", source: "test", orMatched: MODELS.length, orPriced: MODELS.length };
 
@@ -108,6 +111,8 @@ type PreviewOpts = {
 /** `previewSelection` on a fixture, with the scope-side inputs defaulted. */
 function preview(raw: Record<string, unknown>, opts: PreviewOpts = {}): SelectionPreview {
   const models = opts.models ?? MODELS;
+  // The fixture models are non-thinking, so the shipped `medium` pin clamps to
+  // `off` (factor 1); a test that wants a level passes its own catalog.
   const catalog = opts.catalog ?? makeCatalog(models.map((m) => m.id));
   return previewSelection({
     settings: resolved(raw),
@@ -131,17 +136,17 @@ test("no current selector -> no-current, the value leader", () => {
   const p = preview(onlyDefault());
   assert.equal(reasonOf(p), "no-current");
   assert.equal(p.decisions[0].from, null);
-  assert.equal(p.decisions[0].to, "openrouter/org/model-a:auto");
+  assert.equal(p.decisions[0].to, "openrouter/org/model-a:off");
 });
 
 test("a current selector outside today's pool -> adopted", () => {
   const p = preview(onlyDefault(), { currentSelectors: { default: "openrouter/org/model-z" } });
   assert.equal(reasonOf(p), "adopted");
-  assert.equal(p.decisions[0].to, "openrouter/org/model-a:auto");
+  assert.equal(p.decisions[0].to, "openrouter/org/model-a:off");
 });
 
 test("the current selector is already the challenger -> kept-eligible", () => {
-  const p = preview(onlyDefault(), { currentSelectors: { default: "openrouter/org/model-a:auto" } });
+  const p = preview(onlyDefault(), { currentSelectors: { default: "openrouter/org/model-a:off" } });
   assert.equal(reasonOf(p), "kept-eligible");
   assert.equal(p.decisions[0].from, p.decisions[0].to);
 });
@@ -149,19 +154,19 @@ test("the current selector is already the challenger -> kept-eligible", () => {
 test("the challenger beats the incumbent by the margin -> switched", () => {
   const p = preview(onlyDefault({ switchMargin: 0.1 }), { currentSelectors: { default: "openrouter/org/model-b" } });
   assert.equal(reasonOf(p), "switched");
-  assert.equal(p.decisions[0].to, "openrouter/org/model-a:auto");
+  assert.equal(p.decisions[0].to, "openrouter/org/model-a:off");
 });
 
 test("a challenger inside the margin but >=2x cheaper -> switched-cost", () => {
   const p = preview(onlyDefault(), { models: NEAR_TIE, currentSelectors: { default: "openrouter/org/model-y" } });
   assert.equal(reasonOf(p), "switched-cost");
-  assert.equal(p.decisions[0].to, "openrouter/org/model-x:auto");
+  assert.equal(p.decisions[0].to, "openrouter/org/model-x:off");
 });
 
 test("the challenger is inside the margin and not cheap enough -> kept-margin", () => {
   const p = preview(onlyDefault({ switchMargin: 0.6, priceSwitchFraction: 0 }), { currentSelectors: { default: "openrouter/org/model-b" } });
   assert.equal(reasonOf(p), "kept-margin");
-  assert.equal(p.decisions[0].to, "openrouter/org/model-b:auto");
+  assert.equal(p.decisions[0].to, "openrouter/org/model-b:off");
 });
 
 // ---------------------------------------------------------------------------
@@ -172,7 +177,7 @@ test("the keyed prune drops the as-written leader, so the preview's pick differs
   // The as-written pool's leader — the model the table would show — is key-blocked.
   assert.equal(rankRole(DEFAULT_ROLES.default, MODELS)[0].model.id, "model-a");
   const p = preview(onlyDefault(), { availability: availability(["model-a"], ["model-b", "model-c"]) });
-  assert.equal(p.decisions[0].to, "openrouter/org/model-b:auto");
+  assert.equal(p.decisions[0].to, "openrouter/org/model-b:off");
   assert.equal(p.decisions[0].keyBlockedCount, 1);
   assert.equal(p.decisions[0].availabilitySource, "keyed-catalog");
 });
@@ -203,17 +208,17 @@ test("previewSelection issues no request: a throwing global fetch is never reach
 
 test("fallbackQualityFloor 0 lets a far-below-floor cheap candidate lead the chain", () => {
   const p = preview(onlyDefault({ fallbackQualityFloor: 0 }), { models: SUB_FLOOR_CHEAP });
-  assert.deepEqual(p.chains["openrouter/org/chosen"], ["openrouter/org/weak4:auto", "openrouter/org/weak5:auto"]);
+  assert.deepEqual(p.chains["openrouter/org/chosen"], ["openrouter/org/weak4:off", "openrouter/org/weak5:off"]);
 });
 
 test("fallbackQualityFloor 0.9 keeps the next-best-by-value models", () => {
   const p = preview(onlyDefault({ fallbackQualityFloor: 0.9 }), { models: SUB_FLOOR_CHEAP });
-  assert.deepEqual(p.chains["openrouter/org/chosen"], ["openrouter/org/p2:auto", "openrouter/org/p3:auto"]);
+  assert.deepEqual(p.chains["openrouter/org/chosen"], ["openrouter/org/p2:off", "openrouter/org/p3:off"]);
 });
 
 test("fallbackQualityFloor 1 requires an exact quality match", () => {
   const p = preview(onlyDefault({ fallbackQualityFloor: 1 }), { models: SUB_FLOOR_CHEAP });
-  assert.deepEqual(p.chains["openrouter/org/chosen"], ["openrouter/org/p2:auto", "openrouter/org/p3:auto"]);
+  assert.deepEqual(p.chains["openrouter/org/chosen"], ["openrouter/org/p2:off", "openrouter/org/p3:off"]);
 });
 
 test("a chain key claimed by two roles stays level-free", () => {
@@ -284,8 +289,8 @@ test("RunResult.patch carries the computed patch on a dry run", async () => {
   assert.equal(result.wrote, false);
   const patch = result.patch;
   if (patch === undefined) throw new Error("a dry run must carry the patch");
-  assert.equal(patch.roleSelectors.default, "openrouter/org/model-a:auto");
-  assert.deepEqual(patch.chainUpserts["openrouter/org/model-a"], ["openrouter/org/model-b:auto", "openrouter/org/model-c:auto"]);
+  assert.equal(patch.roleSelectors.default, "openrouter/org/model-a:off");
+  assert.deepEqual(patch.chainUpserts["openrouter/org/model-a"], ["openrouter/org/model-b:off", "openrouter/org/model-c:off"]);
 });
 
 test("RunResult.patch is absent on an abort", async () => {
@@ -384,8 +389,8 @@ test("agreement: the preview matches a real dry run with the auto-pin chain", as
   assertAgrees(result, preview);
   // The auto-pin chain: the primary's other route, then the fallback's route.
   // The chain key carries the pin (a chain key is the selector minus its level).
-  assert.equal(preview.decisions[0].to, "openrouter/org/model-a@alpha:auto");
-  assert.deepEqual(preview.chains["openrouter/org/model-a@alpha"], ["openrouter/org/model-a@beta:auto", "openrouter/org/model-b@gamma:auto"]);
+  assert.equal(preview.decisions[0].to, "openrouter/org/model-a@alpha:off");
+  assert.deepEqual(preview.chains["openrouter/org/model-a@alpha"], ["openrouter/org/model-a@beta:off", "openrouter/org/model-b@gamma:off"]);
 });
 
 test("agreement: at fallbackChainDepth 0 the walk window is the incumbent alone", async () => {
@@ -398,7 +403,7 @@ test("agreement: at fallbackChainDepth 0 the walk window is the incumbent alone"
   const { result, preview } = await agreement(raw, MODELS, 'modelRoles:\n  default: "openrouter/org/model-b"\n');
   assertAgrees(result, preview);
   assert.deepEqual(preview.decisions.map((d) => d.reason), ["kept-eligible"]);
-  assert.equal(preview.decisions[0].to, "openrouter/org/model-b:auto");
+  assert.equal(preview.decisions[0].to, "openrouter/org/model-b:off");
 });
 
 test("agreement: the preview matches a real dry run on a shared chain key", async () => {
@@ -406,7 +411,7 @@ test("agreement: the preview matches a real dry run on a shared chain key", asyn
   // both are kept-eligible on `model-a`, so one chain serves both and its values
   // carry no level. This is the shared-key claim compared against the updater.
   const raw = onlyDefault({ roles: { smol: { weights: DEFAULT_ROLES.default.weights, required: DEFAULT_ROLES.default.required, thinking: "off" } } });
-  const configText = 'modelRoles:\n  default: "openrouter/org/model-a:auto"\n  smol: "openrouter/org/model-a:off"\n';
+  const configText = 'modelRoles:\n  default: "openrouter/org/model-a:off"\n  smol: "openrouter/org/model-a:off"\n';
   const { result, preview } = await agreement(raw, MODELS, configText);
   assertAgrees(result, preview);
   assert.deepEqual(preview.decisions.map((d) => d.reason), ["kept-eligible", "kept-eligible"]);
@@ -441,11 +446,11 @@ test("a provider priority resolves the candidate on its effective provider", () 
   const catalog = [...makeCatalog(["model-a", "model-b"]), ...providerCatalog("flocta", ["model-a"])];
   enrichCatalogData(models, catalog);
   const p = preview(onlyDefault({ providerPriority: "flocta" }), { models, catalog });
-  assert.equal(p.decisions[0].to, "flocta/org/model-a:auto");
+  assert.equal(p.decisions[0].to, "flocta/org/model-a:off");
   assert.equal(p.decisions[0].chainKey, "flocta/org/model-a");
   // The chain's primary cross-provider entry is the OpenRouter wildcard (the
   // OpenRouter catalog id equals the chosen provider's), then the fallback.
-  assert.deepEqual(p.chains["flocta/org/model-a"], ["openrouter/*:auto", "openrouter/org/model-b:auto"]);
+  assert.deepEqual(p.chains["flocta/org/model-a"], ["openrouter/*:off", "openrouter/org/model-b:off"]);
 });
 
 test("a none tier resolves no candidate even with a full catalog", () => {
@@ -468,7 +473,7 @@ test("a non-OpenRouter candidate is not pruned by the OpenRouter keyed set", () 
   enrichCatalogData(models, catalog);
   const p = preview(onlyDefault({ providerPriority: "flocta" }), { models, catalog, availability: availability(["model-a"], ["model-b"]) });
   assert.equal(p.decisions.length, 1);
-  assert.equal(p.decisions[0].to, "flocta/org/model-a:auto");
+  assert.equal(p.decisions[0].to, "flocta/org/model-a:off");
   assert.equal(p.decisions[0].keyBlockedCount, 0);
 });
 
@@ -488,13 +493,13 @@ test("agreement: the preview matches a real dry run under a provider priority", 
     },
   });
   assertAgrees(result, preview);
-  assert.equal(preview.decisions[0].to, "flocta/org/model-a:auto");
+  assert.equal(preview.decisions[0].to, "flocta/org/model-a:off");
   // The chosen model on OpenRouter first (the wildcard keeps the model id),
   // then the next-best models in value order.
   assert.deepEqual(preview.chains["flocta/org/model-a"], [
-    "openrouter/*:auto",
-    "openrouter/org/model-b:auto",
-    "openrouter/org/model-c:auto",
+    "openrouter/*:off",
+    "openrouter/org/model-b:off",
+    "openrouter/org/model-c:off",
   ]);
 });
 
@@ -515,7 +520,7 @@ test("agreement: a provider change is a margin switch, not a kept-eligible rewri
   });
   assertAgrees(result, preview);
   assert.equal(preview.decisions[0].reason, "kept-margin");
-  assert.equal(preview.decisions[0].to, "openrouter/org/model-a:auto");
+  assert.equal(preview.decisions[0].to, "openrouter/org/model-a:off");
 });
 
 test("agreement: a provider bonus promotes a lower-value model and bestValue follows the challenger", async () => {
@@ -542,7 +547,7 @@ test("agreement: a provider bonus promotes a lower-value model and bestValue fol
   // The bonus flips the effective leader: model-b's honest value is lower.
   assert.ok(modelB.value < modelA.value);
   assert.ok(modelB.value + (modelB.providerBonus ?? 0) > modelA.value + (modelA.providerBonus ?? 0));
-  assert.equal(result.decisions[0].to, "flocta/org/model-b:auto");
+  assert.equal(result.decisions[0].to, "flocta/org/model-b:off");
   assert.equal(result.decisions[0].bestValue, modelB.value);
   assert.equal(preview.decisions[0].bestValue, modelB.value);
 });
@@ -565,7 +570,7 @@ test("agreement: a key-blocked OpenRouter incumbent is adopted away from, not ke
   });
   assertAgrees(result, preview);
   assert.equal(result.decisions[0].reason, "adopted");
-  assert.equal(result.decisions[0].to, "flocta/org/x:auto");
+  assert.equal(result.decisions[0].to, "flocta/org/x:off");
   assert.equal(preview.decisions[0].reason, "adopted");
-  assert.equal(preview.decisions[0].to, "flocta/org/x:auto");
+  assert.equal(preview.decisions[0].to, "flocta/org/x:off");
 });

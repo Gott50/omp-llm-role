@@ -20,14 +20,14 @@ test("SHIPPED_AGENTS matches the shipped agents/*.md files", () => {
 });
 
 test("a shipped agent is disabled by default (its role is opt-in)", async () => {
-  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:auto\n");
+  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:medium\n");
   const result = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(MODELS), { force: true }));
   assert.equal(result.aborted, undefined);
   assert.deepEqual(parseConfig(readFileSync(join(dir, "config.yml"), "utf8")).disabledAgents, ["designer"]);
 });
 
 test("enabling the role removes the agent from disabledAgents", async () => {
-  const dir = setupAgentDir('modelRoles:\n  default: openrouter/org/model-a:auto\ntask:\n  disabledAgents:\n    - "designer"\n');
+  const dir = setupAgentDir('modelRoles:\n  default: openrouter/org/model-a:medium\ntask:\n  disabledAgents:\n    - "designer"\n');
   const result = await runInTempDir(dir, () =>
     runUpdater("manual", fakeDeps(MODELS, { roles: { designer: { enabled: true } } }), { force: true }),
   );
@@ -36,7 +36,7 @@ test("enabling the role removes the agent from disabledAgents", async () => {
 });
 
 test("the agent sync is not day-gated", async () => {
-  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:auto\n", {
+  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:medium\n", {
     lastRunDay: "2026-09-22",
     managedRoles: [],
     roleLastSelector: {},
@@ -63,7 +63,7 @@ function myroleSettings(enabled: boolean): Record<string, unknown> {
 }
 
 test("a user agent pinning a disabled role is added to disabledAgents", async () => {
-  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:auto\n");
+  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:medium\n");
   writeUserAgent(dir, "myagent", '"@myrole, @default"');
   const result = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(MODELS, myroleSettings(false)), { force: true }));
   assert.equal(result.aborted, undefined);
@@ -72,7 +72,7 @@ test("a user agent pinning a disabled role is added to disabledAgents", async ()
 });
 
 test("enabling the pinned role removes the user agent", async () => {
-  const dir = setupAgentDir('modelRoles:\n  default: openrouter/org/model-a:auto\ntask:\n  disabledAgents:\n    - "myagent"\n');
+  const dir = setupAgentDir('modelRoles:\n  default: openrouter/org/model-a:medium\ntask:\n  disabledAgents:\n    - "myagent"\n');
   writeUserAgent(dir, "myagent", '"@myrole, @default"');
   const result = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(MODELS, myroleSettings(true)), { force: true }));
   assert.equal(result.aborted, undefined);
@@ -81,7 +81,7 @@ test("enabling the pinned role removes the user agent", async () => {
 });
 
 test("an unrelated disabledAgents entry keeps its position", async () => {
-  const dir = setupAgentDir('modelRoles:\n  default: openrouter/org/model-a:auto\ntask:\n  disabledAgents:\n    - "security-reviewer"\n');
+  const dir = setupAgentDir('modelRoles:\n  default: openrouter/org/model-a:medium\ntask:\n  disabledAgents:\n    - "security-reviewer"\n');
   writeUserAgent(dir, "myagent", '"@myrole, @default"');
   const result = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(MODELS, myroleSettings(false)), { force: true }));
   assert.equal(result.aborted, undefined);
@@ -90,7 +90,7 @@ test("an unrelated disabledAgents entry keeps its position", async () => {
 });
 
 test("an agent pinning an unknown role is never added", async () => {
-  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:auto\n");
+  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:medium\n");
   writeUserAgent(dir, "ghost", '"@ghostrole, @default"');
   const result = await runInTempDir(dir, () => runUpdater("manual", fakeDeps(MODELS), { force: true }));
   assert.equal(result.aborted, undefined);

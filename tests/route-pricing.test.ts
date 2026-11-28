@@ -522,7 +522,7 @@ test("the updater records provider-pin drops on the decision", async () => {
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.equal(d.to, "openrouter/org/model-a@cerebras:auto");
+  assert.equal(d.to, "openrouter/org/model-a@cerebras:off");
   assert.deepEqual(d.pinBlocked, ["model-b"]);
 });
 
@@ -541,9 +541,9 @@ test("a pinned role emits the @<slug> selector; chain key and values carry the p
     modelRoles: Record<string, string>;
     retry: { fallbackChains: Record<string, string[]> };
   };
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cerebras:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a@cerebras:off");
   // The chain key is level-free and pinned; every value carries the same pin.
-  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@cerebras"], ["openrouter/org/model-b@cerebras:auto"]);
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a@cerebras"], ["openrouter/org/model-b@cerebras:off"]);
 });
 
 test("a pinned current selector is visible to hysteresis", async () => {
@@ -551,14 +551,14 @@ test("a pinned current selector is visible to hysteresis", async () => {
   a.routes = [route({ providerSlug: "cerebras" })];
   const b = makeModel("model-b", 80, 5, 60);
   b.routes = [route({ providerSlug: "cerebras" })];
-  const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-b@cerebras:auto"\n');
+  const dir = setupAgentDir('modelRoles:\n  default: "openrouter/org/model-b@cerebras:off"\n');
   const deps = fakeDeps([a, b], { "roles.default.providerPin": "cerebras", switchMargin: 0.6, priceSwitchFraction: 0 });
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   // The pinned incumbent is recognized (not "no-current") and kept.
   assert.equal(d.reason, "kept-margin");
-  assert.equal(d.to, "openrouter/org/model-b@cerebras:auto");
+  assert.equal(d.to, "openrouter/org/model-b@cerebras:off");
 });
 
 // --- no-match guard ----------------------------------------------------------

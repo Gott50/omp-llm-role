@@ -19,7 +19,9 @@ concurrent omp write from being clobbered. It touches exactly three surfaces:
   duplicate a YAML key; prune keys the plugin wrote on a previous run and no
   longer references). A pinned role's chain key is the level-free form of its
   selector and carries the `@<slug>` pin (`openrouter/<id>@<slug>`); the pin
-  rides before the thinking suffix on the values;
+  rides before the effective thinking level on the values, and every value
+  carries the target's own effective level (clamped to that target's catalog
+  row);
 - the plugin-managed names in `task.disabledAgents` (add/remove, other entries
   and their order preserved).
 
@@ -296,8 +298,8 @@ gate-passing route. Length = `(R_primary − 1) + Σ R_fallback`, or `R_primary 
 R_fallback` with a dropped pin, where `R` is the number of distinct gate-passing
 provider slugs for that model — data-driven, not a fixed cap. Entries dedup by
 chain value, so two routes sharing a provider slug collapse to one. Every entry
-carries the same `@<slug>` suffix (and the role's thinking level where the target
-advertises it).
+carries the same `@<slug>` suffix (and the target's own effective thinking level,
+clamped to that target's catalog row — never the primary's).
 **Chain entries are not probed** — only the primary pin is: the chain carries
 many routes and one unroutable entry is survivable (omp fails over), so probing
 it would multiply the request cost for no benefit (out of scope, spec #90). A
@@ -318,8 +320,9 @@ does not apply: with a manual `providerPin` (`autoPinApplies` is false, so the
 route probe does not run either) or with the capability off, the chain carries
 **one entry per `fallbackChainDepth` fallback model** —
 `openrouter/<fallbackId>@<manualSlug>` with a manual pin, the bare
-`openrouter/<fallbackId>` with none — each with the role's thinking level where
-the target advertises it, and no route of the chosen model at all.
+`openrouter/<fallbackId>` with none — each with the target's own effective
+thinking level (clamped to that target's catalog row), and no route of the
+chosen model at all.
 
 **Prune on a pin change.** Because the chain key includes the pin, a pin change
 changes the key; the updater's chain prune (`state.pluginWrittenChainKeys`) drops
@@ -351,10 +354,9 @@ provider availability*).
 
 with **no** `@<slug>` — the provider **is** the route, so the OpenRouter pin and
 the auto-pin do not apply (the route probe never runs for it). The thinking
-suffix is appended only when that provider's own catalog row advertises the
-level (or the level is a meta level), never another provider's list. An
-OpenRouter candidate keeps today's form
-`openrouter/<catalog-id>[@<slug>][:<level>]`. The chain key is the selector minus
+suffix is the effective level clamped to that provider's own catalog row, never
+another provider's list. An OpenRouter candidate keeps today's form
+`openrouter/<catalog-id>[@<slug>]:<level>`. The chain key is the selector minus
 its trailing `:level`, as today.
 
 **The chain values.** The primary's cross-provider entries are the chosen model
@@ -366,8 +368,8 @@ provider:
   chosen provider's catalog id;
 - the enumerated `openrouter/<catalog-id>[:<level>]` when the OpenRouter id
   differs (no `@<slug>` — the cross-provider entry is not pinned);
-- `<provider>/<catalog-id>[:<level>]` for a non-OpenRouter provider, with that
-  provider's own thinking level.
+- `<provider>/<catalog-id>:<level>` for a non-OpenRouter provider, with that
+  provider's own effective thinking level.
 
 The next-best candidates then follow on their **effective** providers (the
 OpenRouter auto-pin expansion is unchanged for an OpenRouter primary). The

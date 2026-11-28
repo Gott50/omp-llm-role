@@ -67,9 +67,9 @@ passing.
    floor is a settings error that writes nothing; and a `kept-margin` role's chain
    is built from the kept model's `q` and the candidates below it, with the
    selector and the decision reason unaffected.
-7. **Chain suffixes** (`chain-suffix.test.ts`) — chain values carry the role's
-   suffix, the key stays bare; an entry without thinking support gets no suffix;
-   two roles on one model share a level-free chain.
+7. **Chain suffixes** (`chain-suffix.test.ts`) — chain values carry the target's
+   own effective level, the key stays bare; an entry without thinking support
+   runs `off`; two roles on one model share a level-free chain.
 8. **Probe gate** (`probe-gate.test.ts`) — 200 → ok; the no-allowed-providers 404
    → blocked; any other failure → usable; blocked best → next adopted; blocked
    current → replaced; a probe-`blocked` candidate never enters a chain
@@ -121,7 +121,10 @@ passing.
 14. **Thinking price** (`thinking-price.test.ts`) — bare/off unadjusted; a level
     scales only thinking-capable models; the frontier uses the effective price;
     `resolveSettings` validates thinking and rejects the legacy `suffixes` map;
-    catalog `thinking[]` wins over the OR flag; meta levels never gate.
+    catalog `thinking[]` wins over the OR flag; the `effectiveThinkingLevel`
+    clamp table (pin in range, between, above, below, a gap, empty, no catalog,
+    `off`); a legacy `auto` resolves to `medium` and an omitted level fills
+    `medium`.
 15. **OpenRouter blend** (`openrouter-blend.test.ts`) — price/throughput are the
     `1/price²`-weighted means over the page routes; flex/priority/degraded/free/
     `:batch` stay out; throughput renormalizes; the find-row fallback; the weight

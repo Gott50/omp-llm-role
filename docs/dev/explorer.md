@@ -240,7 +240,10 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   `false` in `value` mode, which has no bar). Each row also carries the
   provider-priority fields (spec #116): `provider` (the effective provider),
   `priceSource` (`openrouter` / `provider` / `reference` / `openrouter-proxy`)
-  and `providerBonus` (the soft preference, never folded into `value`).
+  and `providerBonus` (the soft preference, never folded into `value`), and
+  `thinking` — the effective (clamped) level the row is priced at
+  (`effectiveThinkingLevel`, or `off` for a non-thinking model / a bare role),
+  rendered as the table's `thinking` column.
   `perTask` is `null` for a non-OpenRouter provider: its offer carries only the
   3:1 blend, not the input/output split the per-task price needs.
   `availability`, `profile` and `bar` are optional and pure (no I/O); omitted or
@@ -312,7 +315,9 @@ Pure, no I/O; all ranking math is delegated to `src/engine.ts`.
   returns the price weight at which a cheaper challenger overtakes the value
   leader (`{ wPrice, flipW, distance, challenger }`), or `null` when no cheaper
   challenger exists. `thinkingLevelEffect` returns one `{ level, factor, leader }`
-  row per thinking level, or `null` for a bare role. Both reuse the engine's own
+  row per thinking level (the seven concrete levels — `auto` is no longer a role
+  level), or `null` for a bare role; each leader is computed with the same clamp
+  the ranking applies. Both reuse the engine's own
   `roleLambda`/`rankRole`/`SUFFIX_LEVELS`/`thinkingPriceFactor`; the formulas are
   in [`scoring.md`](scoring.md).
 
@@ -652,7 +657,10 @@ a scraped third-party site, so the DOM is built with
   renders the leader-flip line (`w* = <flipW> · now <wPrice> · distance
   <±distance> (<ratio>)`) and a per-level table of the thinking level's effect on
   the leader; each is omitted when the server sends `null` (no cheaper
-  challenger, or a bare role).
+  challenger, or a bare role). The cost line shows the role's pin and, when the
+  clamp moves it, the level the selected model actually runs (`:medium → runs
+  :low`). The **Thinking level** picker offers only the seven concrete levels
+  (no bare option, no `auto`), so a role is always pinned.
 - **Provider pin field**: the editor renders a text input for
   `roles.<role>.providerPin` (a tiered slug like `deepinfra/fp8` is kept
   verbatim; empty clears the key, resuming the automatic choice). It is the

@@ -11,7 +11,7 @@
  * against each other on a probe-clean fixture.
  */
 
-import { autoPinApplies, barSelection, computeRankings, endpointFilterDrops, META_LEVELS, pickOrder, providerPinDrops, rankedRoutes, rankRole, type Model, type Ranked, type RankData, type RoleDef, type SelectionMode } from "./engine.ts";
+import { autoPinApplies, barSelection, computeRankings, effectiveThinkingLevel, endpointFilterDrops, pickOrder, providerPinDrops, rankedRoutes, rankRole, type Model, type Ranked, type RankData, type RoleDef, type SelectionMode } from "./engine.ts";
 import { currentRankingId, resolveProviderVariant, resolveVariant, splitThinkingSuffix, type CatalogEntry, type KeyAvailability, type Tier } from "./availability.ts";
 import { chainProviderOrder, providerBonusFor, providerOf, providerOrder } from "./provider-priority.ts";
 import { roleUniverse, type ResolvedSettings } from "./settings.ts";
@@ -289,10 +289,11 @@ export type SelectorParts = {
 /**
  * Assemble the selector a decision writes: the catalog id, the pin suffix (a
  * manual `providerPin` always wins; else the route the auto-pin accepted), and
- * the thinking level — appended only when the model's catalog `thinking[]`
- * actually supports it, because omp clamps an unsupported level, so an
- * unsupported pin would run at a different effort than the role intends (and
- * than the ranking priced).
+ * the **effective** thinking level — the role's pin clamped to the model's
+ * advertised range by `effectiveThinkingLevel`, so the written selector always
+ * carries the level the ranking priced and the session default never applies to
+ * a plugin-written role. A non-thinking model gets `:off`. A bare role
+ * (`thinking` undefined) writes no suffix.
  */
 export function selectorFor(input: {
   chosen: Candidate;
@@ -307,25 +308,26 @@ export function selectorFor(input: {
 }): SelectorParts {
   const suffix = input.def.thinking;
   const provider = input.chosen.ranked.provider ?? "openrouter";
+  const model = input.chosen.ranked.model;
   if (provider !== "openrouter") {
-    // A non-OpenRouter provider IS the route: `<provider>/<catalog-id>[:<level>]`,
+    // A non-OpenRouter provider IS the route: `<provider>/<catalog-id>:<level>`,
     // no `@<slug>` and no auto-pin. The level comes from that provider's own
     // catalog row (`providerOffers[provider].thinking`), never another
-    // provider's list; a meta level always applies.
-    const offer = input.chosen.ranked.model.providerOffers?.[provider];
-    const appendSuffix = suffix !== undefined && (META_LEVELS[suffix] === true || (offer?.thinking.includes(suffix) ?? false));
-    const selector = `${provider}/${input.chosen.catalogId}${appendSuffix ? `:${suffix}` : ""}`;
-    const key = suffix !== undefined && selector.endsWith(`:${suffix}`) ? selector.slice(0, -(suffix.length + 1)) : selector;
+    // provider's list.
+    const offer = model.providerOffers?.[provider];
+    const level = suffix === undefined ? undefined : effectiveThinkingLevel(suffix, offer?.thinking, model.thinking);
+    const selector = `${provider}/${input.chosen.catalogId}${level === undefined ? "" : `:${level}`}`;
+    const key = level === undefined ? selector : selector.slice(0, -(level.length + 1));
     return { selector, key, pin: "", suffix, pinnedSlug: undefined, autoPin: false };
   }
   const pinSlug = input.def.providerPin ?? input.autoSlug;
   const pin = pinSlug !== undefined ? `@${pinSlug}` : "";
   const chosenRow = input.rowById.get(input.chosen.catalogId);
-  const appendSuffix = suffix !== undefined && chosenRow !== undefined && (META_LEVELS[suffix] === true || chosenRow.thinking.includes(suffix));
-  const selector = `openrouter/${input.chosen.catalogId}${pin}${appendSuffix ? `:${suffix}` : ""}`;
+  const level = suffix === undefined ? undefined : effectiveThinkingLevel(suffix, chosenRow?.thinking, model.thinking);
+  const selector = `openrouter/${input.chosen.catalogId}${pin}${level === undefined ? "" : `:${level}`}`;
   // A chain key is the selector minus a trailing `:level` (chain keys are
-  // level-free), so a level the model does not support leaves the key bare.
-  const key = suffix !== undefined && selector.endsWith(`:${suffix}`) ? selector.slice(0, -(suffix.length + 1)) : selector;
+  // level-free).
+  const key = level === undefined ? selector : selector.slice(0, -(level.length + 1));
   return {
     selector,
     key,
@@ -416,16 +418,19 @@ export function buildChains(input: {
       const cheaper = after.filter((p) => p.ranked.priceEff <= chosen.ranked.priceEff && p.ranked.q >= chosen.ranked.q * input.settings.fallbackQualityFloor);
       const pricier = after.filter((p) => p.ranked.priceEff > chosen.ranked.priceEff);
       const chainPool = [...cheaper, ...pricier].slice(0, input.settings.fallbackChainDepth);
-      // A chain value's thinking level is appended only when the target's
-      // catalog entry advertises support (or the level is a meta level).
-      const levelFor = (catalogId: string): string => {
+      // A chain value's thinking level is the target's OWN effective level
+      // (clamped to that target's catalog row, never the primary's), so a
+      // failover runs at the role's effort. A bare role (`suffix` undefined)
+      // writes no level.
+      const levelFor = (catalogId: string, reasoning: boolean): string => {
+        if (suffix === undefined) return "";
         const row = input.rowById.get(catalogId);
-        return suffix !== undefined && row !== undefined && (META_LEVELS[suffix] === true || row.thinking.includes(suffix)) ? `:${suffix}` : "";
+        return `:${effectiveThinkingLevel(suffix, row?.thinking, reasoning)}`;
       };
       // A non-OpenRouter target's level comes from that provider's own catalog
       // row (`providerOffers[provider].thinking`), never another provider's.
-      const levelForOffer = (thinking: readonly string[]): string =>
-        suffix !== undefined && (META_LEVELS[suffix] === true || thinking.includes(suffix)) ? `:${suffix}` : "";
+      const levelForOffer = (thinking: readonly string[], reasoning: boolean): string =>
+        suffix === undefined ? "" : `:${effectiveThinkingLevel(suffix, thinking, reasoning)}`;
       const values: string[] = [];
       // Primary cross-provider entries (issue #116): the chosen model on its
       // other offering providers, in priority order, excluding the chosen
@@ -438,11 +443,12 @@ export function buildChains(input: {
         if (provider === "openrouter") {
           const orId = resolveVariant(chosen.ranked.model.id, [...input.rowById.values()], input.tier);
           if (orId === null) continue;
-          values.push(orId === chosen.catalogId ? `openrouter/*${levelFor(orId)}` : `openrouter/${orId}${levelFor(orId)}`);
+          const lvl = levelFor(orId, chosen.ranked.model.thinking);
+          values.push(orId === chosen.catalogId ? `openrouter/*${lvl}` : `openrouter/${orId}${lvl}`);
         } else {
           const offer = chosen.ranked.model.providerOffers?.[provider];
           if (offer === undefined) continue;
-          values.push(`${provider}/${offer.catalogId}${levelForOffer(offer.thinking)}`);
+          values.push(`${provider}/${offer.catalogId}${levelForOffer(offer.thinking, chosen.ranked.model.thinking)}`);
         }
       }
       if (chosenProvider === "openrouter" && plan.autoPin) {
@@ -466,11 +472,11 @@ export function buildChains(input: {
         const chosenCandidate = plan.candidates[plan.chosenIdx];
         for (const r of rankedRoutes(chosenCandidate.ranked.model, plan.def)) {
           if (r.providerSlug === plan.pinnedSlug) continue;
-          values.push(`openrouter/${chosenCandidate.catalogId}@${r.providerSlug}${levelFor(chosenCandidate.catalogId)}`);
+          values.push(`openrouter/${chosenCandidate.catalogId}@${r.providerSlug}${levelFor(chosenCandidate.catalogId, chosenCandidate.ranked.model.thinking)}`);
         }
         for (const p of chainPool) {
           for (const r of rankedRoutes(p.ranked.model, plan.def)) {
-            values.push(`openrouter/${p.catalogId}@${r.providerSlug}${levelFor(p.catalogId)}`);
+            values.push(`openrouter/${p.catalogId}@${r.providerSlug}${levelFor(p.catalogId, p.ranked.model.thinking)}`);
           }
         }
       } else {
@@ -480,10 +486,10 @@ export function buildChains(input: {
         // offer's thinking level.
         for (const p of chainPool) {
           const prov = p.ranked.provider ?? "openrouter";
-          if (prov === "openrouter") values.push(`openrouter/${p.catalogId}${plan.pin}${levelFor(p.catalogId)}`);
+          if (prov === "openrouter") values.push(`openrouter/${p.catalogId}${plan.pin}${levelFor(p.catalogId, p.ranked.model.thinking)}`);
           else {
             const offer = p.ranked.model.providerOffers?.[prov];
-            values.push(`${prov}/${p.catalogId}${offer === undefined ? "" : levelForOffer(offer.thinking)}`);
+            values.push(`${prov}/${p.catalogId}${offer === undefined ? "" : levelForOffer(offer.thinking, p.ranked.model.thinking)}`);
           }
         }
       }

@@ -39,15 +39,18 @@ test("chain values carry the role's thinking suffix; the chain key stays bare", 
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b:max", "openrouter/org/model-c:max"]);
 });
 
-test("a chain entry without thinking support gets no suffix", async () => {
+test("a chain entry without thinking support runs off", async () => {
   const { doc } = await run([...makeCatalog(["model-a", "model-b"], ["max"]), ...makeCatalog(["model-c"], [])]);
   assert.equal(doc.modelRoles.smol, "openrouter/org/model-a:max");
-  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b:max", "openrouter/org/model-c"]);
+  // model-c advertises no thinking support, so the clamp runs it at `off`.
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b:max", "openrouter/org/model-c:off"]);
 });
 
 test("two roles on the same model share one level-free chain", async () => {
-  // `default` (`:auto`) and `smol` (`:max`) both rank model-a first, so the chain
+  // `default` (`:medium`) and `smol` (`:max`) both rank model-a first, so the chain
   // key `openrouter/org/model-a` serves both and must not carry either role's level.
+  // The catalog advertises only `max`, so `default`'s `medium` clamps up to the
+  // model's lowest level (`max`) — the floor rule.
   const optOut = Object.fromEntries(
     ["slow", "vision", "plan", "commit", "tiny", "task", "advisor", "designer"].map((r) => [r, { weights: null }]),
   );
@@ -57,7 +60,7 @@ test("two roles on the same model share one level-free chain", async () => {
   });
   await runInTempDir(dir, () => runUpdater("manual", deps, { force: true }));
   const doc = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as ConfigDoc;
-  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(doc.modelRoles.default, "openrouter/org/model-a:max");
   assert.equal(doc.modelRoles.smol, "openrouter/org/model-a:max");
   assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-b", "openrouter/org/model-c"]);
 });
@@ -93,7 +96,7 @@ test("a non-OpenRouter selector's suffix comes from the provider's offer thinkin
   assert.equal(parts.autoPin, false);
 });
 
-test("an unsupported level leaves a non-OpenRouter selector bare", () => {
+test("a level the provider does not advertise clamps to its own range", () => {
   const parts = selectorFor({
     chosen: providerCandidate("model-a", "flocta", ["low"]),
     def: { ...DEFAULT_ROLES.default, thinking: "high" },
@@ -101,13 +104,14 @@ test("an unsupported level leaves a non-OpenRouter selector bare", () => {
     autoPin: false,
     autoSlug: undefined,
   });
-  assert.equal(parts.selector, "flocta/org/model-a");
+  // The offer advertises only `low`, so `high` clamps down to `low`.
+  assert.equal(parts.selector, "flocta/org/model-a:low");
   assert.equal(parts.key, "flocta/org/model-a");
 });
 
-test("a meta level always applies to a non-OpenRouter selector", () => {
-  // `DEFAULT_ROLES.default.thinking` is `auto`, a meta level: it applies even
-  // when the provider's offer advertises no thinking support.
+test("a non-thinking offer runs off", () => {
+  // `DEFAULT_ROLES.default.thinking` is `medium`; the offer advertises no
+  // thinking support, so the clamp runs the model at `off`.
   const parts = selectorFor({
     chosen: providerCandidate("model-a", "flocta", []),
     def: DEFAULT_ROLES.default,
@@ -115,7 +119,7 @@ test("a meta level always applies to a non-OpenRouter selector", () => {
     autoPin: false,
     autoSlug: undefined,
   });
-  assert.equal(parts.selector, "flocta/org/model-a:auto");
+  assert.equal(parts.selector, "flocta/org/model-a:off");
   assert.equal(parts.key, "flocta/org/model-a");
 });
 

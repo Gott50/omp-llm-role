@@ -41,7 +41,7 @@ test("chain maintenance: prune stale plugin keys, preserve owner keys, replace m
   const text = readFileSync(join(dir, "config.yml"), "utf8");
   const parsed = parseConfig(text);
   // default switched to model-a (margin 0.5 > default 0.02)
-  assert.equal(parsed.modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(parsed.modelRoles.default, "openrouter/org/model-a:off");
 
   // Stale plugin-written key removed; owner-written unreferenced key preserved;
   // the key the plugin must write exists exactly once (replaced, not duplicated).
@@ -71,7 +71,7 @@ test("chain maintenance: prune stale plugin keys, preserve owner keys, replace m
 test("zero-change run writes nothing and leaves no mtime trace", async () => {
   // Config already matches today's best (model-a, bare selector for the suffix-less role)
   // and already carries the opt-in agent's disabled entry, so the run is a true no-op.
-  const config = "modelRoles:\n  default: openrouter/org/model-a:auto\ntask:\n  disabledAgents:\n    - \"designer\"\nretry:\n  fallbackChains:\n    openrouter/org/model-a:\n      - openrouter/org/model-b:auto\n      - openrouter/org/model-c:auto\n";
+  const config = "modelRoles:\n  default: openrouter/org/model-a:off\ntask:\n  disabledAgents:\n    - \"designer\"\nretry:\n  fallbackChains:\n    openrouter/org/model-a:\n      - openrouter/org/model-b:off\n      - openrouter/org/model-c:off\n";
   const dir = setupAgentDir(config, {
     lastRunDay: null,
     managedRoles: [],
@@ -161,7 +161,9 @@ test("fallback chain prefers candidates priced at or below the chosen model", as
   const doc = parseYaml(readFileSync(join(dir, "config.yml"), "utf8")) as {
     retry: { fallbackChains: Record<string, string[]> };
   };
-  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-c", "openrouter/org/model-b"]);
+  // `testrole` omits `thinking`, so it resolves to the `medium` default and the
+  // chain values carry the clamped effective level.
+  assert.deepEqual(doc.retry.fallbackChains["openrouter/org/model-a"], ["openrouter/org/model-c:off", "openrouter/org/model-b:off"]);
 });
 // ---------------------------------------------------------------------------
 // Spec #116: the cross-provider chain entries. `openrouter/*` is a chain VALUE,
@@ -233,4 +235,19 @@ test("a fallback candidate is chained on its effective provider with its own thi
   const rowById = new Map(makeCatalog(["model-a", "model-b"], ["high"]).map((c) => [c.id, c]));
   const { chainUpserts } = buildChains({ plans: [{ role: "default", plan }], settings: DEFAULT_SETTINGS, rowById, keepKeys: [], writtenKeys: [], tier: "billed" });
   assert.deepEqual(chainUpserts["openrouter/org/model-a"], ["flocta/org/model-b:high"]);
+});
+
+test("a single-claim chain carries each target's own effective level", () => {
+  // The role pins `high`; the primary's row advertises `high`, the fallback's
+  // advertises only `low`, so the fallback value clamps to `low` — never the
+  // primary's level.
+  const chosen = chainCandidate("model-a", "openrouter", {});
+  const fallback = chainCandidate("model-b", "openrouter", {});
+  const plan = planOf("openrouter/org/model-a", [chosen, fallback], { thinking: "high" }, "high");
+  const rowById = new Map([
+    ["org/model-a", { ...makeCatalog(["model-a"], ["high"])[0] }],
+    ["org/model-b", { ...makeCatalog(["model-b"], ["low"])[0] }],
+  ]);
+  const { chainUpserts } = buildChains({ plans: [{ role: "default", plan }], settings: DEFAULT_SETTINGS, rowById, keepKeys: [], writtenKeys: [], tier: "billed" });
+  assert.deepEqual(chainUpserts["openrouter/org/model-a"], ["openrouter/org/model-b:low"]);
 });

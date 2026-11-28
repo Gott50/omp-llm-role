@@ -27,10 +27,11 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     description: "Main workhorse: strong general coding-agent quality, sane cost",
     weights: { general: 0.4926, code: 0.1705, agents: 0.1137, tool_calling: 0.0947, throughput: 0.0285, price: 0.1 },
     required: ["general", "price", "throughput"],
-    // `auto`, not bare: the session default is `auto` (config.yml
+    // `medium`, not bare: the session default is `auto` (config.yml
     // `defaultThinkingLevel`), so a bare selector runs at auto effort while
-    // being priced at 1× — pinning `auto` makes the ranking price what runs.
-    thinking: "auto",
+    // being priced at 1× — pinning a concrete level makes the ranking price
+    // what runs. `medium` matches the old `auto` token overhead (1.5).
+    thinking: "medium",
   },
   smol: {
     description: "Fast lightweight model: cheap and quick, still competent",
@@ -48,7 +49,7 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     description: "Image understanding: vision index dominates",
     weights: { vision: 0.4767, general: 0.1833, reasoning: 0.1375, code: 0.055, throughput: 0.0275, price: 0.12 },
     required: ["vision", "general", "price", "throughput"],
-    thinking: "auto",
+    thinking: "medium",
     filters: { image: true },
   },
   plan: {
@@ -66,10 +67,11 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     // measured) — see Scoring rule 6.
     weights: { general: 0.6, long_context: 0.116676, throughput: 0.033324, price: 0.25 },
     required: ["reasoning", "general", "price", "throughput"],
-    // `auto`, not `medium`: no reachable planning candidate lists `medium` in its
-    // catalog thinking[], so a `medium` pin silently writes bare (the session
-    // default) — `auto` is a meta level (always appended) at the same overhead.
-    thinking: "auto",
+    // `medium`: the old `auto` rationale (no reachable planning candidate lists
+    // `medium`, so a `medium` pin wrote bare) is obsolete — the clamp now runs
+    // and writes the model's own level (e.g. `:low`), never a bare selector, and
+    // 288/318 thinking-capable catalog rows list `medium`.
+    thinking: "medium",
   },
   commit: {
     description: "Commit messages: cheap and fast with decent general quality",
@@ -89,9 +91,9 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     description: "Subagents: agentic + tool calling, moderate cost sensitivity",
     weights: { agents: 0.26, tool_calling: 0.18, code: 0.16, general: 0.22, throughput: 0.05, price: 0.13 },
     required: ["general", "price", "throughput"],
-    // `auto` for the same reason as `default`: honest pricing of the effort
+    // `medium` for the same reason as `default`: honest pricing of the effort
     // the session default already applies.
-    thinking: "auto",
+    thinking: "medium",
   },
   advisor: {
     description: "Advisor/watchdog: deep reasoning over long context",
@@ -113,9 +115,9 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     // Non-price weights sum to 0.80 = 1 − price, as the (w/qW) blend requires.
     weights: { general: 0.5947, long_context: 0.1004, price: 0.2, throughput: 0.1049 },
     required: ["reasoning", "general", "price", "throughput"],
-    // `auto`, matching `plan`: the same model (Hy4 preview) runs both roles, so
-    // pricing advisor bare while plan is `auto` understated advisor by 1.857×.
-    thinking: "auto",
+    // `medium`, matching `plan`: the same model (Hy4 preview) runs both roles, so
+    // pricing advisor bare while plan is `medium` understated advisor by 1.857×.
+    thinking: "medium",
   },
   designer: {
     description: "Design work: visual/UX judgement on image-capable models",
@@ -131,9 +133,9 @@ export const DEFAULT_ROLES: Record<string, RoleDef> = {
     enabled: false,
     weights: { general: 0.26, code: 0.06, vision: 0.18, throughput: 0.15, price: 0.17, website: 0.18 },
     required: ["general", "price", "throughput"],
-    // `auto` for the same reason as `plan`: nothing in the designer pool lists
-    // `medium`, and `auto` is a meta level written as-is at the same overhead.
-    thinking: "auto",
+    // `medium` for the same reason as `plan`: the clamp writes the model's own
+    // level, so a `medium` pin never writes bare.
+    thinking: "medium",
     filters: { image: true },
   },
 };
@@ -466,8 +468,8 @@ export function deriveSettingsSchema(): Record<string, PluginSettingSchema> {
     };
     schema[`${p}.thinking`] = {
       type: "enum",
-      description: `Thinking level appended to the ${name} selector`,
-      default: def.thinking ?? "auto",
+      description: `Thinking level appended to the ${name} selector (clamped to each model's advertised range)`,
+      default: def.thinking ?? "medium",
       values: Object.keys(SUFFIX_LEVELS),
     };
     schema[`${p}.providerPin`] = {
@@ -698,6 +700,17 @@ function mergeRawSettings(raw: Record<string, unknown>): { merged: ResolvedSetti
   }
   if (isRecord((merged as unknown as Record<string, unknown>).suffixes)) {
     errors.push("config: suffixes moved into roles — set roles.<role>.thinking instead");
+  }
+  // Normalize the role thinking level: a legacy `auto` (no longer a role level)
+  // resolves to `medium` (the same 1.5 token overhead), and a role that omits
+  // `thinking` is filled with `medium`, so every resolved def carries a concrete
+  // level. The `RoleDef.thinking` type stays optional for partial defs and
+  // tests; production defs are always pinned. Runs before validation, so a
+  // legacy `auto` is accepted (mapped) rather than rejected.
+  for (const rdef of Object.values(merged.roles)) {
+    if (!isRecord(rdef)) continue;
+    const t = (rdef as Record<string, unknown>).thinking;
+    if (t === undefined || t === "auto") (rdef as Record<string, unknown>).thinking = "medium";
   }
   return { merged, errors };
 }

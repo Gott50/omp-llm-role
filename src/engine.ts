@@ -955,8 +955,12 @@ export function roleLambda(def: RoleDef): number {
 // Thinking-level price adjustment
 // ---------------------------------------------------------------------------
 
-/** Selector levels a role's `thinking` field may take (omp `provider/model[:level]`). */
-export type SuffixLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto";
+/** Selector levels a role's `thinking` field may take (omp `provider/model[:level]`).
+ * The role vocabulary is the seven concrete levels: `auto` is a meta level omp
+ * decides per turn, so it is not pinnable. The selector vocabulary
+ * (`THINKING_LEVELS` in `src/availability.ts`) keeps `auto` so a legacy `:auto`
+ * in an existing `config.yml` still splits. */
+export type SuffixLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export const SUFFIX_LEVELS: Record<SuffixLevel, true> = {
   off: true,
@@ -966,19 +970,14 @@ export const SUFFIX_LEVELS: Record<SuffixLevel, true> = {
   high: true,
   xhigh: true,
   max: true,
-  auto: true,
 };
 
-/** Levels omp accepts for any thinking-capable model regardless of the model's
- * own effort list: `off` (reasoning off) and `auto` (model decides per turn). */
-export const META_LEVELS: Record<string, true> = {
-  off: true,
-  auto: true,
-};
+/** The effort ladder, lowest first. `off` is the only meta level: it is valid
+ * for any model (reasoning off) and sits below every effort. */
+export const THINKING_LADDER: readonly SuffixLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** Thinking tokens per unit of visible output, by level (coding-agent workload:
- * ~1-2k visible tokens/turn; effort budgets roughly double per step). `auto`
- * nets out to ~medium — models think when the turn warrants it. */
+ * ~1-2k visible tokens/turn; effort budgets roughly double per step). */
 export const THINKING_TOKEN_OVERHEAD: Record<SuffixLevel, number> = {
   off: 0,
   minimal: 0.25,
@@ -987,7 +986,6 @@ export const THINKING_TOKEN_OVERHEAD: Record<SuffixLevel, number> = {
   high: 3,
   xhigh: 6,
   max: 12,
-  auto: 1.5,
 };
 
 /** The 3:1 blend assumes output is 1/4 of the token mix; field-typical
@@ -998,6 +996,37 @@ const IO_PRICE_RATIO = 0.25;
 /** Billed-blend multiplier for a role's thinking level (1 for `off`). */
 export function thinkingPriceFactor(level: SuffixLevel): number {
   return (1 + 3 * IO_PRICE_RATIO + THINKING_TOKEN_OVERHEAD[level]) / (1 + 3 * IO_PRICE_RATIO);
+}
+
+/** The level a model will actually run for a role pinned to `pin`, mirroring
+ * omp's `clampThinkingLevelForModel` (the floor rule): the largest level the
+ * model advertises at or below the pin, else the model's lowest advertised
+ * level. The one pure clamp seam — `thinkingAdjustedPrice`, `selectorFor`, the
+ * chain-value builder, `rankRows` and the CLI report all call it, so the price
+ * the ranking charges and the level the selector writes cannot disagree.
+ *
+ * - `pin === "off"` → `off` (a meta level outside omp's effort ladder).
+ * - `levels === undefined` (no catalog row) → `reasoning ? pin : "off"` (the
+ *   standalone fallback keeps the OR `supports_reasoning` gate).
+ * - `levels.length === 0` → `off` (the catalog's empty list is authoritative).
+ * - otherwise → the largest advertised level at or below the pin on the ladder;
+ *   if none is at or below the pin, the model's lowest advertised level. The
+ *   floor rule never escalates above the pin when a lower option exists. */
+export function effectiveThinkingLevel(pin: SuffixLevel, levels: readonly string[] | undefined, reasoning: boolean): SuffixLevel {
+  if (pin === "off") return "off";
+  if (levels === undefined) return reasoning ? pin : "off";
+  if (levels.length === 0) return "off";
+  const pinIdx = THINKING_LADDER.indexOf(pin);
+  let clamped: SuffixLevel | undefined;
+  let lowest: SuffixLevel | undefined;
+  for (const level of levels) {
+    const idx = THINKING_LADDER.indexOf(level as SuffixLevel);
+    if (idx === -1) continue;
+    if (lowest === undefined || idx < THINKING_LADDER.indexOf(lowest)) lowest = level as SuffixLevel;
+    if (idx <= pinIdx && (clamped === undefined || idx > THINKING_LADDER.indexOf(clamped))) clamped = level as SuffixLevel;
+  }
+  // The largest advertised level at or below the pin, else the model's lowest.
+  return clamped ?? lowest ?? "off";
 }
 
 export function buildModels(rows: LlmStatsRow[]): Model[] {
@@ -1125,19 +1154,17 @@ export function pinnedRoute(model: Model, providerPin: string | undefined): Open
 }
 
 /** The role's thinking-adjusted billed price for a model at `basePrice`: the
- * thinking factor applies only when the model actually runs the role's level.
- * `levels` is the effective provider's catalog level list (issue #116) — the
- * OpenRouter row's `thinkingLevels` by default, or a non-OpenRouter provider's
- * offer `thinking`; without it the `supports_reasoning` flag gates. Mirrors the
- * factor `rankRole` applies, so the route basis and the ranking can never
- * disagree. */
+ * effective level's factor applies (the level the model will actually run,
+ * clamped to its advertised range by `effectiveThinkingLevel`). `levels` is the
+ * effective provider's catalog level list (issue #116) — the OpenRouter row's
+ * `thinkingLevels` by default, or a non-OpenRouter provider's offer `thinking`;
+ * without it the `supports_reasoning` flag gates. A bare role (`thinking`
+ * undefined) is unadjusted. Mirrors the factor `rankRole` applies, so the route
+ * basis and the ranking can never disagree. */
 export function thinkingAdjustedPrice(model: Model, def: RoleDef, basePrice: number, levels = model.thinkingLevels): number {
-  const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
-  if (levelFactor === 1) return basePrice;
-  const runsAtLevel = levels
-    ? levels.length > 0 && (def.thinking === undefined || META_LEVELS[def.thinking] === true || levels.includes(def.thinking))
-    : model.thinking;
-  return runsAtLevel ? basePrice * levelFactor : basePrice;
+  if (def.thinking === undefined) return basePrice;
+  const factor = thinkingPriceFactor(effectiveThinkingLevel(def.thinking, levels, model.thinking));
+  return factor === 1 ? basePrice : basePrice * factor;
 }
 
 /** The role's value of a model priced on `route` (null = the 1/price² blend):
@@ -1150,14 +1177,17 @@ function roleValueOnRoute(
   route: OpenRouterEndpointRecord | null,
   cacheHitRate: number,
   lambda: number,
-  levelFactor: number,
   qW: number,
   basisPrice: number | null,
   levels: string[] | undefined,
 ): { q: number; priceEff: number; value: number; parts: Record<string, number> } | null {
   const basePrice = route !== null ? routeEffectivePrice(route, cacheHitRate) : basisPrice;
   if (basePrice == null) return null;
-  const priceEff = levelFactor === 1 ? basePrice : thinkingAdjustedPrice(em, def, basePrice, levels);
+  // The price factor is the effective level's, computed per model: a role pinned
+  // to `off` is unadjusted for every model; a concrete pin is adjusted by the
+  // level the model actually runs (clamped to its advertised range).
+  const factor = def.thinking === undefined ? 1 : thinkingPriceFactor(effectiveThinkingLevel(def.thinking, levels, em.thinking));
+  const priceEff = factor === 1 ? basePrice : basePrice * factor;
   let q = 0;
   const parts: Record<string, number> = {};
   for (const [metric, w] of Object.entries(def.weights)) {
@@ -1306,7 +1336,6 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
   const wPrice = def.weights.price ?? 0;
   const qW = 1 - wPrice;
   const lambda = roleLambda(def);
-  const levelFactor = def.thinking === undefined ? 1 : thinkingPriceFactor(def.thinking);
   // Assumed cache-hit rate (0 = off): blends each route's cache-read price into
   // its billed price. 0 makes every cache path byte-identical to the uncached one.
   const cacheHitRate = def.cacheHitRate ?? 0;
@@ -1358,7 +1387,7 @@ export function rankRole(def: RoleDef, models: Model[]): Ranked[] {
     if (def.required.some((k) => roleMetricValue(em, k, pinRoute, cacheHitRate, basis.price) == null)) continue;
     // The role's value on its route basis (the pin's route, the soft best route,
     // or the price basis). Null when the model has no usable billed price.
-    const rv = roleValueOnRoute(em, def, route, cacheHitRate, lambda, levelFactor, qW, basis.price, levels);
+    const rv = roleValueOnRoute(em, def, route, cacheHitRate, lambda, qW, basis.price, levels);
     if (rv === null) continue;
     // maxPriceUsdPerM caps the model's own price basis, never the soft best-route
     // basis: with no hard pin the gate uses the model's blend price (thinking-

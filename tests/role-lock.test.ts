@@ -95,7 +95,7 @@ test("locked role is not switched while a sibling unlocked role switches", async
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
   assert.equal(d.reason, "switched");
-  assert.equal(d.to, "openrouter/org/model-a:auto");
+  assert.equal(d.to, "openrouter/org/model-a:off");
 
   const text = readFileSync(join(dir, "config.yml"), "utf8");
   const parsed = parseConfig(text);
@@ -150,9 +150,9 @@ test("unlocking restores the normal daily switch", async () => {
   const d = result.decisions.find((x) => x.role === "slow");
   assert.ok(d);
   assert.equal(d.reason, "switched");
-  assert.equal(d.to, "openrouter/org/model-a");
+  assert.equal(d.to, "openrouter/org/model-a:off");
   const parsed = parseConfig(readFileSync(join(dir, "config.yml"), "utf8"));
-  assert.equal(parsed.modelRoles.slow, "openrouter/org/model-a");
+  assert.equal(parsed.modelRoles.slow, "openrouter/org/model-a:off");
 });
 
 test("a locked role that is disabled still leaves the managed set", async () => {

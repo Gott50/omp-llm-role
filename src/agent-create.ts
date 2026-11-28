@@ -1119,7 +1119,7 @@ export const CREATE_AGENT_USAGE = [
   "  --archetype <id>       force a weight archetype instead of fitting the purpose",
   "  --weights <m=w,...>    explicit weights (must sum to 1.0; overrides the archetype)",
   "  --required <m,...>     eligibility gate (default: the archetype's)",
-  "  --thinking <level>     off|minimal|low|medium|high|xhigh|max|auto",
+  "  --thinking <level>     off|minimal|low|medium|high|xhigh|max (default: the archetype's)",
   "  --tools <a,b,...>      builtin tool allowlist (default: the archetype's)",
   "  --benchmarks <m,...>   extra benchmarks to fold into the weights (see --list-benchmarks)",
   "  --feature <id,...>     capability flag(s) to author on the role (see --list-features);",

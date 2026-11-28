@@ -210,7 +210,7 @@ test("parseRemoveAgentArgs parses flags and rejects a bad scope", () => {
 // `modelRoles.<name>` line (role left the managed set) and the plugin-managed
 // `task.disabledAgents` entry (state `managedDisabledAgents`).
 test("the updater drops a removed agent's disabledAgents entry", async () => {
-  const dir = setupAgentDir('modelRoles:\n  default: openrouter/org/model-a:auto\ntask:\n  disabledAgents:\n    - "myagent"\n', {
+  const dir = setupAgentDir('modelRoles:\n  default: openrouter/org/model-a:medium\ntask:\n  disabledAgents:\n    - "myagent"\n', {
     lastRunDay: null,
     managedRoles: [],
     roleLastSelector: {},
@@ -228,7 +228,7 @@ test("the updater drops a removed agent's disabledAgents entry", async () => {
 });
 
 test("the updater prunes modelRoles for a role removed from settings", async () => {
-  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:auto\n  changelog: openrouter/org/model-b\n", {
+  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:medium\n  changelog: openrouter/org/model-b\n", {
     lastRunDay: null,
     managedRoles: ["default", "changelog"],
     roleLastSelector: {},
@@ -240,7 +240,7 @@ test("the updater prunes modelRoles for a role removed from settings", async () 
   assert.equal(result.aborted, undefined);
   const parsed = parseConfig(readFileSync(join(dir, "config.yml"), "utf8"));
   assert.equal("changelog" in parsed.modelRoles, false);
-  assert.equal(parsed.modelRoles.default, "openrouter/org/model-a:auto");
+  assert.equal(parsed.modelRoles.default, "openrouter/org/model-a:off");
 });
 
 test("create then remove leaves no role, agent, or modelRoles entry", async () => {
@@ -250,7 +250,7 @@ test("create then remove leaves no role, agent, or modelRoles entry", async () =
   const removed = removeAgent(request(lockPath));
   assert.ok(removed.ok, removed.ok ? "" : removed.errors.join("; "));
 
-  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:auto\n  changelog: openrouter/org/model-b\n", {
+  const dir = setupAgentDir("modelRoles:\n  default: openrouter/org/model-a:medium\n  changelog: openrouter/org/model-b\n", {
     lastRunDay: null,
     managedRoles: ["default", "changelog"],
     roleLastSelector: {},

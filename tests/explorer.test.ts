@@ -94,6 +94,22 @@ test("rankRows: deltas measure movement against the baseline ranking", () => {
   assert.equal(premium.delta, -1);
 });
 
+test("rankRows: the row's thinking is the effective (clamped) level", () => {
+  // A thinking-capable model whose catalog advertises only `low`; the role pins
+  // `high`, so the row runs `low`. A non-thinking model runs `off`.
+  const models = [
+    { ...makeModel("thinker", 90, 1, 100, true), thinkingLevels: ["low"] },
+    makeModel("plain", 80, 1, 100, false),
+  ];
+  const def = { description: "", weights: { general: 0.9, price: 0.1 }, required: ["general", "price", "throughput"], thinking: "high" as const };
+  const rows = rankRows(def, models, []);
+  assert.equal(rows.find((r) => r.id === "thinker")?.thinking, "low");
+  assert.equal(rows.find((r) => r.id === "plain")?.thinking, "off");
+  // A bare role reads `off` (no pin).
+  const bare = rankRows({ ...def, thinking: undefined }, models, []);
+  assert.ok(bare.every((r) => r.thinking === "off"));
+});
+
 test("rankRows: missing lists weighted metrics with a null raw value", () => {
   // makeModel leaves `math` null; the role weights it, so every row reports it missing.
   // A fixture role, not a shipped one: no shipped role weights `math` any more.
@@ -1702,7 +1718,7 @@ test("POST /api/preview returns the decisions for the edited settings", async ()
     const decision = decisionOf(base.body, "previewrole");
     assert.equal(decision.reason, "switched");
     assert.equal(decision.from, "openrouter/org/model-b");
-    assert.equal(decision.to, "openrouter/org/model-a");
+    assert.equal(decision.to, "openrouter/org/model-a:off");
     // The payload carries every side-effect field the SPA renders.
     const preview = base.body.preview as Record<string, unknown>;
     for (const key of ["decisions", "chains", "chainPrunes", "roleRemovals", "agentDisableAdds", "agentDisableRemoves", "skipped"]) {
@@ -1723,7 +1739,7 @@ test("POST /api/preview returns the decisions for the edited settings", async ()
     });
     const keptDecision = decisionOf(kept.body, "previewrole");
     assert.equal(keptDecision.reason, "kept-margin");
-    assert.equal(keptDecision.to, "openrouter/org/model-b");
+    assert.equal(keptDecision.to, "openrouter/org/model-b:off");
   } finally {
     await handle.close();
   }
@@ -1783,7 +1799,7 @@ test("POST /api/preview applies the keyed prune inside the candidate set, not to
     const decision = decisionOf(body, "previewrole");
     assert.equal(decision.keyBlockedCount, 1);
     assert.equal(decision.reason, "kept-eligible");
-    assert.equal(decision.to, "openrouter/org/model-b");
+    assert.equal(decision.to, "openrouter/org/model-b:off");
   } finally {
     await handle.close();
   }
@@ -1815,7 +1831,7 @@ test("POST /api/preview drops the scope's flat roles.* keys, so a cleared pin ca
   try {
     const { body } = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: PREVIEW_ROLE } });
     const decision = decisionOf(body, "previewrole");
-    assert.equal(decision.to, "openrouter/org/model-a");
+    assert.equal(decision.to, "openrouter/org/model-a:off");
     assert.equal(decision.pinDropped, false);
     const preview = body.preview as Record<string, unknown>;
     assert.equal((preview.skipped as Array<Record<string, unknown>>).some((s) => s.role === "previewrole"), false);
@@ -1854,7 +1870,7 @@ test("POST /api/preview deletes a hand-written nested global parent, exactly as 
     // The nested `features` parent is gone, so the def is not expanded: the role
     // is decided, not skipped as "no eligible candidate".
     const decision = decisionOf(body, "previewrole");
-    assert.equal(decision.to, "openrouter/org/model-a");
+    assert.equal(decision.to, "openrouter/org/model-a:off");
     assert.deepEqual(decision.endpointBlocked, []);
     // The nested `tokenProfile` parent is gone too, so it cannot fail validation.
     assert.deepEqual(body.errors, []);
@@ -1889,7 +1905,7 @@ test("POST /api/preview with no settings resolves the scope's committed globals"
   try {
     const absent = await postJson(handle.url, "/api/preview", { roles: { previewrole: PREVIEW_ROLE } });
     assert.equal(decisionOf(absent.body, "previewrole").reason, "kept-margin");
-    assert.equal(decisionOf(absent.body, "previewrole").to, "openrouter/org/model-b");
+    assert.equal(decisionOf(absent.body, "previewrole").to, "openrouter/org/model-b:off");
     // An explicit empty edit clears them, so the shipped default margin applies.
     const cleared = await postJson(handle.url, "/api/preview", { settings: {}, roles: { previewrole: PREVIEW_ROLE } });
     assert.equal(decisionOf(cleared.body, "previewrole").reason, "switched");
@@ -2030,7 +2046,7 @@ test("startExplorer serves the preview from the scope's lock file and config.yml
     const decision = decisionOf(body, "previewrole");
     assert.equal(decision.from, "openrouter/org/model-b");
     assert.equal(decision.reason, "switched");
-    assert.equal(decision.to, "openrouter/org/model-a");
+    assert.equal(decision.to, "openrouter/org/model-a:off");
     // Read-only: neither the lock file nor config.yml changed.
     assert.equal(readFileSync(lockPath, "utf8"), lockBefore);
     assert.equal(readFileSync(join(dir, "config.yml"), "utf8"), configBefore);
@@ -2171,7 +2187,7 @@ test("POST /api/preview routes a provider-priority pick to the provider's select
     const decision = decisionOf(body, "previewrole");
     // The preview resolves the edited global priority into the role and writes
     // the effective provider's selector — the same `previewSelection` the run uses.
-    assert.equal(decision.to, "flocta/org/model-a");
+    assert.equal(decision.to, "flocta/org/model-a:off");
   } finally {
     await handle.close();
   }
@@ -2274,7 +2290,7 @@ test("the explorer merges the daily provider cache into the session catalog", as
     // No `settings` edit: the preview resolves the scope's committed globals
     // (providerPriority "flocta"), exactly as the run does.
     const previewBody = await postJson(handle.url, "/api/preview", { roles: { previewrole: PREVIEW_ROLE } });
-    assert.equal(decisionOf(previewBody.body, "previewrole").to, "flocta/org/model-a");
+    assert.equal(decisionOf(previewBody.body, "previewrole").to, "flocta/org/model-a:off");
   } finally {
     await handle.close();
   }

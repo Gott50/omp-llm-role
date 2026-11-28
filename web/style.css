@@ -164,6 +164,7 @@ table { border-collapse: collapse; width: 100%; }
 /* Effective provider + price-source marker (spec #116): muted mono, so the
    ·ref / ·proxy marker reads as an annotation, not a second model name. */
 #table td.provider { color: var(--muted); font-family: var(--mono); }
+#table td.thinking { color: var(--muted); font-family: var(--mono); }
 #table td.key { text-align: center; }
 /* Key-usability badge: three states, reusing the :root hues (up/down/muted). */
 .badge { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); font-family: var(--mono); font-size: 11px; line-height: 16px; }

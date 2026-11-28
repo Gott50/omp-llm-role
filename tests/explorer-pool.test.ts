@@ -220,7 +220,7 @@ test("the as-written leader is the model the updater picks when the value leader
   const result = await runInTempDir(dir, () => runUpdater("manual", deps, { force: true, dryRun: true }));
   const d = result.decisions.find((x) => x.role === "default");
   assert.ok(d);
-  assert.equal(d.to, `openrouter/org/${leader.model.id}:auto`);
+  assert.equal(d.to, `openrouter/org/${leader.model.id}:off`);
 });
 
 // --- provider priority (spec #116, ticket #124) ------------------------------

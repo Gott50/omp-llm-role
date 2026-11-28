@@ -105,8 +105,9 @@ things that only bite someone changing or debugging the code.
   `EPSILON = 0.001` (`web/app.js`) instead of deleting the key; `Normalize`
   rescales the ε too. Metrics the user added are deleted outright. The same
   merge applies to `thinking`: a role whose shipped default (or lock file) sets
-  a level cannot be returned to bare by omitting the key, so the editor disables
-  `— (bare)` for those roles.
+  a level cannot be returned to bare by omitting the key, so the editor's
+  thinking picker offers only the seven concrete levels (no bare option) and
+  always writes a level.
 - **A hand-written nested global object is deleted with the flat keys.** The lock
   file's convention is flat dotted keys (`tokenProfile.inputTokens`,
   `features.costCap`), but a hand edit can nest them (`tokenProfile: {…}`,
@@ -115,6 +116,19 @@ things that only bite someone changing or debugging the code.
   `src/role-settings.ts`) removes the nested parent along with the flat keys, and
   the explorer's preview calls the same helper, so the preview never resolves a
   global Export would delete.
+
+## The thinking clamp
+
+- **`effectiveThinkingLevel` mirrors omp's `clampThinkingLevelForModel` except
+  for two known divergences** (both out of scope per spec #128, recorded as
+  limits, not defects). (a) omp resolves `thinking.effortMap` aliasing *before*
+  the floor rule — a gateway that answers `medium` as `high` runs the alias —
+  but the plugin's catalog row carries only the level list, not the effortMap,
+  so a model with an effortMap can be priced at the pin while omp runs the
+  alias. (b) omp's loop assumes the advertised list is sorted ascending (it
+  breaks at the first level above the pin), while the plugin takes the true max
+  at or below the pin, so an unsorted list can differ. The plugin's own
+  `thinking[]` rows are sorted, so (b) is latent.
 
 ## Benchmark sources
 
@@ -221,12 +235,17 @@ things that only bite someone changing or debugging the code.
 - **Bare roles were priced as if thinking were free** (fixed 2026-09-30).
   `rankRole` charges the level factor only when the model will run the role's
   level, so a bare role was priced at the billed blend ×1 while the session
-  `defaultThinkingLevel` (here `auto`) billed ~1.86× at run time — the ranking
-  under-stated its cost, and a model whose catalog supports the level was
-  priced differently from one that does not. `default`/`task`/`advisor` now
-  pin `auto` and `tiny` pins `off`, so every shipped role carries a level and
-  the ranking prices what runs. A model whose catalog lacks the pinned level
-  is still priced bare (omp clamps it), which is the intended asymmetry.
+  `defaultThinkingLevel` billed ~1.86× at run time — the ranking under-stated
+  its cost, and a model whose catalog supports the level was priced differently
+  from one that does not. Every shipped role now carries a concrete level
+  (`default`/`vision`/`plan`/`task`/`advisor`/`designer` → `medium`, `slow` →
+  `high`, `smol`/`commit`/`tiny` → `off`), so the ranking prices what runs.
+  (Superseded 2026-11-28, spec #128: the level is now the role's pin **clamped**
+  to each model's advertised range by `effectiveThinkingLevel`, and the written
+  selector always carries that effective level — a model whose catalog lacks the
+  pin runs its own lower level, never a bare selector. The old `auto` pin is
+  gone: `auto` is a meta level omp decides per turn, so it cannot be pinned; a
+  legacy `auto` in a lock file resolves to `medium`.)
 - **`designarena.ai/robots.txt` disallows `/api/`** for `User-Agent: *` and the
   leaderboard route is `/api/leaderboard` — the daily fetch targets a
   disallowed path by explicit owner decision (robots.txt read as advisory

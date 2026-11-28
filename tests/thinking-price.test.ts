@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { paretoFrontier, rankRole, thinkingAdjustedPrice, thinkingPriceFactor, type RoleDef } from "../src/engine.ts";
+import { effectiveThinkingLevel, paretoFrontier, rankRole, SUFFIX_LEVELS, thinkingAdjustedPrice, thinkingPriceFactor, type RoleDef } from "../src/engine.ts";
 import { enrichCatalogData, type CatalogEntry } from "../src/availability.ts";
-import { resolveSettings } from "../src/settings.ts";
+import { deriveSettingsSchema, resolveSettings } from "../src/settings.ts";
 import { makeModel } from "./helpers.ts";
 
 // thinker: better quality and pricier, supports thinking; plain: cheaper, no thinking
@@ -43,9 +43,10 @@ test("resolveSettings validates thinking and rejects the legacy suffixes map", (
   assert.ok(resolveSettings({ suffixes: { smol: "off" } }).errors.some((e) => e.includes("roles.<role>.thinking")));
 });
 
-test("catalog thinking[] wins over the OR flag: an unsupported level is priced bare", () => {
-  // thinker advertises thinking per OR but its catalog levels exclude max —
-  // omp clamps, so the ranking prices it bare (matching the updater's gate).
+test("catalog thinking[] wins over the OR flag: an unsupported level clamps to the model's range", () => {
+  // thinker advertises thinking per OR but its catalog levels exclude max — the
+  // clamp runs it at the model's highest level at or below the pin (`high`), so
+  // the ranking prices it at `high`'s factor, not `max`'s and not bare.
   const models = [
     { ...makeModel("thinker", 90, 4, 50, true), thinkingLevels: ["low", "high"] },
     makeModel("plain", 80, 1, 50, false),
@@ -53,7 +54,7 @@ test("catalog thinking[] wins over the OR flag: an unsupported level is priced b
   const suffixed = rankRole({ ...ROLE, thinking: "max" }, models);
   const thinker = suffixed.find((r) => r.model.id === "thinker");
   assert.ok(thinker);
-  assert.equal(thinker.priceEff, thinker.model.price);
+  assert.ok(Math.abs(thinker.priceEff - thinker.model.price * thinkingPriceFactor("high")) < 1e-9);
   const supported = rankRole({ ...ROLE, thinking: "high" }, models);
   const thinkerHigh = supported.find((r) => r.model.id === "thinker");
   assert.ok(thinkerHigh);
@@ -61,15 +62,16 @@ test("catalog thinking[] wins over the OR flag: an unsupported level is priced b
 });
 
 test("catalog data wins even when OR advertises support with an empty level list", () => {
+  // The catalog's empty list is authoritative: the model runs `off`, priced 1×.
   const models = [{ ...makeModel("thinker", 90, 4, 50, true), thinkingLevels: [] }];
   const suffixed = rankRole({ ...ROLE, thinking: "max" }, models);
   assert.equal(suffixed[0].priceEff, suffixed[0].model.price);
 });
 
-test("meta levels (off/auto) never gate the factor for thinking-capable models", () => {
+test("a pin above the model's range clamps to the model's highest level", () => {
   const models = [{ ...makeModel("thinker", 90, 4, 50, true), thinkingLevels: ["low"] }];
-  const auto = rankRole({ ...ROLE, thinking: "auto" }, models);
-  assert.ok(Math.abs(auto[0].priceEff - models[0].price * thinkingPriceFactor("auto")) < 1e-9);
+  const high = rankRole({ ...ROLE, thinking: "high" }, models);
+  assert.ok(Math.abs(high[0].priceEff - models[0].price * thinkingPriceFactor("low")) < 1e-9);
 });
 
 test("without catalog data the OR flag gates (standalone ranking fallback)", () => {
@@ -96,9 +98,54 @@ test("thinkingAdjustedPrice honors an explicit provider level list", () => {
   const factor = thinkingPriceFactor("high");
   // A level the provider advertises applies the factor.
   assert.equal(thinkingAdjustedPrice(m, def, 4, ["low", "high"]), 4 * factor);
-  // A level it does not advertise does not.
-  assert.equal(thinkingAdjustedPrice(m, def, 4, ["low"]), 4);
-  // A meta level always applies, whatever the provider advertises.
-  const metaDef: RoleDef = { ...ROLE, thinking: "auto" };
-  assert.equal(thinkingAdjustedPrice(m, metaDef, 4, ["low"]), 4 * thinkingPriceFactor("auto"));
+  // A level it does not advertise clamps to the provider's highest at or below
+  // the pin (`low`).
+  assert.equal(thinkingAdjustedPrice(m, def, 4, ["low"]), 4 * thinkingPriceFactor("low"));
+  // A non-thinking provider runs `off`, priced 1×.
+  assert.equal(thinkingAdjustedPrice(m, def, 4, []), 4);
+});
+
+// ---------------------------------------------------------------------------
+// The effective-level seam (issue #128): the one pure clamp, mirroring omp's
+// `clampThinkingLevelForModel` (the floor rule).
+// ---------------------------------------------------------------------------
+
+test("effectiveThinkingLevel: the floor clamp table", () => {
+  // pin in range -> pin
+  assert.equal(effectiveThinkingLevel("medium", ["low", "medium", "high"], true), "medium");
+  // pin between two supported levels -> the lower one
+  assert.equal(effectiveThinkingLevel("medium", ["low", "high"], true), "low");
+  // pin above the model's highest -> the model's highest
+  assert.equal(effectiveThinkingLevel("max", ["low", "high"], true), "high");
+  // pin below the model's lowest -> the model's lowest
+  assert.equal(effectiveThinkingLevel("minimal", ["high", "xhigh"], true), "high");
+  // a gap case: `minimal,high,xhigh` with pin `medium` -> `minimal`, never `high`
+  assert.equal(effectiveThinkingLevel("medium", ["minimal", "high", "xhigh"], true), "minimal");
+  // empty range -> off
+  assert.equal(effectiveThinkingLevel("medium", [], true), "off");
+  // no catalog -> reasoning ? pin : off
+  assert.equal(effectiveThinkingLevel("medium", undefined, true), "medium");
+  assert.equal(effectiveThinkingLevel("medium", undefined, false), "off");
+  // off -> off
+  assert.equal(effectiveThinkingLevel("off", ["high"], true), "off");
+});
+
+test("effectiveThinkingLevel is order-independent and ignores unknown levels", () => {
+  assert.equal(effectiveThinkingLevel("medium", ["high", "low"], true), "low");
+  assert.equal(effectiveThinkingLevel("medium", ["banana", "low"], true), "low");
+  assert.equal(effectiveThinkingLevel("medium", ["banana"], true), "off");
+});
+
+test("resolveSettings maps a legacy auto to medium and fills an omitted level", () => {
+  const legacy = resolveSettings({ roles: { slow: { thinking: "auto" } } });
+  assert.deepEqual(legacy.errors, []);
+  assert.equal(legacy.settings.roles.slow.thinking, "medium");
+  // An omitted level resolves to medium (every resolved def is pinned). A
+  // lock-file-only role (not deep-merged over a shipped def) keeps its weights.
+  const omitted = resolveSettings({ roles: { brandnew: { weights: { general: 0.9, price: 0.1 }, required: ["general", "price"] } } });
+  assert.deepEqual(omitted.errors, []);
+  assert.equal(omitted.settings.roles.brandnew.thinking, "medium");
+  // `auto` is no longer a schema value.
+  assert.ok(!Object.keys(SUFFIX_LEVELS).includes("auto"));
+  assert.ok(!deriveSettingsSchema()["roles.slow.thinking"].values.includes("auto"));
 });
