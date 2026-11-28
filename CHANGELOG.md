@@ -8,6 +8,19 @@ Entry and version-bump policy: [`docs/dev/releasing.md`](docs/dev/releasing.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The model display shows a direct provider again** — the status-line model
+  segment suffixed the live model's name only from an OpenRouter/vercel compat
+  routing pin, so a model served by a **direct** omp provider (a non-aggregator
+  `models.yml` entry such as `flocta`, whose selector prefix is the route and
+  which carries no compat block) rendered with no provider at all. The display
+  now falls back to the model's own provider id for a non-aggregator, so
+  `flocta/deepseek/deepseek-v4.1-flash` renders `DeepSeek V4.1 Flash @flocta`.
+  An aggregator's own id (`openrouter`, `vercel-ai-gateway`) is the gateway, not
+  a route, so an unpinned OpenRouter model's display is unchanged. (spec #116
+  follow-up)
+
 ## [1.7.0] - 2026-11-27
 
 ### Added

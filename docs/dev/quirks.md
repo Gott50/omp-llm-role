@@ -183,6 +183,15 @@ things that only bite someone changing or debugging the code.
   model is untouched, so the event's selector is trusted only when it names the
   live session model (`liveModelIsSelector`); otherwise the pin is re-derived
   from the live model's routing block.
+- **A direct provider's route is its provider id, not a compat pin.** A
+  non-aggregator omp provider (`flocta`, a `models.yml` entry with its own
+  `baseUrl`) has no `compat.openRouterRouting` block — its selector prefix
+  (`flocta/<id>`) *is* the route. `providerPinOf` therefore falls back to the
+  model's own `provider` id when no compat pin is present, but only for a
+  non-aggregator: `openrouter`/`vercel-ai-gateway` are the gateway, so their own
+  id is never shown (an unpinned OpenRouter model stays bare). The provider's
+  catalog rows and `models.yml` carry no quantization field, so the honest
+  suffix is `@flocta`, never a fabricated `@flocta/<quant>`.
 - **Testing a registered slash command needs `--mode rpc` or a TUI** — `omp -p`
   (print mode) sends a leading `/name` as a *prompt* to the model, so the handler
   never runs and `ctx.ui.notify` is a no-op anyway. RPC mode does dispatch them:

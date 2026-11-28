@@ -255,11 +255,17 @@ necessarily the raw #1. The provider-pin numbers are the 2026-10-11 measurement
   the plugin's state dir (`<project>/.omp` in project mode, `agentDir()`
   otherwise). The ranking numbers are unchanged — the ranking CLI does not apply
   the pool toggle, and the per-task price never feeds the sort key.
-- Provider display (2026-10-12, spec #77): when the live session model carries a
-  provider pin (a hand-set `providerPin`, or the automatic pin the
-  `providerPinning` capability writes), the plugin keeps the model object's
-  `name` suffixed with the route, so omp's status-line model segment renders
-  e.g. `DeepSeek V4.1 Flash @coreweave/fp8`. The suffix is applied on session
+- Provider display (2026-10-12, spec #77; direct providers 2026-11-28): when the
+  live session model carries a provider pin (a hand-set `providerPin`, or the
+  automatic pin the `providerPinning` capability writes), the plugin keeps the
+  model object's `name` suffixed with the route, so omp's status-line model
+  segment renders e.g. `DeepSeek V4.1 Flash @coreweave/fp8`. A model served by a
+  **direct** provider (a non-aggregator omp provider such as `flocta`, whose
+  selector prefix is the route and which carries no compat routing block) shows
+  that provider id instead, e.g. `DeepSeek V4.1 Flash @flocta`; an aggregator's
+  own id (`openrouter`, `vercel-ai-gateway`) is the gateway, never a route, so
+  an unpinned OpenRouter model's display stays bare. The suffix is applied on
+  session
   start, refreshed on the two fallback events, and re-derived at every
   `turn_start` — the re-derive is what heals the display after omp silently
   restores the primary model following a fallback cooldown (no session event is

@@ -66,6 +66,26 @@ test("providerPinOf returns null for a non-record model", () => {
   assert.equal(providerPinOf(undefined), null);
 });
 
+test("providerPinOf falls back to a direct provider's own id", () => {
+  assert.equal(providerPinOf({ provider: "flocta", id: "deepseek/deepseek-v4.1-flash" }), "flocta");
+});
+
+test("providerPinOf prefers a compat pin over the provider id", () => {
+  const model = { provider: "flocta", compat: { openRouterRouting: { only: ["coreweave/fp8"] } } };
+  assert.equal(providerPinOf(model), "coreweave/fp8");
+});
+
+test("providerPinOf never shows an aggregator's own id", () => {
+  assert.equal(providerPinOf({ provider: "openrouter", id: "m" }), null);
+  assert.equal(providerPinOf({ provider: "vercel-ai-gateway", id: "m" }), null);
+});
+
+test("providerPinOf returns null for a missing or empty provider id", () => {
+  assert.equal(providerPinOf({ id: "m" }), null);
+  assert.equal(providerPinOf({ provider: "", id: "m" }), null);
+  assert.equal(providerPinOf({ provider: 5, id: "m" }), null);
+});
+
 // --- providerPinOfSelector ---------------------------------------------------
 
 test("providerPinOfSelector parses a trailing @slug", () => {

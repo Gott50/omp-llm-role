@@ -314,13 +314,17 @@ passing.
     `provider-display-wiring.test.ts`) — `providerPinOf` reads the single
     `openRouterRouting.only[0]` (else `vercelGatewayRouting`), preferring
     OpenRouter, and returns null for a missing/empty/multi-entry block or a
-    non-string entry; `providerPinOfSelector` parses the trailing `@<slug>` with
+    non-string entry; when no compat pin is present it falls back to the model's
+    own `provider` id for a direct (non-aggregator) provider, and returns null
+    for an aggregator (`openrouter`/`vercel-ai-gateway`) or a missing provider;
+    `providerPinOfSelector` parses the trailing `@<slug>` with
     and without a thinking suffix and returns null without one;
     `withProviderSuffix` appends, strips a previous suffix, is idempotent, and
     returns the base name for a null pin; `applyProviderDisplay` mutates a
     record's `name` and no-ops on a non-record or a non-string name. The wiring
     (a fake `pi`/`ctx` recording handlers) suffixes the live model on
-    `session_start`, applies the pin parsed from `event.to` on
+    `session_start` (an OpenRouter pin, and a direct provider's id), applies the
+    pin parsed from `event.to` on
     `retry_fallback_applied` (falling back to the live model's routing block),
     applies the pin from `event.model` on `retry_fallback_succeeded`, re-derives
     from the live model on `turn_start` (the silent-restore case), strips when

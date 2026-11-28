@@ -54,12 +54,14 @@ omp plugin install omp-llm-role@gott50-plugins
   provider pin — a hand-set `providerPin`, or the automatic pin the
   `providerPinning` capability writes — the status line's model segment shows
   the route next to the model name, e.g. `DeepSeek V4.1 Flash @coreweave/fp8`.
-  The suffix is applied on session start, refreshed when a fallback switches the
-  model, and re-derived at the start of every turn, so it self-heals after omp
-  silently restores the primary model following a fallback cooldown. An unpinned
-  model's display is unchanged, and the suffix is display-only: it rides the
-  model object's `name`, so attribution, usage recording and model comparison
-  are unaffected.
+  A model served by a **direct** provider (a non-aggregator omp provider such as
+  `flocta`, whose selector prefix is the route) shows that provider id instead,
+  e.g. `DeepSeek V4.1 Flash @flocta`. The suffix is applied on session start,
+  refreshed when a fallback switches the model, and re-derived at the start of
+  every turn, so it self-heals after omp silently restores the primary model
+  following a fallback cooldown. An unpinned OpenRouter model's display is
+  unchanged, and the suffix is display-only: it rides the model object's `name`,
+  so attribution, usage recording and model comparison are unaffected.
 - **Provider catalog refresh.** When a provider priority is set, the day's run
   also refreshes each prioritized non-OpenRouter provider's catalog through omp
   (`omp models refresh <provider>` then `omp models ls --json`), once per UTC

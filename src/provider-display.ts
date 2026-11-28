@@ -1,7 +1,8 @@
 /**
  * Provider display: keep the live session model's `name` suffixed with its
- * upstream provider pin, so omp's model segment renders e.g.
- * `DeepSeek V4.1 Flash @coreweave/fp8`.
+ * upstream provider, so omp's model segment renders e.g.
+ * `DeepSeek V4.1 Flash @coreweave/fp8` (an OpenRouter route) or
+ * `DeepSeek V4.1 Flash @flocta` (a direct provider).
  *
  * omp's built-in model segment renders `state.model.name || state.model.id`
  * only and exposes no extension hook to add to it; the only lever is the live
@@ -12,6 +13,11 @@
 import { splitThinkingSuffix } from "./availability.ts";
 import { isRecord } from "./guards.ts";
 
+/** The aggregators that route per-request through a compat block: their own
+ * provider id is the gateway, not a route, so it is never shown as a suffix.
+ * Mirrors omp's `supportsUpstreamRouting` (openrouter, vercelAIGateway). */
+const AGGREGATOR_PROVIDERS: Record<string, true> = { openrouter: true, "vercel-ai-gateway": true };
+
 /** The single upstream route of a compat routing block, or null. Mirrors omp's
  * `getSingleRoutingOnly`: exactly one entry, a non-empty string. */
 function singleOnly(routing: unknown): string | null {
@@ -21,15 +27,26 @@ function singleOnly(routing: unknown): string | null {
 }
 
 /**
- * The provider pin carried by a model's compat routing block:
- * `compat.openRouterRouting.only[0]`, else `compat.vercelGatewayRouting.only[0]`.
- * Null when absent, when `only` is not exactly one entry, or when the entry is
- * not a non-empty string.
+ * The provider shown for a model: the compat routing pin
+ * (`compat.openRouterRouting.only[0]`, else `compat.vercelGatewayRouting.only[0]`)
+ * when present, else the model's own provider id for a **direct** provider.
+ *
+ * An aggregator's provider id (`openrouter`, `vercel-ai-gateway`) is the
+ * gateway, not a route, so it is never shown — an unpinned OpenRouter model
+ * yields null and its display stays bare. A direct provider (e.g. `flocta`) has
+ * no compat block: its selector prefix IS the route, so its provider id is the
+ * suffix. Null when the model is not a record, carries no pin and no usable
+ * provider id.
  */
 export function providerPinOf(model: unknown): string | null {
-  if (!isRecord(model) || !isRecord(model.compat)) return null;
-  const compat = model.compat;
-  return singleOnly(compat.openRouterRouting) ?? singleOnly(compat.vercelGatewayRouting);
+  if (!isRecord(model)) return null;
+  if (isRecord(model.compat)) {
+    const pin = singleOnly(model.compat.openRouterRouting) ?? singleOnly(model.compat.vercelGatewayRouting);
+    if (pin !== null) return pin;
+  }
+  const provider = model.provider;
+  if (typeof provider === "string" && provider && AGGREGATOR_PROVIDERS[provider] !== true) return provider;
+  return null;
 }
 
 /**

@@ -173,6 +173,38 @@ test("the display handlers never call pi.setModel", async () => {
   assert.deepEqual(setModelCalls, []);
 });
 
+test("session_start suffixes a direct-provider model with its provider id", async () => {
+  const { handlers, pi } = mockPi();
+  extension(pi as never);
+  // A non-aggregator provider (flocta) has no compat routing block: the
+  // selector prefix IS the route, so the display shows `@flocta`.
+  const model = { provider: "flocta", id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" };
+  await fire(handlers, "session_start", { type: "session_start" }, mockCtx(model));
+  assert.equal(model.name, "DeepSeek V4.1 Flash @flocta");
+});
+
+test("session_start leaves an unpinned aggregator model's name unchanged", async () => {
+  const { handlers, pi } = mockPi();
+  extension(pi as never);
+  // openrouter is the gateway, not a route: its own provider id is never shown.
+  const model = { provider: "openrouter", id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", compat: {} };
+  await fire(handlers, "session_start", { type: "session_start" }, mockCtx(model));
+  assert.equal(model.name, "DeepSeek V4.1 Flash");
+});
+
+test("retry_fallback_applied shows the direct provider parsed from event.to", async () => {
+  const { handlers, pi } = mockPi();
+  extension(pi as never);
+  const model = { provider: "flocta", id: "deepseek/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash @wafer/mxfp4" };
+  await fire(
+    handlers,
+    "retry_fallback_applied",
+    { type: "retry_fallback_applied", from: "openrouter/a@x:auto", to: "flocta/deepseek/deepseek-v4.1-flash:auto", role: "default" },
+    mockCtx(model),
+  );
+  assert.equal(model.name, "DeepSeek V4.1 Flash @flocta");
+});
+
 test("a throwing live-model read is contained (never escapes the handler)", async () => {
   const { handlers, pi } = mockPi();
   extension(pi as never);
